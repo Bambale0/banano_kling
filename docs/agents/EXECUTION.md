@@ -1,3 +1,14 @@
+## 2026-11-09 — NEUROMIX Astro admin-only UI pilot (#434)
+
+- Task: deliver seven reference-inspired Astro UI screens as a limited admin preview, using branch `feature/astro-concept-ui-20261108` -> `tanyapi`.
+- Existing authenticated bootstrap `is_admin` is the only frontend authorization source; no query/localStorage overrides.
+- Public users retain `Motion` nav (tab ID 3); admins see `Астро` (tab ID 8). Programmatic tab selection and rendering deny non-admin access; bootstrap revocation closes Astro.
+- No Astro backend/provider routes, balance debits, data persistence, pricing changes, or user birth-profile submissions were introduced.
+- Rebased safely via merge commit on current `tanyapi`, preserving concurrent TG/VK linking and Lava fixes. Browser E2E covers public vs admin and direct UI flows.
+- Mandatory Mini App CI includes Astro role and form unit suites; browser CI captures 390px and 414px screenshots as `astro-ui-preview` artifacts for visual QA.
+- Release gates: all exact-head workflow checks, screenshot review, production exact SHA and Telegram/VK smoke. Rollback: revert feature; no migrations.
+- Full functionality (ephemeris, timezone geocoding, interpretation, billing) remains a separately gated implementation; see `docs/ASTRO_IMPLEMENTATION_PLAN.md`.
+
 ## 2026-11-01 — Seedance admin-test preview aspect ratio
 - Baseline `tanyapi@b213dee0fb561a6d4054abfd169f340ea994e8ea`, task branch `fix/seedance-admin-preview-aspect-20261101`. Main checkout's unrelated runtime price changes are untouched.
 - Incident: Telegram inline video preview appears close to square, while the saved/downloaded Seedance 2.5 video is portrait. Read-only Neironych result check for existing request `efbae843-2b47-407a-8ff1-8422319b2222` returned `done`; read-only content fetch + `ffprobe` confirmed H264 720×1280, sample aspect ratio 1:1, display aspect ratio 9:16, duration 12.064 s. No new provider generation or billing.
