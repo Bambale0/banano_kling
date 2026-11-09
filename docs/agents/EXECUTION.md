@@ -1,15 +1,3 @@
-## 2026-11-09 — Astro UI pilot: admin-only visibility
-
-- Baseline: PR #434 (`feature/astro-concept-ui-20261108` -> `tanyapi`). Scope: Astro concept UI; no Astro backend/price/payment routes yet.
-- User requested: continue, but show Astro **only to administrators** initially.
-- Existing auth: `AppProvider` applies authenticated `bootstrap.is_admin` to `state.user.isAdmin`; ordinary Telegram/VK users must keep Motion accessible in the same navigation slot.
-- Change: `lib/astro-access.ts` defines fail-closed `ASTRO_TAB_ID`/role predicate; nav swaps Astro/Motion by authenticated live admin flag; `TabContent` refuses to mount Astro without access; `setActiveTab` rejects injected ID 8; refreshed bootstrap resets active Astro tab if admin role was revoked.
-- TDD: added `astro-admin-access.test.tsx` for admin/ordinary/locked/stale-ID, changed VK root expectation for ordinary users, extended browser E2E to test ordinary/admin bootstrap in sequence. Existing tests for Astro forms remain.
-- Data/billing: no migrations, new API endpoints, pricing, financial operations, credentials, user data persistence, or provider calls; backend MUST re-enforce role before adding new Astro APIs.
-- UX: admin sees reference-inspired Astro, ordinary user sees unchanged Motion. Documented rollout in `docs/ASTRO_IMPLEMENTATION_PLAN.md`.
-- Verification: pending exact-head GitHub Actions (frontend regression/static Telegram+VK builds, browser E2E, backend CI). Production not touched; PR intentionally draft until visual comparison and release gates.
-- Rollback: revert PR / hide feature. No schema or state migration.
-
 ## 2026-11-01 — Seedance admin-test preview aspect ratio
 - Baseline `tanyapi@b213dee0fb561a6d4054abfd169f340ea994e8ea`, task branch `fix/seedance-admin-preview-aspect-20261101`. Main checkout's unrelated runtime price changes are untouched.
 - Incident: Telegram inline video preview appears close to square, while the saved/downloaded Seedance 2.5 video is portrait. Read-only Neironych result check for existing request `efbae843-2b47-407a-8ff1-8422319b2222` returned `done`; read-only content fetch + `ffprobe` confirmed H264 720×1280, sample aspect ratio 1:1, display aspect ratio 9:16, duration 12.064 s. No new provider generation or billing.
@@ -3051,3 +3039,13 @@ Verification progress:
   key. The operator chose to retain the old key, so the branch may be reviewed
   but must not be merged or deployed publicly. Production remains unchanged and
   administrator-only.
+
+## 2026-11-09 — VK → Telegram native account-link launch
+- Baseline: `tanyapi@14a719c3db05e7c419a63e73c74ab4d63f7af4c8`; branch `fix/vk-telegram-native-link-20261109`.
+- Symptom: in some VK mobile WebViews, “Привязать Telegram” opens the mobile Telegram website instead of the installed app.
+- Code finding: `SharedAccountLinkPreview.beginLink()` preopened `about:blank`, then after async invitation creation redirected the popup to an `https://t.me/...startapp=link_...` URL. VK's embedded browser may handle HTTPS internally rather than using the Telegram OS handler. Real-device reproduction is still required.
+- Change: strict conversion from trusted Telegram Mini App invitation URL to `tg://resolve?domain=...&startapp=...`; on source click, attempt native launch through the reserved popup, never automatic web navigation; retain a visible direct native-app link and explicit HTTPS browser fallback while read-only status polling continues. VK-target links and backend consent/merge protocol are unchanged.
+- Safety: no server route, database, balance, pricing, credential, referrer or enrollment change. Invocation token validated before native conversion; no token logging or storage. A blocked native scheme leaves the pending invitation on screen. Existing source confirmation remains mandatory.
+- Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
+- Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
+- Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.
