@@ -1,14 +1,14 @@
 """Public legal document helpers shared by Telegram handlers."""
 
-from pathlib import Path
-from urllib.parse import urlsplit
+import pathlib
+import urllib.parse
 
 
 _DOCUMENT_NAMES = {
     "offer": "ofert.md",
     "privacy": "privacy_policy.md",
 }
-_DOCUMENT_ROOT = Path(__file__).resolve().parent.parent / "static"
+_DOCUMENT_ROOT = pathlib.Path(__file__).resolve().parent.parent / "static"
 
 
 def document_text(kind: str) -> str:
@@ -26,7 +26,7 @@ def https_document_url(value: str | None) -> str | None:
     if not value:
         return None
     try:
-        parsed = urlsplit(value)
+        parsed = urllib.parse.urlsplit(value)
         if (
             parsed.scheme.lower() == "https"
             and parsed.hostname
