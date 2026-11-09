@@ -173,7 +173,7 @@ async def _create_freekassa_miniapp_checkout(
         miniapp_module.get_promo_bonus_for_credits(package["credits"]) if promo else 0
     )
     total_credits = miniapp_module.total_package_credits(package, promo_bonus)
-    order_id = f"{telegram_id}_{int(miniapp_module.time.time() * 1000)}_{package_id}"
+    order_id = miniapp_module._new_miniapp_order_id(telegram_id, str(package_id))
 
     created = await miniapp_module.create_transaction(
         order_id=order_id,
@@ -293,9 +293,7 @@ def install_miniapp_lava_payment_methods() -> None:
                     status=500,
                 )
 
-            order_id = (
-                f"{telegram_id}_{int(miniapp_module.time.time() * 1000)}_{package_id}"
-            )
+            order_id = miniapp_module._new_miniapp_order_id(telegram_id, str(package_id))
             promo = (
                 await miniapp_module.get_promo_code_by_code(promo_code, active_only=True)
                 if promo_code
@@ -363,7 +361,7 @@ def install_miniapp_lava_payment_methods() -> None:
                     status=500,
                 )
 
-            await miniapp_module.create_transaction(
+            created = await miniapp_module.create_transaction(
                 order_id=order_id,
                 user_id=user.id,
                 payment_id=payment_id,
@@ -375,6 +373,14 @@ def install_miniapp_lava_payment_methods() -> None:
                 promo_code=promo.code if promo and promo_bonus > 0 else None,
                 promo_bonus_credits=promo_bonus,
             )
+            if not created:
+                miniapp_module.logger.error(
+                    "Mini App Lava checkout has no persisted order order_id=%s", order_id
+                )
+                return web.json_response(
+                    {"ok": False, "error": "Не удалось сохранить платёж. Попробуйте ещё раз."},
+                    status=503,
+                )
 
             return web.json_response(
                 {

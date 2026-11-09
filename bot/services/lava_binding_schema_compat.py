@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import os
+import sys
+from pathlib import Path
 
 import psycopg
 
@@ -12,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _BINDINGS_SCHEMA_LOCK = asyncio.Lock()
 _BINDINGS_SCHEMA_READY = False
+_BINDINGS_SCHEMA_READY_FOR: str | None = None
 _INSTALL_MARKER = "_lava_binding_schema_compat_installed"
 
 
@@ -50,16 +55,35 @@ async def _verify_bindings_table() -> None:
         await db.execute(f"SELECT COUNT(*) FROM {safety._BINDINGS_TABLE}")
 
 
+def _binding_database_key() -> str:
+    """Cache schema readiness for this database, not for the whole process.
+
+    SQLite test/recovery databases change at runtime. Hash the PostgreSQL DSN
+    rather than retaining or logging any credential-bearing connection string.
+    """
+    if db_backend.is_postgres():
+        dsn = os.getenv("DATABASE_URL", db_backend.DATABASE_URL)
+        return "postgres:" + hashlib.sha256(dsn.encode()).hexdigest()
+    current = sys.modules.get("bot.database")
+    filename = (
+        getattr(current, "DATABASE_PATH", None)
+        or os.getenv("DATABASE_PATH", db_backend.DATABASE_PATH)
+    )
+    return "sqlite:" + str(Path(str(filename)).resolve())
+
+
 async def _ensure_bindings_table_postgres_safe() -> None:
     """Create and verify the Lava contract-to-invoice mapping table once."""
 
-    global _BINDINGS_SCHEMA_READY
+    global _BINDINGS_SCHEMA_READY, _BINDINGS_SCHEMA_READY_FOR
 
-    if _BINDINGS_SCHEMA_READY:
+    database_key = _binding_database_key()
+    if _BINDINGS_SCHEMA_READY and _BINDINGS_SCHEMA_READY_FOR == database_key:
         return
 
     async with _BINDINGS_SCHEMA_LOCK:
-        if _BINDINGS_SCHEMA_READY:
+        database_key = _binding_database_key()
+        if _BINDINGS_SCHEMA_READY and _BINDINGS_SCHEMA_READY_FOR == database_key:
             return
 
         await _execute_schema_ddl(
@@ -90,6 +114,7 @@ async def _ensure_bindings_table_postgres_safe() -> None:
         # Do not cache a false-positive initialization. This catches adapter or
         # search-path regressions before checkout tries to query the table.
         await _verify_bindings_table()
+        _BINDINGS_SCHEMA_READY_FOR = database_key
         _BINDINGS_SCHEMA_READY = True
 
 
