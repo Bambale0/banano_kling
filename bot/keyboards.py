@@ -180,7 +180,7 @@ def get_more_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data="menu_help")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
-    builder.button(text="📜 Публичная оферта", callback_data="more_public_offer")
+    builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(2, 1, 1, 1)
@@ -834,6 +834,7 @@ def get_payment_packages_keyboard(packages: list, promo_active: bool = False):
     builder.button(text="🎟 Ввести промокод" if not promo_active else "🎟 Изменить промокод", callback_data="topup_enter_promo")
     if promo_active:
         builder.button(text="❌ Убрать промокод", callback_data="topup_remove_promo")
+    builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -848,6 +849,7 @@ def get_payment_method_keyboard(package_id: str, has_crypto: bool = True, has_la
     if has_lava:
         lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
         builder.button(text=f"Оплата картой {lava_suffix}", callback_data=f"buy_lava_{package_id}")
+    builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()
@@ -893,9 +895,10 @@ def get_payment_confirmation_keyboard(payment_url: str, order_id: str):
     builder = InlineKeyboardBuilder()
     builder.button(text="💳 Перейти к оплате", url=payment_url)
     builder.button(text="✅ Проверить оплату", callback_data=f"check_payment_{order_id}")
+    builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="🔙 Назад", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 2)
+    builder.adjust(1)
     return builder.as_markup()
 
 
@@ -1026,8 +1029,30 @@ def get_partner_program_keyboard(referral_link: str, is_partner: bool = False):
     builder.button(text="🔄 Обновить", callback_data="menu_partner")
     builder.button(text="🎟️ Вывод заработка", callback_data="partner_withdraw")
     builder.button(text="🍌 Обменять на бананы", callback_data="partner_exchange")
+    builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
-    builder.adjust(1, 1, 1, 1, 1, 1)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_legal_documents_keyboard():
+    """Offer and privacy policy in one accessible legal documents screen."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📜 Публичная оферта", callback_data="partner_offer")
+    builder.button(text="🔒 Политика конфиденциальности", callback_data="privacy_policy")
+    builder.button(text="◀️ Назад в меню", callback_data="ux_more")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def get_legal_document_view_keyboard():
+    """Navigation after reading either legal text or an external document link."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📄 Все документы", callback_data="legal_documents")
+    builder.button(text="🤝 Партнёрский кабинет", callback_data="menu_partner")
+    builder.button(text="🏠 Главное меню", callback_data="back_main")
+    builder.adjust(1)
     return builder.as_markup()
 
 
