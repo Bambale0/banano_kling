@@ -10,6 +10,17 @@ import {
   type AccountPreviewAccess,
 } from '@/lib/shared-account-api'
 
+/** The VK host handles sign-in and returns fresh signed launch credentials. */
+function VkLoginLink() {
+  return <a
+    className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
+    href="/mini-app/api/account-preview/vk-login"
+    rel="noreferrer"
+  >
+    Войти через ВКонтакте
+  </a>
+}
+
 function VkAccountGate({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<AccountPreviewAccess | null>(null)
   const [message, setMessage] = useState('Подтверждаем вход…')
@@ -19,8 +30,8 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     const controller = new AbortController()
     let sessionStarted = false
     startAccountAppSession(controller.signal).then(result => {
-      if (controller.signal.aborted) return
-      sessionStarted = result.telegram_linked
+      if (controller.signal.aborted) { void stopAccountAppSession(); return }
+      sessionStarted = true
       setAccess(result)
     }).catch(error => {
       if (!controller.signal.aborted) {
@@ -34,7 +45,10 @@ function VkAccountGate({ children }: { children: ReactNode }) {
   }, [retry])
 
   if (!access) {
-    return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">{message}</p></main>
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6">
+      <p role="status">{message}</p>
+      {message !== 'Подтверждаем вход…' && <VkLoginLink />}
+    </main>
   }
   if (access.telegram_linked) return children
 
@@ -94,7 +108,14 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
   // Do not mount the shared application store before VK authentication finishes.
   if (platform === null) return null
   if (platform === 'vk-launch-required') {
-    return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Вход через ВКонтакте">
+      <h1 className="text-xl font-semibold">Вход в NEUROMIX</h1>
+      <p className="text-sm text-muted-foreground">
+        Войдите через ВКонтакте, чтобы открыть Mini App. Если вы ещё не авторизованы в ВК,
+        он предложит войти в аккаунт. Telegram привязывать не нужно.
+      </p>
+      <VkLoginLink />
+    </main>
   }
   if (platform === 'telegram' && telegramInvitation) {
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Подтверждение Telegram">

@@ -34,7 +34,7 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(15000)
     let state = scenario === 'permission' ? 'permission_required' : scenario === 'old' ? 'not_requested' : scenario === 'link' ? 'delivered' : 'uncertain'
     let posts = 0, polls = 0, tokenIndex = 0, appToken = ''
-    const errors = [], tokens = new Set()
+    const errors = [], tokens = new Set(), revoked = new Set()
     page.on('pageerror', error => errors.push(error.message))
     await page.addInitScript(() => {
       window.__permissionRequests = []
@@ -65,7 +65,10 @@ try {
           telegram_linked: true, linked_platforms: ['telegram', 'vk'], revision: 1, vk_app_id: 123, telegram_bot_username: 'fixture_bot',
         } }
         else if (path.includes('/vk-deliveries/')) {
-          assert.ok(token !== appToken, 'Delivery checks never replace or revoke the active app token')
+          // VK operations may safely reuse the active signed app session.
+          // The invariant is that delivery status never revokes that session,
+          // invents a new actor, or exposes its bearer in the URL.
+          assert.ok(tokens.has(token), 'Delivery must use a verified app session')
           assert.ok(path.endsWith('/owned-vk-result'))
           if (request.method() === 'POST') {
             posts++
@@ -75,7 +78,10 @@ try {
           } else if (state === 'pending' && ++polls >= 1) state = 'delivered'
           payload = { ok: true, delivery: { state, community_id: 456, can_request: ['permission_required', 'not_requested'].includes(state),
             representation: state === 'delivered' ? scenario === 'link' ? 'link' : 'photo' : null } }
-        } else assert.ok(path.endsWith('/logout'), 'No unsolicited account mutation')
+        } else {
+          assert.ok(path.endsWith('/logout'), 'No unsolicited account mutation')
+          revoked.add(token)
+        }
       } else {
         const body = request.method() === 'POST' ? request.postDataJSON() : {}
         if ('init_data' in body) assert.equal(body.init_data, 'vk_session:' + appToken)
@@ -113,6 +119,7 @@ try {
     assert.equal(await panel.getByRole('link', { name: 'Открыть чат ВК', exact: true }).getAttribute('href'), 'https://vk.com/write-456')
     assert.equal(await panel.evaluate(element => element.scrollWidth > element.clientWidth), false)
     assert.deepEqual(errors, [])
+    assert.equal(revoked.has(appToken), false, 'Delivery must never revoke the active VK session')
     await context.close()
     console.log(`PASS VK ${width}px ${scenario}: real result view, explicit consent/retry, truthful receipt, no provider/message calls`)
   }

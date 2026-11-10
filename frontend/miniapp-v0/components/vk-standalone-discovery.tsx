@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react'
 import {
   fetchVkPublicCategory,
   fetchVkPublicDiscovery,
+  fetchVkNativeState,
+  type VkNativeState,
   type VkPublicCategoryPage,
   type VkPublicDiscovery,
   type VkPublicFeedItem,
@@ -56,7 +58,10 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
 }
 
 export function VkStandaloneDiscovery() {
-  const [view, setView] = useState<'trends' | 'feed'>('trends')
+  const [view, setView] = useState<'trends' | 'feed' | 'mine'>('trends')
+  const [native, setNative] = useState<VkNativeState | null>(null)
+  const [nativeError, setNativeError] = useState('')
+  const [nativeRetry, setNativeRetry] = useState(0)
   const [categoryId, setCategoryId] = useState<string | number | null>(null)
   const [page, setPage] = useState(1)
   const [discovery, setDiscovery] = useState<VkPublicDiscovery | null>(null)
@@ -67,6 +72,23 @@ export function VkStandaloneDiscovery() {
 
   useEffect(() => {
     const controller = new AbortController()
+    setNativeError('')
+    fetchVkNativeState(controller.signal).then(value => {
+      if (!controller.signal.aborted) setNative(value)
+    }).catch(error => {
+      if (!controller.signal.aborted) setNativeError(
+        error instanceof Error ? error.message : 'Не удалось получить VK-баланс.',
+      )
+    })
+    return () => controller.abort()
+  }, [nativeRetry])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    if (view === 'mine') {
+      setBusy(false)
+      return () => controller.abort()
+    }
     setBusy(true)
     setError('')
     const operation = categoryId === null
@@ -91,7 +113,7 @@ export function VkStandaloneDiscovery() {
     return () => controller.abort()
   }, [view, categoryId, page, retry])
 
-  const switchView = (next: 'trends' | 'feed') => {
+  const switchView = (next: 'trends' | 'feed' | 'mine') => {
     setView(next)
     setCategoryId(null)
     setCategory(null)
@@ -100,7 +122,17 @@ export function VkStandaloneDiscovery() {
   }
 
   return <section aria-label="Каталог ВКонтакте" className="space-y-4">
-    <div className="flex gap-2">
+    <div className="rounded-xl border border-border/70 bg-card p-3 text-sm">
+      {native?.registered
+        ? <strong>VK-баланс: {native.balance} 🍌</strong>
+        : nativeError
+          ? <div role="alert">{nativeError}
+              <button type="button" className="ml-2 underline" onClick={() => setNativeRetry(v => v + 1)}>Обновить VK-баланс</button>
+            </div>
+          : native ? <span>Вы ещё не начинали работу в VK-боте.</span>
+            : <span>Загружаем VK-баланс…</span>}
+    </div>
+    <div className="flex flex-wrap gap-2">
       <button type="button" aria-pressed={view === 'trends'}
         onClick={() => switchView('trends')}
         className={'rounded-xl px-4 py-2 text-sm font-medium ' + (view === 'trends' ? 'bg-primary text-primary-foreground' : 'border border-border')}>
@@ -111,18 +143,42 @@ export function VkStandaloneDiscovery() {
         className={'rounded-xl px-4 py-2 text-sm font-medium ' + (view === 'feed' ? 'bg-primary text-primary-foreground' : 'border border-border')}>
         Лента
       </button>
+      <button type="button" aria-pressed={view === 'mine'}
+        onClick={() => switchView('mine')}
+        className={'rounded-xl px-4 py-2 text-sm font-medium ' + (view === 'mine' ? 'bg-primary text-primary-foreground' : 'border border-border')}>
+        Мои работы
+      </button>
     </div>
-    {categoryId !== null ? (
+    {view === 'mine' ? <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-base font-semibold">Мои генерации ВКонтакте</h3>
+        <button type="button" className="text-sm underline" onClick={() => setNativeRetry(v => v + 1)}>Обновить</button>
+      </div>
+      {!native && !nativeError ? <p role="status">Загружаем историю…</p> : null}
+      {native?.is_blocked ? <p role="alert">Доступ VK-бота ограничен. Обратитесь в поддержку.</p> : null}
+      {native && native.tasks.length === 0 ? <p>Генераций пока нет.</p> : null}
+      {native?.tasks.map(task => (
+        <article key={task.task_id} className="space-y-1 rounded-xl border border-border/70 bg-card p-3 text-sm">
+          <p className="font-medium">#{task.task_id} · {task.task_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · {task.model}</p>
+          <p className="text-muted-foreground">Статус: {task.status === 'completed' ? 'Готово' : task.status === 'failed' ? 'Ошибка' : 'В работе'} · {task.cost} 🍌</p>
+          {mediaUrl(task.result_url) && <a
+            className="text-primary underline" href={mediaUrl(task.result_url)} target="_blank" rel="noopener noreferrer">
+            Открыть результат #{task.task_id}
+          </a>}
+        </article>
+      ))}
+    </div> : null}
+    {view !== 'mine' && categoryId !== null ? (
       <button type="button" className="text-sm underline" onClick={() => {
         setCategoryId(null); setCategory(null); setPage(1)
       }}>← Ко всем трендам</button>
     ) : null}
-    {error ? <div role="alert" className="space-y-2 text-sm">
+    {view !== 'mine' && error ? <div role="alert" className="space-y-2 text-sm">
       <p>{error}</p>
       <button type="button" className="underline" onClick={() => setRetry(x => x + 1)}>Повторить загрузку</button>
     </div> : null}
-    {busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
-    {categoryId !== null && category ? <>
+    {view !== 'mine' && busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
+    {view !== 'mine' && categoryId !== null && category ? <>
       <h3 className="text-lg font-semibold">{category.category.emoji} {category.category.title}</h3>
       <div className="grid grid-cols-2 gap-3">
         {category.items.map(item => <TrendCard key={item.id} item={item} />)}
@@ -132,7 +188,7 @@ export function VkStandaloneDiscovery() {
         {busy ? 'Загрузка…' : 'Показать ещё'}
       </button> : null}
     </> : null}
-    {categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
+    {view !== 'mine' && categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
       <div key={group.id} className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-base font-semibold">{group.emoji} {group.title}</h3>
@@ -147,7 +203,7 @@ export function VkStandaloneDiscovery() {
         </div>
       </div>
     )) : null}
-    {categoryId === null && discovery && 'items' in discovery ? (
+    {view !== 'mine' && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
         {discovery.items.map(item => <FeedCard key={item.id} item={item} />)}
       </div>

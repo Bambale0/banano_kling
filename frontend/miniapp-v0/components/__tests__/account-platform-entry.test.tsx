@@ -2,7 +2,7 @@ jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () =
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { AccountPlatformEntry } from '../account-platform-entry'
-import { fetchVkPublicDiscovery, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
@@ -10,12 +10,16 @@ jest.mock('@/lib/shared-account-api', () => ({
   stopAccountAppSession: jest.fn(),
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
+  fetchVkNativeState: jest.fn(),
 }))
 jest.mock('@/lib/account-platform', () => ({ incomingAccountLink: jest.fn(() => '') }))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername, onCommitted }: { telegramBotUsername: string; onCommitted?: () => void }) =>
   <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
 beforeEach(() => {
+  jest.mocked(fetchVkNativeState).mockResolvedValue({
+    ok: true, registered: false, balance: null, is_blocked: false, tasks: [],
+  })
   jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({ ok: true, categories: [], can_generate_in_app: false })
 })
 
@@ -25,12 +29,32 @@ afterEach(() => {
   jest.resetAllMocks()
 })
 
+test('direct VK link offers official VK sign-in instead of a dead end', () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' }))
+    .toHaveAttribute('href', '/mini-app/api/account-preview/vk-login')
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+  expect(startAccountAppSession).not.toHaveBeenCalled()
+})
+
 test('dedicated VK build opened directly never mounts application or requests an unsigned session', () => {
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
-  expect(screen.getByText('Откройте приложение из ВКонтакте.')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'Вход в NEUROMIX' })).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' })).toBeInTheDocument()
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
   expect(startAccountAppSession).not.toHaveBeenCalled()
+})
+
+test('expired signed VK launch offers fresh sign-in without mounting the app', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=old')
+  jest.mocked(startAccountAppSession).mockRejectedValue(new Error('Проверка входа истекла'))
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Проверка входа истекла')).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' }))
+    .toHaveAttribute('href', '/mini-app/api/account-preview/vk-login')
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
 test('linked VK account mounts the same application', async () => {

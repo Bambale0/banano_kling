@@ -74,16 +74,30 @@ test.each([
   expect(() => nativeTelegramMiniAppUrl(url)).toThrow('Некорректная ссылка.')
 })
 
-test('VK connect attempts native Telegram on first click and offers a retry link', async () => {
+test('VK WebView must not open about:blank before an asynchronous Telegram invitation', async () => {
+  jest.mocked(createAccountLink).mockResolvedValue(pending)
+  render(<SharedAccountLinkPreview vkAppId={123} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
+  await screen.findByRole('region', { name: 'Ожидание привязки' })
+  expect(window.open).not.toHaveBeenCalled()
+  expect(popup.location.replace).not.toHaveBeenCalled()
+  expect(screen.getByRole('link', { name: 'Открыть приложение Telegram' }))
+    .toHaveAttribute('href', 'tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
+})
+
+test('VK connect prepares Telegram link and waits for a user gesture', async () => {
   jest.mocked(createAccountLink).mockResolvedValue(pending)
   render(<SharedAccountLinkPreview vkAppId={null} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   await waitFor(() => expect(createAccountLink).toHaveBeenCalledWith('telegram', expect.any(AbortSignal), true))
   expect(await screen.findByRole('link', { name: 'Открыть приложение Telegram' })).toHaveAttribute('href', 'tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
   expect(screen.getByRole('link', { name: 'Открыть через браузер' })).toHaveAttribute('href', 'https://t.me/test_bot?startapp=link_' + inviteToken)
-  expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
-  expect(popup.location.replace).toHaveBeenCalledWith('tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
-  expect(popup.opener).toBeNull()
+  expect(screen.getByLabelText('Если VK не запускает Telegram, скопируйте ссылку и откройте её в Telegram.'))
+    .toHaveValue('https://t.me/test_bot?startapp=link_' + inviteToken)
+  expect(screen.getByRole('button', { name: 'Скопировать ссылку' })).toBeEnabled()
+  expect(window.open).not.toHaveBeenCalled()
+  expect(popup.location.replace).not.toHaveBeenCalled()
+  expect(screen.getByRole('link', { name: 'Открыть приложение Telegram' })).toHaveAttribute('target', '_self')
   expect(accountLinkUrl).toHaveBeenLastCalledWith('telegram', inviteToken, 123, 'test_bot')
   expect(screen.getByRole('region', { name: 'Ожидание привязки' })).toBeInTheDocument()
   expect(screen.queryByLabelText('Код из ссылки')).not.toBeInTheDocument()
@@ -115,7 +129,9 @@ test('Telegram source opens signed VK app with backend-configured app ID', async
   render(<SharedAccountLinkPreview vkAppId={null} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать ВКонтакте' }))
   await waitFor(() => expect(createAccountLink).toHaveBeenCalledWith('vk', expect.any(AbortSignal), true))
-  await waitFor(() => expect(popup.location.replace).toHaveBeenCalledWith('https://vk.com/app123#link_' + inviteToken))
+  expect(await screen.findByRole('link', { name: 'Открыть ВКонтакте ещё раз' }))
+    .toHaveAttribute('href', 'https://vk.com/app123#link_' + inviteToken)
+  expect(window.open).not.toHaveBeenCalled()
 })
 
 test('incoming deep link previews source but does not link a visitor without consent', async () => {
@@ -214,17 +230,17 @@ test('stalled account status has a deadline and retry without silently linking',
   expect(createAccountLink).not.toHaveBeenCalled()
 })
 
-test('two immediate VK clicks cannot create duplicate invitations or orphan popups', async () => {
+test('two immediate VK clicks create a single invitation without any popup', async () => {
   let resolveInvitation!: (value: typeof pending) => void
   jest.mocked(createAccountLink).mockReturnValue(new Promise(resolve => { resolveInvitation = resolve }))
   render(<SharedAccountLinkPreview vkAppId={123} />)
   const connect = await screen.findByRole('button', { name: 'Привязать Telegram' })
   fireEvent.click(connect)
   fireEvent.click(connect)
-  expect(window.open).toHaveBeenCalledTimes(1)
+  expect(window.open).not.toHaveBeenCalled()
   expect(createAccountLink).toHaveBeenCalledTimes(1)
   await act(async () => resolveInvitation(pending))
-  expect(popup.location.replace).toHaveBeenCalledTimes(1)
+  expect(popup.location.replace).not.toHaveBeenCalled()
   expect(screen.getAllByRole('link', { name: 'Открыть приложение Telegram' })).toHaveLength(1)
 })
 
@@ -248,7 +264,7 @@ test('backend without source-consent support fails closed instead of creating a 
   render(<SharedAccountLinkPreview vkAppId={123} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   expect(await screen.findByText('Сервер привязки требует обновления. Попробуйте позже.')).toBeInTheDocument()
-  expect(popup.close).toHaveBeenCalled()
+  expect(window.open).not.toHaveBeenCalled()
   expect(popup.location.replace).not.toHaveBeenCalled()
   expect(screen.queryByRole('link', { name: 'Открыть приложение Telegram' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()

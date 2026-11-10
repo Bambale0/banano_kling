@@ -76,6 +76,34 @@ async def preview_client():
         yield client
 
 
+async def test_vk_public_login_link_is_disabled_when_app_is_not_public():
+    async with preview_client() as client:
+        r = await client.get(ROOT + '/vk-login', allow_redirects=False)
+        assert r.status == 404
+        assert not r.headers.get('Location')
+        assert r.headers.get('Cache-Control') == 'no-store'
+
+
+async def test_vk_public_login_link_redirects_to_configured_app_without_trusting_request():
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        r = await client.get(ROOT + '/vk-login?next=https://evil.example/&vk_app_id=999',
+                             allow_redirects=False)
+        assert r.status == 303
+        assert r.headers['Location'] == 'https://vk.com/app123'
+        assert r.headers['Cache-Control'] == 'no-store'
+        assert r.headers['Referrer-Policy'] == 'no-referrer'
+        assert not r.cookies
+
+
+async def test_vk_public_login_link_never_uses_an_unconfigured_app():
+    async with preview_client() as client:
+        await enable(client)
+        r = await client.get(ROOT + '/vk-login', allow_redirects=False)
+        assert r.status == 404
+        assert not r.headers.get('Location')
+
+
 async def test_preview_is_disabled_by_default():
     async with preview_client() as client:
         response = await client.post(ROOT + '/session', json={'platform': 'telegram', 'launch_data': telegram_launch()})
@@ -153,6 +181,64 @@ async def test_vk_only_session_reveals_configured_native_chat_without_telegram(m
         assert profile['preview']['vk_community_id'] == 239915802
         assert profile['preview']['telegram_linked'] is False
         assert (await client.get(ROOT + '/wallet', headers=headers)).status == 403
+
+
+async def test_vk_native_state_uses_only_signed_actor_identity_without_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    native = AsyncMock(return_value={
+        'registered': True, 'balance': 12.5, 'is_blocked': False,
+        'tasks': [{'task_id': 7, 'task_type': 'photo', 'model': 'nano_banana_pro',
+                   'status': 'completed', 'cost': 2.5, 'result_url': None,
+                   'created_at': '2026-11-09 12:00:00'}],
+    })
+    monkeypatch.setattr(api, 'fetch_native_vk_state', native, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        result = await client.get(ROOT + '/vk-native-state?vk_user_id=9999', headers=headers)
+        assert result.status == 200, await result.text()
+        assert (await result.json())['balance'] == 12.5
+        native.assert_awaited_once_with(2001)
+        assert (await client.get(ROOT + '/vk-native-state')).status == 401
+
+        telegram = await login(client, 1001)
+        other = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
+        assert (await client.get(ROOT + '/vk-native-state', headers=other)).status == 403
+        native.assert_awaited_once_with(2001)
+
+
+async def test_vk_native_state_signed_internal_rpc_uses_fixed_loopback_origin(monkeypatch):
+    from bot.shared_accounts.vk_native import fetch_native_vk_state
+
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'test-bridge')
+    fake = web.Application()
+    async def state(request):
+        import hashlib
+        import hmac
+        timestamp = request.headers.get('X-Internal-Timestamp', '')
+        signature = request.headers.get('X-Internal-Signature', '')
+        string = f'{timestamp}\nGET\n{request.path}\n'.encode()
+        expected = hmac.new(b'test-bridge', string, hashlib.sha256).hexdigest()
+        assert hmac.compare_digest(signature, expected)
+        return web.json_response({'registered': False, 'balance': None,
+                                  'is_blocked': False, 'tasks': []})
+    fake.router.add_get('/internal/v1/miniapp/users/2001/state', state)
+    async with TestClient(TestServer(fake)) as client:
+        port = client.server.port
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', f'http://127.0.0.1:{port}')
+        result = await fetch_native_vk_state(2001)
+        assert result['registered'] is False
+    monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', 'https://evil.example')
+    with pytest.raises(RuntimeError):
+        await fetch_native_vk_state(2001)
 
 
 async def test_vk_only_public_trends_without_telegram(monkeypatch):

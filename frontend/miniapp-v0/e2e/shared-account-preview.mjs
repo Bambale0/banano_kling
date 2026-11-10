@@ -211,7 +211,9 @@ try {
         await connect.click()
         await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
         const opened = await page.evaluate(() => window.__LINK_NAVIGATIONS__)
-        assert.deepEqual(opened, ['https://vk.com/app123#link_' + 'c'.repeat(43)])
+        assert.deepEqual(opened, [], 'VK launch must wait for an explicit user gesture')
+        const vkLink = page.getByRole('link', { name: 'Открыть ВКонтакте ещё раз' })
+        assert.equal(await vkLink.getAttribute('href'), 'https://vk.com/app123#link_' + 'c'.repeat(43))
         assert.equal(await page.getByLabel('Код из ссылки').count(), 0, 'Quick-link must not expose a code field')
         assert.equal(await page.getByRole('button', { name: 'Создать ссылку' }).count(), 0)
         await page.getByRole('button', { name: 'Отменить', exact: true }).click()
@@ -230,7 +232,11 @@ try {
         assert.equal(previewRequests.some(request => request.path.includes('/commerce')), false)
         await connect.click()
         await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
-        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), ['https://vk.com/app123#link_' + 'c'.repeat(43)])
+        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), [], 'No delayed VK popup')
+        assert.equal(
+          await page.getByRole('link', { name: 'Открыть ВКонтакте ещё раз' }).getAttribute('href'),
+          'https://vk.com/app123#link_' + 'c'.repeat(43),
+        )
         await page.getByRole('button', { name: 'Отменить', exact: true }).click()
         await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor({ state: 'detached' })
       }
