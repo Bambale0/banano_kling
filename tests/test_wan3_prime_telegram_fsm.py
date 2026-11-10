@@ -389,3 +389,34 @@ async def test_confirm_timeout_logs_and_preserves_key(runtime, caplog):
     assert "Wan3 Telegram confirm failed" in caplog.text
     assert old.client_request_id in caplog.text
     assert old.idempotency_key == wan3_prime.draft_from_state(await state.get_data()).idempotency_key
+
+
+@pytest.mark.asyncio
+async def test_confirm_result_storage_full_tells_user_truth_and_preserves_retry_key(runtime, caplog):
+    from bot.services.wan3_prime_media import Wan3PrimeValidationError
+
+    state = FakeState()
+    await open_mode(state, runtime, "reference")
+    await upload(state, "audio", "sound", filename="sound.mp3")
+    await set_prompt(state, "-")
+    await wan3_prime.quote_wan3_prime(FakeCallback("wan3_quote"), state)
+    previous = wan3_prime.draft_from_state(await state.get_data())
+
+    async def capacity_rejected(**kwargs):
+        raise Wan3PrimeValidationError(
+            "Result storage capacity is full; no funds were charged", status=503
+        )
+
+    runtime.launch_telegram_wan3_prime = capacity_rejected
+    callback = FakeCallback("wan3_confirm")
+    with caplog.at_level("WARNING", logger="bot.handlers.wan3_prime"):
+        await wan3_prime.confirm_wan3_prime(callback, state)
+
+    text = callback.answers[-1][0]
+    assert "хранилище результатов" in text.lower()
+    assert "списаний нет" in text.lower()
+    assert "Проверьте референсы" not in text
+    assert "reason=result_capacity_full" in caplog.text
+    current = wan3_prime.draft_from_state(await state.get_data())
+    assert current.idempotency_key == previous.idempotency_key
+    assert current.quote_hash == previous.quote_hash
