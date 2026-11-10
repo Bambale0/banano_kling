@@ -1,6 +1,7 @@
 jest.mock('../shared-commercial-preview', () => ({ SharedCommercialPreview: () => null }))
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
+import { renderToString } from 'react-dom/server'
 import { AccountPlatformEntry } from '../account-platform-entry'
 import { fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 import { incomingAccountLink } from '@/lib/account-platform'
@@ -27,6 +28,14 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
   delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
   jest.resetAllMocks()
+})
+
+test('VK server first paint is readable without JavaScript instead of blank', () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  const markup = renderToString(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(markup).toContain('Открываем приложение ВКонтакте')
+  expect(markup).toContain('/mini-app/api/account-preview/vk-login')
+  expect(markup).not.toContain('Общая студия')
 })
 
 test('direct VK link offers official VK sign-in instead of a dead end', () => {
