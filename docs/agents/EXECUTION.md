@@ -3093,3 +3093,31 @@ Verification progress:
 - TDD: added a failing incomplete-native-state test (crash reproduced), then normalized runtime tasks through Array.isArray and made incomplete history explicitly unavailable rather than falsely empty. The catalog still renders and no automatic retry is triggered for malformed data.
 - Verification: 8/8 focused Jest tests, TypeScript and ESLint passed; full production Telegram export and exact e2e/shared-account-preview.mjs passed on both admin and nonadmin, with VK entry checks at width 430. An initial local attempt built VK export (instead of the Telegram export expected by this particular script) and failed at a missing Profile button; the corrected CI-equivalent command passes.
 - Scope: read-only UI robustness only; no provider, balance, auth, shared-wallet or VK secret changes.
+
+
+## 2026-11-11 — Independent VK video bridge (behind disabled flag)
+
+Goal: progress toward complete 1:1 VK/TG Mini App without Telegram linking,
+tracked in issue #451. Baseline: ea67b9e8, native companion tanyavk PR #73.
+This PR is NOT full parity and is not ready for billable video traffic.
+
+Root cause: shared VK signed session is independent but common Mini App routes
+still resolve Telegram ID. Native VK video worker has its own SQLite ledger.
+The only safe bridge is a VK-user-owned signed native API, not a synthetic
+Telegram ID, fabricated wallet, or copy of credits.
+
+Changes: separate POST /mini-app/api/account-preview/vk-video under
+VK_MINIAPP_VIDEO_WRITES_ENABLED (OFF by default); signed revocable VK bearer
+required, Telegram or forged body user rejected. BFF validates body and owned
+image reference URLs, signs each exact-body HMAC upstream to localhost-only
+/native video RPC from tanyavk PR #73. Native side owns quote/debit/tasks/refund.
+
+Tests: 50 passed / 50 skipped in tests/test_shared_accounts.py (Postgres
+fixture unavailable for skipped variants); compileall and diff --check passed.
+No provider calls, wallet migrations, payments or production changes.
+
+Release gates: companion native video PR #73 must pass provider/reconciliation
+and full-suite acceptance; exact VK user/owner E2E, WebView device test;
+signed video route plus frontend forms and all other 1:1 modules must be
+implemented. Never toggle VK_MINIAPP_VIDEO_WRITES_ENABLED before coordinated
+acceptance; keep both services in sync. Rollback is flag OFF.

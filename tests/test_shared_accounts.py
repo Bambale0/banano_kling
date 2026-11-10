@@ -894,3 +894,102 @@ async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch
     with pytest.raises(ValueError, match='temporarily full'):
         await vk_image_refs.save_vk_image(2001, blob.getvalue())
     assert len(list((vk_image_refs.ROOT / '2001').iterdir())) == 1
+
+
+async def test_native_vk_video_quote_signed_identity_contract(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_VIDEO_WRITES_ENABLED', '1')
+    bridge = AsyncMock(return_value={'task_id': 0, 'cost': 12.5, 'quote_only': True})
+    monkeypatch.setattr(api, 'submit_native_vk_video', bridge, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        token = (await signed.json())['session_token']
+        headers = {'Authorization': 'Bearer ' + token}
+        payload = {'model': 'v3_std', 'prompt': 'A blue vase',
+                   'aspect': '16:9', 'duration': 5, 'quote_only': True}
+        denied = await client.post(ROOT + '/vk-video', json=payload)
+        assert denied.status == 401
+        tg = await login(client, 1001)
+        tg_headers = {'Authorization': 'Bearer ' + (await tg.json())['session_token']}
+        denied = await client.post(ROOT + '/vk-video', headers=tg_headers, json=payload)
+        assert denied.status == 403
+        denied = await client.post(ROOT + '/vk-video', headers=headers,
+                                   json={**payload, 'vk_user_id': 9999})
+        assert denied.status == 400
+        bridge.assert_not_awaited()
+        quote = await client.post(ROOT + '/vk-video', headers=headers, json=payload)
+        assert quote.status == 200, await quote.text()
+        assert (await quote.json())['quote_only'] is True
+        bridge.assert_awaited_once_with(2001, {**payload, 'reference_photos': []})
+
+
+async def test_native_vk_video_disabled_even_if_photo_enabled(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    monkeypatch.delenv('VK_MINIAPP_VIDEO_WRITES_ENABLED', raising=False)
+    bridge = AsyncMock()
+    monkeypatch.setattr(api, 'submit_native_vk_video', bridge, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        result = await client.post(ROOT + '/vk-video', headers=headers, json={
+            'model': 'v3_std', 'prompt': 'A vase', 'aspect': '16:9',
+            'duration': 5, 'quote_only': True,
+        })
+        assert result.status == 404
+        bridge.assert_not_awaited()
+
+
+async def test_native_vk_video_bridge_hmac_exact_body_and_loopback(monkeypatch):
+    import hashlib
+    import hmac
+    from bot.shared_accounts.vk_native import submit_native_vk_video
+
+    monkeypatch.setenv('VK_MINIAPP_VIDEO_WRITES_ENABLED', '1')
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'video-bridge-test-secret')
+    capture = []
+
+    async def quote(request):
+        raw = await request.read()
+        timestamp = request.headers['X-Internal-Timestamp']
+        signature = request.headers['X-Internal-Signature']
+        expected = hmac.new(
+            b'video-bridge-test-secret',
+            b'\n'.join([timestamp.encode(), b'POST', request.path.encode(), raw]),
+            hashlib.sha256,
+        ).hexdigest()
+        assert hmac.compare_digest(signature, expected)
+        assert request.path.endswith('/users/2001/generations/video')
+        capture.append(raw)
+        return web.json_response({'ok': True, 'task_id': 0, 'cost': 9.5, 'quote_only': True})
+
+    server = web.Application()
+    server.router.add_post('/internal/v1/miniapp/users/2001/generations/video', quote)
+    async with TestClient(TestServer(server)) as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', f'http://127.0.0.1:{client.server.port}')
+        result = await submit_native_vk_video(2001, {
+            'model': 'v3_std', 'prompt': 'Синее море',
+            'aspect': '16:9', 'duration': 5, 'quote_only': True,
+        })
+        assert result == {'task_id': 0, 'cost': 9.5, 'quote_only': True}
+        assert len(capture) == 1
+        with pytest.raises(ValueError):
+            await submit_native_vk_video(2001, {'prompt': 'x' * 40000})
+    monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', 'https://other.example')
+    with pytest.raises(RuntimeError):
+        await submit_native_vk_video(2001, {'quote_only': True})

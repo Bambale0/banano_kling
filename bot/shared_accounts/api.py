@@ -23,7 +23,11 @@ from .store import (
     revoke_session,
 )
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
-from .vk_native import fetch_native_vk_state, submit_native_vk_image
+from .vk_native import (
+    fetch_native_vk_state,
+    submit_native_vk_image,
+    submit_native_vk_video,
+)
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .wallet import InsufficientFunds, WalletService
 
@@ -219,6 +223,26 @@ async def vk_native_image(request: web.Request) -> web.Response:
         raise ValueError('Invalid VK image request')
     payload['reference_photos'] = verified_image_urls(actor_id, payload.get('reference_photos', []))
     result = await submit_native_vk_image(actor_id, payload)
+    return response({'ok': True, **result})
+
+
+async def vk_native_video(request: web.Request) -> web.Response:
+    """Quote or submit an owner-scoped VK video, independent of Telegram.
+
+    The native VK service owns all debits/refunds and task IDs; this proxy
+    cannot create or modify a Telegram balance.
+    """
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_VIDEO_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK video generation unavailable'}, 404)
+    payload = await _body(request)
+    if set(payload) - {'model', 'prompt', 'aspect', 'duration', 'client_request_id',
+                       'quote_only', 'reference_photos', 'expected_cost'}:
+        raise ValueError('Invalid VK video request')
+    payload['reference_photos'] = verified_image_urls(
+        actor_id, payload.get('reference_photos', []),
+    )
+    result = await submit_native_vk_video(actor_id, payload)
     return response({'ok': True, **result})
 
 
@@ -507,6 +531,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     # multipart body. Register directly, as the existing owned-media APIs do.
     app.router.add_route('POST', root + '/vk-image-upload', _guard(vk_image_upload))
     app.router.add_post(root + '/vk-image', _guard(vk_native_image))
+    app.router.add_post(root + '/vk-video', _guard(vk_native_video))
     app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
