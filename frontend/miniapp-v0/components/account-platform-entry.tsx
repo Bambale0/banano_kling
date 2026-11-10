@@ -106,7 +106,20 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
     }
   }, [])
   // Do not mount the shared application store before VK authentication finishes.
-  if (platform === null) return null
+  // The first HTML response must also be useful when an older VK WebView fails
+  // to execute/hydrate the JS bundle. Returning null here produces an indefinite
+  // white screen with no way back to VK.
+  if (platform === null) {
+    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return null
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Загрузка ВКонтакте">
+      <h1 className="text-xl font-semibold">Открываем приложение ВКонтакте…</h1>
+      <p role="status" className="text-sm text-muted-foreground">
+        Если этот экран не меняется, откройте приложение из ВКонтакте ещё раз.
+        Telegram для входа не нужен.
+      </p>
+      <VkLoginLink />
+    </main>
+  }
   if (platform === 'vk-launch-required') {
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Вход через ВКонтакте">
       <h1 className="text-xl font-semibold">Вход в NEUROMIX</h1>
