@@ -711,7 +711,9 @@ async def test_vk_native_upload_is_jpeg_sanitized_owner_scoped_and_not_telegram(
         headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
         form = FormData()
         form.add_field('image', binary, filename='face.png', content_type='image/png')
-        assert (await client.post(ROOT + '/vk-image-upload', data=form)).status == 401
+        rejected = await client.post(ROOT + '/vk-image-upload', data=form)
+        assert rejected.status == 401
+        assert rejected.headers.get('Connection', '').lower() == 'close'
         form = FormData()
         form.add_field('image', binary, filename='face.png', content_type='image/png')
         uploaded = await client.post(ROOT + '/vk-image-upload', data=form, headers=headers)
