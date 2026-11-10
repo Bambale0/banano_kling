@@ -3121,3 +3121,25 @@ and full-suite acceptance; exact VK user/owner E2E, WebView device test;
 signed video route plus frontend forms and all other 1:1 modules must be
 implemented. Never toggle VK_MINIAPP_VIDEO_WRITES_ENABLED before coordinated
 acceptance; keep both services in sync. Rollback is flag OFF.
+
+
+## 2026-11-10 — VK native video shared BFF release gate
+
+- Root: native VK Mini App has signed actor auth, SQLite wallet and photo
+  charging; independent video lacked shared-account HMAC bridge. Full TG UI
+  still demands Telegram linking and remains NOT parity.
+- This feature worktree adds a separate OFF-by-default native VK video BFF
+  backed by the existing signed VK session and independently gated native VK
+  wallet/provider service (tanyavk PR #73). The request is bounded, actor is
+  server-owned, references are owner-scoped and HMAC loopback has finite timeout.
+- TDD: tests reproduced missing video route 404, then covered verified
+  VK-only quote, unauthenticated and TG sessions, body actor injection,
+  independent feature flag, exact HMAC body/loopback and request bounds.
+- Production photo quote and one idempotent real task succeeded. A smoke
+  configuration used a TG admin ID instead of a native VK admin ID; it created
+  synthetic VK task 14216. The task completed, delivery was denied, and the
+  2.5-unit debit was refunded once through the native idempotent refund API;
+  the double-refund attempt was rejected. No user data deleted.
+- Video must not be enabled until full video task/provider/reconciliation
+  and UI acceptance. Full common 8-tab shell requires actor-neutral APIs for
+  all sections, unrelated to this narrow BFF.
