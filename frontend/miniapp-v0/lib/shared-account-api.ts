@@ -39,13 +39,15 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ? 'ВК не подтвердил отправку. Проверьте чат перед повторными действиями.'
       : 'Доставка пока недоступна или её статус изменился. Обновите статус.')
   }
+  if (response.status === 409 && (path === 'vk-image' || path === 'vk-trend')) throw new Error('Этот запрос уже используется для другой генерации. Измените данные и создайте новый запрос.')
   if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
+  if (response.status === 403 && path.startsWith('vk-')) throw new Error('VK-аккаунт не может выполнить операцию. Проверьте доступ к боту.')
   if (response.status === 403) throw new Error(path.startsWith('links')
     ? 'Это приглашение предназначено другому аккаунту или платформе.'
     : 'Требуется доступ администратора.')
-  if (response.status === 402) throw new Error('Недостаточно доступных тестовых средств.')
+  if (response.status === 402) throw new Error(path.startsWith('vk-') ? 'Недостаточно бананов на VK-балансе.' : 'Недостаточно доступных тестовых средств.')
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -247,6 +249,8 @@ export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNative
 
 export interface VkPublicTrend {
   id: number
+  can_repeat_in_app?: boolean
+  user_fields?: { key: string; label: string; field_type?: string; required?: boolean; max_length?: number }[]
   title: string
   description: string
   preview_url: string | null
@@ -271,8 +275,8 @@ export interface VkPublicFeedItem {
 }
 
 export type VkPublicDiscovery =
-  | { ok: true; categories: VkPublicTrendCategory[]; can_generate_in_app: false }
-  | { ok: true; items: VkPublicFeedItem[]; can_generate_in_app: false }
+  | { ok: true; categories: VkPublicTrendCategory[]; can_generate_in_app: boolean }
+  | { ok: true; items: VkPublicFeedItem[]; can_generate_in_app: boolean }
 
 export async function fetchVkPublicDiscovery(
   view: 'trends' | 'feed',
@@ -292,7 +296,7 @@ export interface VkPublicCategoryPage {
   items: VkPublicTrend[]
   page: number
   has_more: boolean
-  can_generate_in_app: false
+  can_generate_in_app: boolean
 }
 
 export async function fetchVkPublicCategory(
@@ -305,6 +309,67 @@ export async function fetchVkPublicCategory(
     'trends?view=category&category_id=' + encodeURIComponent(categoryId) + '&page=' + page,
     { headers, signal },
   ), signal)
+}
+
+export interface VkNativeGenerationResult {
+  ok: true
+  task_id: number
+  cost: number
+  quote_only?: boolean
+}
+
+export interface VkImageRequest {
+  model: string
+  prompt: string
+  aspect: string
+  resolution: string
+  reference_photos: string[]
+  client_request_id?: string
+  quote_only?: boolean
+  expected_cost?: number
+}
+
+export interface VkTrendRequest {
+  trend_id: number
+  reference_urls: string[]
+  user_values: Record<string, string>
+  client_request_id?: string
+  quote_only?: boolean
+  expected_cost?: number
+}
+
+export async function generateVkImage(payload: VkImageRequest, signal?: AbortSignal) {
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-image', {
+    method: 'POST', headers, body: JSON.stringify(payload), signal,
+  }), signal)
+}
+
+export async function repeatVkTrend(payload: VkTrendRequest, signal?: AbortSignal) {
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-trend', {
+    method: 'POST', headers, body: JSON.stringify(payload), signal,
+  }), signal)
+}
+
+export async function uploadVkImage(file: File, signal?: AbortSignal): Promise<string> {
+  if (!file || !file.size || file.size > 12 * 1024 * 1024) {
+    throw new Error('Фото должно быть не больше 12 МБ.')
+  }
+  return withPreviewSession(async headers => {
+    const body = new FormData()
+    body.append('image', file)
+    const response = await fetch(getApiBasePath() + '/account-preview/vk-image-upload', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin', headers,
+      body, signal,
+    })
+    if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
+    if (response.status === 413) throw new Error('Фото слишком большое. Используйте файл до 12 МБ.')
+    if (!response.ok) throw new Error('Не удалось загрузить фото. Попробуйте другое изображение.')
+    const data = await response.json() as { ok?: boolean; url?: string }
+    if (!data.ok || !data.url || !/^https:\/\//.test(data.url)) {
+      throw new Error('Не удалось получить сохранённое фото.')
+    }
+    return data.url
+  }, signal)
 }
 
 export interface AccountPreviewAccess {

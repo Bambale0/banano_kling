@@ -22,7 +22,8 @@ from .store import (
     linked_telegram_id,
     revoke_session,
 )
-from .vk_native import fetch_native_vk_state
+from .vk_native import fetch_native_vk_state, submit_native_vk_image
+from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,9 @@ async def profile(request: web.Request) -> web.Response:
 
 
 def _vk_public_trend_card(card: dict) -> dict:
+    from bot.trend_visibility import public_trend_settings
     settings = card.get('generation_settings') or {}
+    safe = public_trend_settings(card)
     return {
         'id': int(card['id']),
         'title': str(card.get('title') or ''),
@@ -145,6 +148,13 @@ def _vk_public_trend_card(card: dict) -> dict:
         'preview_url': card.get('preview_url'),
         'preview_poster_url': card.get('preview_poster_url'),
         'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
+        'can_repeat_in_app': (
+            os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+            and settings.get('kind') == 'image'
+            and settings.get('model') in {'banana_pro', 'banana_2', 'gpt_image_2'}
+            and not settings.get('reference_contract')
+        ),
+        'user_fields': safe.get('user_fields', []),
     }
 
 
@@ -158,6 +168,110 @@ async def vk_native_state(request: web.Request) -> web.Response:
         raise PermissionError('Verified VK session required')
     data = await fetch_native_vk_state(account.identity.external_id)
     return response({'ok': True, **data})
+
+
+async def _vk_writer_actor(request: web.Request) -> int:
+    policy = await load_policy()
+    if not policy.enabled:
+        raise PermissionError('Preview unavailable')
+    account = await get_session(_bearer(request), policy.revision)
+    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
+        raise PermissionError('Verified VK session required')
+    return account.identity.external_id
+
+
+async def vk_image_upload(request: web.Request) -> web.Response:
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK upload unavailable'}, 404)
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES + 64 * 1024:
+        return response({'ok': False, 'error': 'VK image is too large'}, 413)
+    if request.content_type != 'multipart/form-data':
+        raise ValueError('Expected an image upload')
+    reader = await request.multipart()
+    part = await reader.next()
+    if part is None or part.name != 'image':
+        raise ValueError('Expected an image')
+    pieces = []
+    size = 0
+    while True:
+        chunk = await part.read_chunk(64 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            return response({'ok': False, 'error': 'VK image is too large'}, 413)
+        pieces.append(chunk)
+    if await reader.next() is not None:
+        raise ValueError('Expected one image')
+    image_url = await save_vk_image(actor_id, b''.join(pieces))
+    return response({'ok': True, 'url': image_url})
+
+
+async def vk_native_image(request: web.Request) -> web.Response:
+    """VK authenticated account, native VK wallet; no Telegram ID or funds."""
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK image generation unavailable'}, 404)
+    payload = await _body(request)
+    if set(payload) - {'model', 'prompt', 'aspect', 'resolution', 'client_request_id', 'quote_only', 'reference_photos', 'expected_cost'}:
+        raise ValueError('Invalid VK image request')
+    payload['reference_photos'] = verified_image_urls(actor_id, payload.get('reference_photos', []))
+    result = await submit_native_vk_image(actor_id, payload)
+    return response({'ok': True, **result})
+
+
+async def vk_native_trend(request: web.Request) -> web.Response:
+    """Run only approved image trends using a server-owned hidden recipe.
+
+    Reference-dependent or video trends remain fail-closed until their
+    platform-specific asset ownership and pricing contracts are implemented.
+    """
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK repeat unavailable'}, 404)
+    body = await _body(request)
+    if set(body) - {'trend_id', 'user_values', 'reference_urls', 'client_request_id', 'quote_only', 'expected_cost'}:
+        raise ValueError('Invalid trend request')
+    from bot import trend_api
+    from bot.database import get_prompt_by_id
+    try:
+        parsed = trend_api.parse_trend_run_request(body)
+        prompt = await get_prompt_by_id(parsed.trend_id, approved_public_only=True)
+        if not prompt:
+            raise ValueError('Trend unavailable')
+        trusted = trend_api.trusted_trend_run(
+            prompt, parsed.reference_urls, parsed.user_values,
+        )
+    except trend_api.TrendRunValidationError as exc:
+        raise ValueError('Invalid or unavailable trend') from exc
+    if (trusted.kind != 'image'
+        or trusted.template_image_urls or trusted.provider_video_urls
+        or trusted.provider_audio_urls
+        or trusted.reference_contract
+        or int(trusted.settings.get('count') or 1) != 1):
+        raise ValueError('Trend requires a different generation workflow')
+    native_models = {'banana_pro': 'nano_banana_pro',
+                     'banana_2': 'nano_banana_2', 'gpt_image_2': 'gpt_image_2'}
+    model = native_models.get(trusted.model)
+    quality = str(trusted.settings.get('quality') or '2K')
+    if not model or quality not in {'2K', '4K'}:
+        raise ValueError('Trend is not supported by VK generation')
+    key = parsed.client_request_id
+    if body.get('quote_only') is not True and (not key or len(key) < 16 or len(key) > 80):
+        raise ValueError('Missing idempotent request key')
+    references = verified_image_urls(actor_id, list(parsed.reference_urls))
+    payload = {'model': model, 'prompt': trusted.prompt, 'aspect': trusted.ratio,
+               'resolution': quality, 'reference_photos': references}
+    if key:
+        payload['client_request_id'] = key
+    if body.get('quote_only') is True:
+        payload['quote_only'] = True
+    else:
+        payload['expected_cost'] = body.get('expected_cost')
+    result = await submit_native_vk_image(actor_id, payload)
+    # Never send the secret prompt or effective provider inputs to VK browser.
+    return response({'ok': True, **result})
 
 
 async def vk_public_discovery(request: web.Request) -> web.Response:
@@ -184,7 +298,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
             }
             for item in categories
         ]
-        return response({'ok': True, 'categories': result, 'can_generate_in_app': False})
+        return response({'ok': True, 'categories': result, 'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'})
     if view == 'category':
         from bot import trend_catalog
         category_id = request.query.get('category_id', '')
@@ -208,7 +322,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
             'items': [_vk_public_trend_card(card) for card in category['items']],
             'has_more': bool(category['has_more']),
             'page': page,
-            'can_generate_in_app': False,
+            'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',
         })
     if view == 'feed':
         from bot import database
@@ -228,7 +342,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
             }
             for card in cards if card.get('gen_type') in {'image', 'video'}
         ]
-        return response({'ok': True, 'items': items, 'can_generate_in_app': False})
+        return response({'ok': True, 'items': items, 'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'})
     raise ValueError('Unknown discovery view')
 
 
@@ -378,6 +492,9 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
+    app.router.add_post(root + '/vk-image-upload', _guard(vk_image_upload))
+    app.router.add_post(root + '/vk-image', _guard(vk_native_image))
+    app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))
