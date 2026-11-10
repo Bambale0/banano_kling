@@ -22,6 +22,7 @@ from .store import (
     linked_telegram_id,
     revoke_session,
 )
+from .vk_native import fetch_native_vk_state
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,27 @@ async def settings(request: web.Request) -> web.Response:
     else:
         policy = await load_policy()
     return response({'ok': True, 'settings': policy.payload()})
+
+
+async def vk_login(request: web.Request) -> web.Response:
+    """Enter the VK-owned login flow; never accept an actor ID from the URL.
+
+    VK will prompt for sign-in when needed and then supply fresh launch params.
+    The actual Mini App session still requires signature and timestamp checks.
+    """
+    policy = await load_policy()
+    if not policy.enabled or not policy.vk_app_id:
+        return response({'ok': False, 'error': 'VK Mini App is unavailable'}, 404)
+    # Fixed trusted origin, app ID from server-owned policy only. No next
+    # parameter, caller-supplied app ID or auth credentials in the redirect.
+    return web.Response(
+        status=303,
+        headers={
+            'Location': f'https://vk.com/app{policy.vk_app_id}',
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer',
+        },
+    )
 
 
 async def session(request: web.Request) -> web.Response:
@@ -124,6 +146,18 @@ def _vk_public_trend_card(card: dict) -> dict:
         'preview_poster_url': card.get('preview_poster_url'),
         'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
     }
+
+
+async def vk_native_state(request: web.Request) -> web.Response:
+    """Own native VK balance/history even when Telegram is never linked."""
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
+        raise PermissionError('Verified VK session required')
+    data = await fetch_native_vk_state(account.identity.external_id)
+    return response({'ok': True, **data})
 
 
 async def vk_public_discovery(request: web.Request) -> web.Response:
@@ -339,9 +373,11 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_route('POST', root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
     app.router.add_get(root + '/settings', _guard(settings))
     app.router.add_put(root + '/settings', _guard(settings))
+    app.router.add_get(root + '/vk-login', _guard(vk_login))
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
+    app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))

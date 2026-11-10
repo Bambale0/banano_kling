@@ -1,5 +1,5 @@
 import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
-import { accountLaunch } from './account-platform'
+import { accountLaunch, currentAccountPlatform, type AccountPlatform } from './account-platform'
 
 export interface AccountPreviewSettings {
   enabled: boolean
@@ -78,6 +78,12 @@ export async function saveAccountPreviewSettings(
 }
 
 async function withPreviewSession<T>(operation: (headers: Record<string, string>, accountId: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  // A signed VK Mini App already keeps its session in memory. Reuse it for
+  // profile/history/discovery instead of re-signing the original vk_ts query
+  // on every refresh (VK launch signatures expire while the app stays open).
+  if (activeAppSessionToken && activeAppSessionPlatform === 'vk' && currentAccountPlatform() === 'vk') {
+    return operation({ Authorization: `Bearer ${activeAppSessionToken}` }, activeAppAccountId)
+  }
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
     method: 'POST', signal, body: JSON.stringify(accountLaunch()),
   })
@@ -213,6 +219,32 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
   })).link, signal)
 }
 
+export interface VkNativeTask {
+  task_id: number
+  task_type: string
+  model: string
+  status: string
+  cost: number
+  result_url: string | null
+  created_at: string
+}
+
+export interface VkNativeState {
+  ok: true
+  registered: boolean
+  balance: number | null
+  is_blocked: boolean
+  tasks: VkNativeTask[]
+}
+
+export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNativeState> {
+  // Resolve a fresh signed VK identity for each read. The native VK balance
+  // is NEVER inferred from a Telegram identity or a client-supplied user ID.
+  return withPreviewSession(headers => request<VkNativeState>(
+    'vk-native-state', { headers, signal },
+  ), signal)
+}
+
 export interface VkPublicTrend {
   id: number
   title: string
@@ -285,6 +317,8 @@ export interface AccountPreviewAccess {
 }
 
 let activeAppSessionToken = ''
+let activeAppAccountId = ''
+let activeAppSessionPlatform: AccountPlatform | null = null
 
 async function revokeAppSession(token: string): Promise<void> {
   if (!token) return
@@ -300,10 +334,11 @@ async function revokeAppSession(token: string): Promise<void> {
 
 export async function startAccountAppSession(signal?: AbortSignal): Promise<AccountPreviewAccess> {
   if (activeAppSessionToken) await stopAccountAppSession()
+  const verifiedLaunch = accountLaunch()
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
     method: 'POST',
     signal,
-    body: JSON.stringify(accountLaunch()),
+    body: JSON.stringify(verifiedLaunch),
   })
   const token = login.session_token
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Не удалось подтвердить сессию ВК.')
@@ -313,12 +348,13 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
       headers: { Authorization: `Bearer ${token}` },
     })
     if (profile.account.id !== login.account.id) throw new Error('Не удалось подтвердить аккаунт.')
-    if (!profile.preview.telegram_linked) {
-      await revokeAppSession(token)
-      return profile.preview
-    }
+    // Even an unlinked VK account owns a real VK-side balance and history.
+    // Keep the same revocable session in memory for these endpoints without
+    // inventing a Telegram user or exposing the bearer to URL/storage.
     setPlatformSessionToken(token)
     activeAppSessionToken = token
+    activeAppAccountId = login.account.id
+    activeAppSessionPlatform = verifiedLaunch.platform
     return profile.preview
   } catch (error) {
     await revokeAppSession(token)
@@ -329,6 +365,8 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
 export async function stopAccountAppSession(): Promise<void> {
   const token = activeAppSessionToken
   activeAppSessionToken = ''
+  activeAppAccountId = ''
+  activeAppSessionPlatform = null
   clearPlatformSessionToken()
   await revokeAppSession(token)
 }

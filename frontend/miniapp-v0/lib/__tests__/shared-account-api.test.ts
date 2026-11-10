@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -103,7 +103,7 @@ test('linked VK application session stays in memory for the shared API', async (
   await stopAccountAppSession()
 })
 
-test('unlinked VK account does not retain an application credential', async () => {
+test('unlinked VK retains one revocable in-memory session for history refresh without re-signing', async () => {
   const query = 'vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=signed-value'
   window.history.replaceState({}, '', '/?' + query)
   const fetch = jest.mocked(global.fetch)
@@ -118,13 +118,25 @@ test('unlinked VK account does not retain an application credential', async () =
       telegram_bot_username: 'Neuromixx_bot',
       telegram_linked: false,
     },
+  })).mockResolvedValueOnce(reply(200, {
+    registered: true, balance: 12.5, is_blocked: false, tasks: [],
   })).mockResolvedValueOnce(reply(200))
 
   const access = await startAccountAppSession()
-
   expect(access.telegram_linked).toBe(false)
-  expect(setPlatformSessionToken).not.toHaveBeenCalled()
-  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(setPlatformSessionToken).toHaveBeenCalledWith('b'.repeat(43))
+  const history = await fetchVkNativeState()
+  expect(history.balance).toBe(12.5)
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/mini-app/api/account-preview/session',
+    '/mini-app/api/account-preview/me',
+    '/mini-app/api/account-preview/vk-native-state',
+  ])
+  expect(fetch.mock.calls[2][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: 'Bearer ' + 'b'.repeat(43),
+  }))
+  await stopAccountAppSession()
+  expect(fetch.mock.calls[3][0]).toBe('/mini-app/api/account-preview/logout')
 })
 
 test('quick invitation submits signed source consent only with the connect click', async () => {

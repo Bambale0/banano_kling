@@ -1,11 +1,12 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkNativeState } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
+  fetchVkNativeState: jest.fn(),
 }))
 
 const card = (id: number, title: string) => ({
@@ -17,6 +18,12 @@ const card = (id: number, title: string) => ({
 
 beforeEach(() => {
   jest.resetAllMocks()
+  jest.mocked(fetchVkNativeState).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5, is_blocked: false,
+    tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
+      status: 'completed', cost: 2.5, result_url: 'https://example.test/result.jpg',
+      created_at: '2026-11-09 12:00:00' }],
+  })
   jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
     ok: true,
     can_generate_in_app: false,
@@ -69,4 +76,14 @@ test('failed catalog read exposes a real retry', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Повторить загрузку' }))
   await waitFor(() => expect(fetchVkPublicDiscovery).toHaveBeenCalledTimes(2))
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+})
+
+test('VK-only sees native VK balance and its results without Telegram ID', async () => {
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText(/VK-баланс: 12.5/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByRole('link', { name: 'Открыть результат #7' }))
+    .toHaveAttribute('href', 'https://example.test/result.jpg')
+  expect(fetchVkNativeState).toHaveBeenCalled()
+  expect(screen.queryByText('Telegram ID')).not.toBeInTheDocument()
 })
