@@ -245,13 +245,15 @@ async def test_vk_only_public_trends_without_telegram(monkeypatch):
     from bot import database
 
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
     author = await database.get_or_create_user(97100001)
     trend = await database.create_prompt(
         author_id=author.id, title='Портрет',
         description='Вариант портрета',
         prompt_text='Unpublished recipe detail test only',
         tags=['trend'], category='photo', model='banana_pro',
-        generation_settings={'kind': 'image', 'user_fields': [
+        generation_settings={'kind': 'image', 'model': 'banana_pro', 'quality': '2K',
+                             'ratio': '1:1', 'user_fields': [
             {'key': 'age', 'label': 'Возраст', 'original_value': '37'}]},
     )
     await database.approve_prompt(trend['id'])
@@ -267,6 +269,8 @@ async def test_vk_only_public_trends_without_telegram(monkeypatch):
         cards = [item for group in data['categories'] for item in group['items']]
         match = next(x for x in cards if x['id'] == trend['id'])
         assert match['generation_type'] == 'image'
+        assert match['can_repeat_in_app'] is True
+        assert 'model' not in match and 'generation_settings' not in match
         assert 'prompt_text' not in match
         assert 'author_id' not in match
         assert '37' not in str(data)
@@ -276,11 +280,14 @@ async def test_vk_only_public_trends_without_telegram(monkeypatch):
         )
         assert category_page.status == 200, await category_page.text()
         listing = await category_page.json()
-        assert any(x['id'] == trend['id'] for x in listing['items'])
+        assert next(x for x in listing['items'] if x['id'] == trend['id'])['can_repeat_in_app'] is True
         assert 'Unpublished recipe detail' not in str(listing)
         for query in ('?view=category&category_id=abc', '?view=category&category_id=unassigned&page=1001'):
             assert (await client.get(ROOT + '/trends' + query, headers=headers)).status == 400
         assert (await client.get(ROOT + '/trends')).status == 401
+        monkeypatch.delenv('VK_MINIAPP_WRITES_ENABLED')
+        disabled = await (await client.get(ROOT + '/trends', headers=headers)).json()
+        assert all(not card['can_repeat_in_app'] for group in disabled['categories'] for card in group['items'])
 
 
 async def test_vk_only_feed_does_not_expose_foreign_source_or_identity(monkeypatch):
@@ -576,3 +583,314 @@ async def test_equal_external_ids_on_both_platforms_remain_different_accounts(mo
         telegram = await (await login(client)).json()
         vk = await (await client.post(ROOT + '/session', json={'platform': 'vk', 'launch_data': vk_launch(ADMIN)})).json()
         assert telegram['account']['id'] != vk['account']['id']
+
+
+async def test_vk_only_native_photo_submit_uses_verified_actor_not_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    submit = AsyncMock(return_value={'task_id': 41, 'cost': 2.5})
+    monkeypatch.setattr(api, 'submit_native_vk_image', submit, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        payload = {
+            'model': 'nano_banana_pro', 'prompt': 'Blue vase', 'aspect': '1:1',
+            'resolution': '2K', 'client_request_id': 'idempotency-test-00001',
+            'expected_cost': 2.5,
+        }
+        unauthorized = await client.post(ROOT + '/vk-image', json=payload)
+        assert unauthorized.status == 401
+        telegram = await login(client, 1001)
+        other_headers = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
+        assert (await client.post(ROOT + '/vk-image', json=payload, headers=other_headers)).status == 403
+        paid = await client.post(ROOT + '/vk-image', headers=headers, json={**payload, 'vk_user_id': 99999})
+        assert paid.status == 400
+        submit.assert_not_awaited()
+        paid = await client.post(ROOT + '/vk-image', headers=headers, json=payload)
+        assert paid.status == 200, await paid.text()
+        assert (await paid.json())['task_id'] == 41
+        submit.assert_awaited_once_with(2001, {**payload, 'reference_photos': []})
+
+
+async def test_vk_native_photo_submit_disabled_fail_closed(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.delenv('VK_MINIAPP_WRITES_ENABLED', raising=False)
+    submit = AsyncMock(return_value={'task_id': 1, 'cost': 2})
+    monkeypatch.setattr(api, 'submit_native_vk_image', submit, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        assert (await client.post(ROOT + '/vk-image', json={}, headers=headers)).status == 404
+        submit.assert_not_awaited()
+
+
+async def test_vk_trend_image_executes_hidden_approved_recipe_without_exposing_prompt(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from bot import database
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    submit = AsyncMock(return_value={'task_id': 81, 'cost': 2.5})
+    monkeypatch.setattr(api, 'submit_native_vk_image', submit, raising=False)
+    from bot.config import config
+    from bot.shared_accounts import vk_image_refs
+    monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
+    monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    image_folder = vk_image_refs.ROOT / '2001'
+    image_folder.mkdir(parents=True)
+    filename = 'a' * 32 + '.jpg'
+    (image_folder / filename).write_bytes(b'owned-image')
+    owned_image = 'https://example.test/uploads/vk-refs/image/2001/' + filename
+    author = await database.get_or_create_user(97100001)
+    trend = await database.create_prompt(
+        author_id=author.id, title='Тренд для VK',
+        description='Проверка', prompt_text='A private sunset on a lake',
+        tags=['trend'], category='photo', model='banana_pro',
+        generation_settings={'kind': 'image', 'model': 'banana_pro', 'ratio': '1:1', 'quality': '2K',
+                             'user_input': 'photo', 'count': 1},
+    )
+    await database.approve_prompt(trend['id'])
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        payload = {'trend_id': trend['id'], 'reference_urls': [owned_image], 'user_values': {},
+                   'client_request_id': 'trend-idempotent-00001', 'expected_cost': 2.5}
+        r = await client.post(ROOT + '/vk-trend', json=payload, headers=headers)
+        assert r.status == 200, await r.text()
+        assert 'A private sunset' not in await r.text()
+        submit.assert_awaited_once_with(2001, {
+            'model': 'nano_banana_pro', 'prompt': 'A private sunset on a lake',
+            'aspect': '1:1', 'resolution': '2K', 'client_request_id': 'trend-idempotent-00001',
+            'reference_photos': [owned_image], 'expected_cost': 2.5,
+        })
+        assert (await client.post(ROOT + '/vk-trend', json={**payload, 'reference_urls': ['https://example.test/photo.jpg']},
+                                  headers=headers)).status == 400
+
+
+async def test_vk_native_upload_is_jpeg_sanitized_owner_scoped_and_not_telegram(monkeypatch, tmp_path):
+    import io
+
+    from aiohttp import FormData
+    from PIL import Image
+
+    from bot.config import config
+    from bot.handlers.miniapp_regression_safety import install_miniapp_regression_safety
+    from bot.shared_accounts import vk_image_refs
+
+    # Production installs the legacy JSON guard globally. Keep that real
+    # integration in this regression even when this test is run in isolation.
+    install_miniapp_regression_safety()
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
+    monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    # CI runners can have less free space than the production storage floor.
+    # Keep image validation deterministic; quota/floor rejection has its own test.
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        vk_image_refs.os, 'statvfs',
+        lambda _path: SimpleNamespace(f_bavail=100 * 1024**3, f_frsize=1),
+    )
+    image = Image.new('RGB', (32, 28), (255, 0, 0))
+    output = io.BytesIO()
+    image.save(output, format='PNG')
+    binary = output.getvalue()
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        form = FormData()
+        form.add_field('image', binary, filename='face.png', content_type='image/png')
+        rejected = await client.post(ROOT + '/vk-image-upload', data=form)
+        assert rejected.status == 401
+        assert rejected.headers.get('Connection', '').lower() == 'close'
+        form = FormData()
+        form.add_field('image', binary, filename='face.png', content_type='image/png')
+        uploaded = await client.post(ROOT + '/vk-image-upload', data=form, headers=headers)
+        assert uploaded.status == 200, await uploaded.text()
+        url = (await uploaded.json())['url']
+        assert url.startswith('https://example.test/uploads/vk-refs/image/2001/')
+        assert vk_image_refs.verified_image_urls(2001, [url]) == [url]
+        with Image.open(vk_image_refs.ROOT / '2001' / url.rsplit('/', 1)[1]) as saved:
+            assert saved.format == 'JPEG' and saved.size == (32, 28)
+        with pytest.raises(ValueError):
+            vk_image_refs.verified_image_urls(2002, [url])
+        with pytest.raises(ValueError):
+            vk_image_refs.verified_image_urls(2001, ['https://evil.example/uploads/vk-refs/image/2001/' + 'a' * 32 + '.jpg'])
+        form = FormData()
+        form.add_field('image', b'spoofed-jpeg', filename='bad.jpg', content_type='image/jpeg')
+        bad = await client.post(ROOT + '/vk-image-upload', data=form, headers=headers)
+        assert bad.status == 400
+
+
+async def test_signed_native_write_rpc_rejects_tampering_and_nonlocal_origin(monkeypatch):
+    from bot.shared_accounts.vk_native import submit_native_vk_image
+
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'test-bridge')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    fake = web.Application()
+    async def image(request):
+        timestamp = request.headers.get('X-Internal-Timestamp', '')
+        signature = request.headers.get('X-Internal-Signature', '')
+        body = await request.read()
+        expected = hmac.new(
+            b'test-bridge',
+            b'\n'.join([timestamp.encode(), b'POST', request.path.encode(), body]),
+            hashlib.sha256,
+        ).hexdigest()
+        assert hmac.compare_digest(signature, expected)
+        assert json.loads(body)['prompt'] == 'blue vase'
+        return web.json_response({'ok': True, 'task_id': 71, 'cost': 2.5})
+    fake.router.add_post('/internal/v1/miniapp/users/2001/generations/image', image)
+    async with TestClient(TestServer(fake)) as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', 'http://127.0.0.1:' + str(client.server.port))
+        result = await submit_native_vk_image(2001, {'prompt': 'blue vase'})
+        assert result == {'task_id': 71, 'cost': 2.5}
+    monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', 'https://evil.example')
+    with pytest.raises(RuntimeError):
+        await submit_native_vk_image(2001, {'prompt': 'blue vase'})
+
+
+@pytest.mark.parametrize('native_status', [400, 402, 403, 409])
+async def test_vk_native_generation_preserves_actionable_rejections(monkeypatch, native_status):
+    """The app must distinguish bad quotes, empty balance, bans and retries."""
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'test-bridge')
+    native = web.Application()
+
+    async def reject(request):
+        await request.read()
+        # Native diagnostics are not safe public error messages.
+        return web.json_response({'error': 'private native diagnostic'}, status=native_status)
+
+    native.router.add_post('/internal/v1/miniapp/users/2001/generations/image', reject)
+    async with TestClient(TestServer(native)) as bridge, preview_client() as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', 'http://127.0.0.1:' + str(bridge.server.port))
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        result = await client.post(ROOT + '/vk-image', headers=headers, json={
+            'model': 'nano_banana_pro', 'prompt': 'Blue vase', 'aspect': '1:1',
+            'resolution': '2K', 'reference_photos': [],
+            'client_request_id': 'native-rejection-000001', 'expected_cost': 2.5,
+        })
+        assert result.status == native_status, await result.text()
+        assert 'private native diagnostic' not in await result.text()
+
+
+async def test_linked_vk_cannot_spend_a_second_native_wallet(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+    from tests.test_shared_account_links import pair
+
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    submit = AsyncMock(return_value={'task_id': 81, 'cost': 2.5})
+    monkeypatch.setattr(api, 'submit_native_vk_image', submit)
+    async with pair(monkeypatch) as (client, source, target):
+        created = await client.post(ROOT + '/links', headers=source, json={
+            'target_platform': 'vk', 'confirm_source': True,
+        })
+        invitation = (await created.json())['link']
+        linked = await client.post(ROOT + '/links/accept', headers=target, json={
+            'token': invitation['token'], 'confirm': True,
+        })
+        assert (await linked.json())['link']['state'] == 'committed'
+        fresh = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await fresh.json())['session_token']}
+        payload = {'model': 'nano_banana_pro', 'prompt': 'Blue vase', 'aspect': '1:1',
+                   'resolution': '2K', 'reference_photos': [],
+                   'client_request_id': 'linked-native-000001', 'expected_cost': 2.5}
+        for route in ('vk-image', 'vk-trend', 'vk-image-upload'):
+            denied = await client.post(ROOT + '/' + route, headers=headers, json=payload)
+            assert denied.status == 403, await denied.text()
+        submit.assert_not_awaited()
+
+
+async def test_vk_image_upload_rejects_unowned_references_and_stale_auth(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from bot.config import config
+    from bot.shared_accounts import api, vk_image_refs
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
+    monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    stored = vk_image_refs.ROOT / '2001'
+    stored.mkdir(parents=True)
+    filename = 'a' * 32 + '.jpg'
+    (stored / filename).write_bytes(b'owned')
+    owner_url = 'https://example.test/uploads/vk-refs/image/2001/' + filename
+    submit = AsyncMock(return_value={'task_id': 81, 'cost': 2.5})
+    monkeypatch.setattr(api, 'submit_native_vk_image', submit, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2002),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        payload = {'model': 'nano_banana_pro', 'prompt': 'Blue vase',
+                   'aspect': '1:1', 'resolution': '2K', 'reference_photos': [owner_url],
+                   'client_request_id': 'unique-00000000000001', 'expected_cost': 2.5}
+        rejected = await client.post(ROOT + '/vk-image', json=payload, headers=headers)
+        assert rejected.status == 400
+        submit.assert_not_awaited()
+        assert (await client.post(ROOT + '/logout', headers=headers)).status == 200
+        assert (await client.post(ROOT + '/vk-image', json=payload, headers=headers)).status == 401
+
+
+async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch, tmp_path):
+    import io
+
+    from PIL import Image
+
+    from bot.config import config
+    from bot.shared_accounts import vk_image_refs
+
+    monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
+    monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        vk_image_refs.os, 'statvfs',
+        lambda _path: SimpleNamespace(f_bavail=100 * 1024**3, f_frsize=1),
+    )
+    image = Image.new('RGB', (24, 24), 'orange')
+    blob = io.BytesIO()
+    image.save(blob, format='PNG')
+    monkeypatch.setenv('VK_MINIAPP_REF_MAX_FILES_PER_USER', '1')
+    url = await vk_image_refs.save_vk_image(2001, blob.getvalue())
+    assert vk_image_refs.verified_image_urls(2001, [url]) == [url]
+    with pytest.raises(ValueError, match='Maximum uploaded'):
+        await vk_image_refs.save_vk_image(2001, blob.getvalue())
+    monkeypatch.setenv('VK_MINIAPP_REF_MAX_FILES_PER_USER', '100')
+    monkeypatch.setenv('VK_MINIAPP_REF_MIN_FREE_BYTES', str(2**60))
+    with pytest.raises(ValueError, match='temporarily full'):
+        await vk_image_refs.save_vk_image(2001, blob.getvalue())
+    assert len(list((vk_image_refs.ROOT / '2001').iterdir())) == 1

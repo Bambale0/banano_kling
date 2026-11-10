@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { VkGenerationPanel } from './vk-generation-panel'
 import {
   fetchVkPublicCategory,
   fetchVkPublicDiscovery,
@@ -29,7 +30,7 @@ function Preview({ image, video, title }: { image?: string | null; video?: strin
   </div>
 }
 
-function TrendCard({ item }: { item: VkPublicTrend }) {
+function TrendCard({ item, onRepeat }: { item: VkPublicTrend; onRepeat?: (item: VkPublicTrend) => void }) {
   return <article className="min-w-0 rounded-2xl border border-border/70 bg-card p-2">
     <Preview
       image={item.preview_poster_url || item.preview_url}
@@ -40,6 +41,10 @@ function TrendCard({ item }: { item: VkPublicTrend }) {
       <div className="text-xs text-muted-foreground">{item.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'}</div>
       <h4 className="line-clamp-2 text-sm font-semibold">{item.title}</h4>
       {item.description ? <p className="line-clamp-2 text-xs text-muted-foreground">{item.description}</p> : null}
+      {item.can_repeat_in_app && onRepeat ? <button type="button" onClick={() => onRepeat(item)}
+        className="mt-1 w-full rounded-lg border border-primary px-2 py-2 text-xs font-medium text-primary">
+        Повторить «{item.title}»
+      </button> : null}
     </div>
   </article>
 }
@@ -60,6 +65,8 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
 export function VkStandaloneDiscovery() {
   const [view, setView] = useState<'trends' | 'feed' | 'mine'>('trends')
   const [native, setNative] = useState<VkNativeState | null>(null)
+  const [repeatItem, setRepeatItem] = useState<VkPublicTrend | null>(null)
+  const [createPhoto, setCreatePhoto] = useState(false)
   const [nativeError, setNativeError] = useState('')
   const [nativeRetry, setNativeRetry] = useState(0)
   const [categoryId, setCategoryId] = useState<string | number | null>(null)
@@ -69,6 +76,24 @@ export function VkStandaloneDiscovery() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
   const [retry, setRetry] = useState(0)
+  // Poll only active tasks while the owner is watching their history. A
+  // completed/failed result stops the timer; background tabs make no requests.
+  // Treat an incomplete response as unavailable history, not an empty history.
+  // Never let a malformed native-state response blank the whole VK catalog.
+  const nativeTasks = Array.isArray(native?.tasks) ? native.tasks : null
+  const hasActiveVkTask = nativeTasks?.some(task =>
+    ['pending', 'submitting', 'processing', 'queued'].includes(task.status),
+  ) === true
+
+  useEffect(() => {
+    if (view !== 'mine' || !hasActiveVkTask) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setNativeRetry(current => current + 1)
+      }
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [view, hasActiveVkTask])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -115,6 +140,8 @@ export function VkStandaloneDiscovery() {
 
   const switchView = (next: 'trends' | 'feed' | 'mine') => {
     setView(next)
+    setRepeatItem(null)
+    setCreatePhoto(false)
     setCategoryId(null)
     setCategory(null)
     setDiscovery(null)
@@ -132,6 +159,13 @@ export function VkStandaloneDiscovery() {
           : native ? <span>Вы ещё не начинали работу в VK-боте.</span>
             : <span>Загружаем VK-баланс…</span>}
     </div>
+    {((discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app)
+      || category?.can_generate_in_app) && <button type="button"
+        className="w-full rounded-xl bg-primary p-3 font-semibold text-primary-foreground"
+        onClick={() => { setRepeatItem(null); setCreatePhoto(true) }}>Создать фото</button>}
+    {(createPhoto || repeatItem) ? <VkGenerationPanel key={repeatItem?.id ?? 'new'}
+      trend={repeatItem ?? undefined} onClose={() => { setCreatePhoto(false); setRepeatItem(null) }}
+      onFinished={() => setNativeRetry(v => v + 1)} /> : null}
     <div className="flex flex-wrap gap-2">
       <button type="button" aria-pressed={view === 'trends'}
         onClick={() => switchView('trends')}
@@ -156,8 +190,9 @@ export function VkStandaloneDiscovery() {
       </div>
       {!native && !nativeError ? <p role="status">Загружаем историю…</p> : null}
       {native?.is_blocked ? <p role="alert">Доступ VK-бота ограничен. Обратитесь в поддержку.</p> : null}
-      {native && native.tasks.length === 0 ? <p>Генераций пока нет.</p> : null}
-      {native?.tasks.map(task => (
+      {native && nativeTasks === null ? <p role="alert">История работ временно недоступна. Обновите список.</p> : null}
+      {native && nativeTasks?.length === 0 ? <p>Генераций пока нет.</p> : null}
+      {nativeTasks?.map(task => (
         <article key={task.task_id} className="space-y-1 rounded-xl border border-border/70 bg-card p-3 text-sm">
           <p className="font-medium">#{task.task_id} · {task.task_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · {task.model}</p>
           <p className="text-muted-foreground">Статус: {task.status === 'completed' ? 'Готово' : task.status === 'failed' ? 'Ошибка' : 'В работе'} · {task.cost} 🍌</p>
@@ -181,7 +216,8 @@ export function VkStandaloneDiscovery() {
     {view !== 'mine' && categoryId !== null && category ? <>
       <h3 className="text-lg font-semibold">{category.category.emoji} {category.category.title}</h3>
       <div className="grid grid-cols-2 gap-3">
-        {category.items.map(item => <TrendCard key={item.id} item={item} />)}
+        {category.items.map(item => <TrendCard key={item.id} item={item}
+          onRepeat={selected => { setRepeatItem(selected); setCreatePhoto(false) }} />)}
       </div>
       {category.has_more ? <button type="button" disabled={busy}
         onClick={() => setPage(value => value + 1)} className="w-full rounded-xl border border-border p-3 text-sm">
@@ -199,7 +235,8 @@ export function VkStandaloneDiscovery() {
             : null}
         </div>
         <div className="grid grid-cols-2 gap-3">
-          {group.items.map(item => <TrendCard key={item.id} item={item} />)}
+          {group.items.map(item => <TrendCard key={item.id} item={item}
+            onRepeat={selected => { setRepeatItem(selected); setCreatePhoto(false) }} />)}
         </div>
       </div>
     )) : null}
@@ -209,9 +246,9 @@ export function VkStandaloneDiscovery() {
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">
-      Просмотр открыт без Telegram. Оплачиваемый повтор непосредственно в Mini App
-      появится после подключения защищённого VK-баланса и создания задач.
-      Пока генерация доступна в боте сообщества.
+      {(discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app) || category?.can_generate_in_app
+        ? 'Фото и доступные фото-тренды создаются с VK-баланса. Видеотренды и другие сценарии пока доступны в боте сообщества.'
+        : 'Просмотр открыт без Telegram. Оплачиваемый повтор непосредственно в Mini App появится после подключения защищённого VK-баланса и создания задач. Пока генерация доступна в боте сообщества.'}
     </p>
   </section>
 }

@@ -3065,3 +3065,31 @@ Verification progress:
 - Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
 - Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
 - Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.
+
+
+## 2026-11-10 — VK-only native image Mini App PR #447 release gate
+- Baseline: tanyapi b896e1e69f01a69945f448470d0d2b47f1f4566a; draft head b73da2f6f57ad9a331f74425eec790d6afb5a351; native VK master d9b419bb425c3143c17f8d58ed92e862b09774fc.
+- Goal: signed VK-only actor can quote, upload scoped references, submit an idempotent native VK photo, repeat supported approved image trend and see native VK tasks/history without Telegram. Photo only, no video parity or live shared-wallet migration claimed.
+- Root causes: legacy add_post JSON guard intercepts multipart; sanitized trend loses model/quality before eligibility; browser misreads type as field_type; Cyrillic text may exceed 32-KiB backend JSON limit.
+- Corrections: direct multipart route behind signed auth, pre-sanitization eligibility flag, linked wallet double-writer guard, accurate native error mapping 402/409, field type and UTF-8 request-size validation before auth.
+- Verification: safe backend suite 4921 passed / 283 skipped and 83 subtests; focused VK frontend 20 passed; TypeScript passed. Earlier CI head failed on multipart; new code requires fresh CI and exact production SHA check.
+- Rollout safety: VK Mini App writes flag is enabled in both production .env files but current VK image route remains 404. Reconcile feature flags before deployment. No payment/ledger migration or live wallet writes in this work.
+- Rollback: disable VK writes flag in both services, preserve tasks/refunds/ledger and reference files; no blind re-submit of ambiguous provider requests.
+- Playbooks: Bambale0/skills diagnosing-bugs+tdd+code-review, Bambale0/claw backend-integration, anthropics webapp-testing.
+
+
+## 2026-11-10 — VK-only task completion visibility
+- User scenario: VK-only user creates a native photo and watches the My Works section; results must become visible without Telegram and without manual page refresh.
+- Root cause: VK standalone discovery fetched native state only at mount or manual refresh; a completed async task was invisible until the user pressed Refresh.
+- TDD: added a failing Jest case (native state fetched only once after task is processing), then a visibility-gated 15-second refresh only while the My Works section is open and a task is queued, pending, submitting or processing. It stops automatically on completion, unmount, and view switch.
+- Scope: no changes to payments, balances, provider tasks, auth, identity, linking, webhook or secrets.
+- Verification: focused frontend suite 7/7 and TypeScript check. Rollout stays under PR #447 and its feature flag gate.
+- Remaining gaps: native VK writes in this PR are photo-only; video, motion, payments, real-device VK signed-launch, and key-rotation security gates remain separately unverified.
+
+
+## 2026-11-10 — PR #447 VK E2E missing-tasks regression
+- CI run 42881458591 browser-e2e failed at shared-account administrator preview with Cannot read properties of undefined (reading some); a mocked native-state response had no tasks field.
+- Root cause: task auto-refresh assumed tasks existed on every response, and work history also accessed native.tasks without guarding missing fields.
+- TDD: added a failing incomplete-native-state test (crash reproduced), then normalized runtime tasks through Array.isArray and made incomplete history explicitly unavailable rather than falsely empty. The catalog still renders and no automatic retry is triggered for malformed data.
+- Verification: 8/8 focused Jest tests, TypeScript and ESLint passed; full production Telegram export and exact e2e/shared-account-preview.mjs passed on both admin and nonadmin, with VK entry checks at width 430. An initial local attempt built VK export (instead of the Telegram export expected by this particular script) and failed at a missing Profile button; the corrected CI-equivalent command passes.
+- Scope: read-only UI robustness only; no provider, balance, auth, shared-wallet or VK secret changes.

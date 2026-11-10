@@ -1,12 +1,15 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkNativeState } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
   fetchVkNativeState: jest.fn(),
+  repeatVkTrend: jest.fn(),
+  generateVkImage: jest.fn(),
+  uploadVkImage: jest.fn(),
 }))
 
 const card = (id: number, title: string) => ({
@@ -86,4 +89,106 @@ test('VK-only sees native VK balance and its results without Telegram ID', async
     .toHaveAttribute('href', 'https://example.test/result.jpg')
   expect(fetchVkNativeState).toHaveBeenCalled()
   expect(screen.queryByText('Telegram ID')).not.toBeInTheDocument()
+})
+
+
+test('incomplete native state does not blank trends or the work history', async () => {
+  jest.mocked(fetchVkNativeState).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5, is_blocked: false,
+    // The production API requires tasks, but an older client/mocked response
+    // may omit it. Missing history must never crash the entire application.
+  } as unknown as Awaited<ReturnType<typeof fetchVkNativeState>>)
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  expect(screen.getByText(/VK-баланс: 12.5/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(screen.getByRole('alert')).toHaveTextContent('История работ временно недоступна')
+})
+
+test('unfinished VK task refreshes automatically while work history is open, then stops', async () => {
+  jest.useFakeTimers()
+  try {
+    const working = {
+      ok: true as const, registered: true, balance: 12.5, is_blocked: false,
+      tasks: [{ task_id: 95, task_type: 'photo', model: 'nano_banana_pro',
+        status: 'processing', cost: 2.5, result_url: null, created_at: '2026-11-10 12:00:00' }],
+    }
+    const completed = {
+      ...working, tasks: [{ ...working.tasks[0], status: 'completed',
+        result_url: 'https://example.test/completed.jpg' }],
+    }
+    jest.mocked(fetchVkNativeState)
+      .mockResolvedValueOnce(working)
+      .mockResolvedValue(completed)
+    render(<VkStandaloneDiscovery />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+    expect(screen.getByText(/#95/)).toBeInTheDocument()
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      jest.advanceTimersByTime(15000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('link', { name: 'Открыть результат #95' }))
+      .toHaveAttribute('href', 'https://example.test/completed.jpg')
+    await act(async () => { jest.advanceTimersByTime(30000) })
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(2)
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('signed VK-only user quotes and repeats a photo trend without Telegram', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: true,
+    categories: [{ id: 77, title: 'Портреты', emoji: '🎨', total: 1,
+      items: [{ ...card(5, 'Ретро портрет'), can_repeat_in_app: true,
+        user_fields: [
+          { key: 'age', label: 'Возраст', type: 'number', required: true },
+          { key: 'date', label: 'Дата', type: 'date', required: true },
+        ] }] }],
+  })
+  jest.mocked(uploadVkImage).mockResolvedValue('https://example.test/uploads/vk-refs/image/2001/' + 'a'.repeat(32) + '.jpg')
+  jest.mocked(repeatVkTrend)
+    .mockResolvedValueOnce({ ok: true, task_id: 0, cost: 2.5, quote_only: true })
+    .mockResolvedValueOnce({ ok: true, task_id: 73, cost: 2.5 })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Повторить «Ретро портрет»' }))
+  expect(screen.getByLabelText('Возраст')).toHaveAttribute('type', 'number')
+  expect(screen.getByLabelText('Дата')).toHaveAttribute('type', 'date')
+  fireEvent.change(screen.getByLabelText('Возраст'), { target: { value: '33' } })
+  fireEvent.change(screen.getByLabelText('Дата'), { target: { value: '2026-11-10' } })
+  const file = new File(['fake image'], 'face.jpg', { type: 'image/jpeg' })
+  fireEvent.change(screen.getByLabelText('Фото-референсы'), { target: { files: [file] } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  expect(await screen.findByRole('button', { name: 'Создать за 2.5 🍌' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Создать за 2.5 🍌' }))
+  expect(await screen.findByText(/Задача #73 создана/)).toBeInTheDocument()
+  const paid = jest.mocked(repeatVkTrend).mock.calls[1][0]
+  expect(paid.trend_id).toBe(5)
+  expect(paid.expected_cost).toBe(2.5)
+  expect(paid.user_values).toEqual({ age: '33', date: '2026-11-10' })
+  expect(paid.reference_urls).toHaveLength(1)
+  expect(paid.client_request_id).toMatch(/^[A-Za-z0-9_-]{16,80}$/)
+  expect(screen.queryByText('Привяжите Telegram')).not.toBeInTheDocument()
+})
+
+test('VK-only can quote and create an image using native VK wallet', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: true, categories: [],
+  })
+  jest.mocked(generateVkImage)
+    .mockResolvedValueOnce({ ok: true, task_id: 0, cost: 2.5, quote_only: true })
+    .mockResolvedValueOnce({ ok: true, task_id: 74, cost: 2.5 })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать фото' }))
+  fireEvent.change(screen.getByLabelText('Промпт'), { target: { value: 'A castle on the moon' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать за 2.5 🍌' }))
+  expect(await screen.findByText(/Задача #74 создана/)).toBeInTheDocument()
+  expect(jest.mocked(generateVkImage).mock.calls[1][0]).toEqual(expect.objectContaining({
+    prompt: 'A castle on the moon', expected_cost: 2.5, model: 'nano_banana_pro',
+  }))
 })
