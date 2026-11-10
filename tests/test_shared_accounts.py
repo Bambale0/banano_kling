@@ -692,6 +692,13 @@ async def test_vk_native_upload_is_jpeg_sanitized_owner_scoped_and_not_telegram(
     monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
     monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
     monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    # CI runners can have less free space than the production storage floor.
+    # Keep image validation deterministic; quota/floor rejection has its own test.
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        vk_image_refs.os, 'statvfs',
+        lambda _path: SimpleNamespace(f_bavail=100 * 1024**3, f_frsize=1),
+    )
     image = Image.new('RGB', (32, 28), (255, 0, 0))
     output = io.BytesIO()
     image.save(output, format='PNG')
@@ -795,6 +802,11 @@ async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch
 
     monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
     monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        vk_image_refs.os, 'statvfs',
+        lambda _path: SimpleNamespace(f_bavail=100 * 1024**3, f_frsize=1),
+    )
     image = Image.new('RGB', (24, 24), 'orange')
     blob = io.BytesIO()
     image.save(blob, format='PNG')
