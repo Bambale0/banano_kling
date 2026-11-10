@@ -92,6 +92,19 @@ test('VK-only sees native VK balance and its results without Telegram ID', async
 })
 
 
+test('incomplete native state does not blank trends or the work history', async () => {
+  jest.mocked(fetchVkNativeState).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5, is_blocked: false,
+    // The production API requires tasks, but an older client/mocked response
+    // may omit it. Missing history must never crash the entire application.
+  } as unknown as Awaited<ReturnType<typeof fetchVkNativeState>>)
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  expect(screen.getByText(/VK-баланс: 12.5/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(screen.getByRole('alert')).toHaveTextContent('История работ временно недоступна')
+})
+
 test('unfinished VK task refreshes automatically while work history is open, then stops', async () => {
   jest.useFakeTimers()
   try {

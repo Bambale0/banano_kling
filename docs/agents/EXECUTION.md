@@ -3085,3 +3085,11 @@ Verification progress:
 - Scope: no changes to payments, balances, provider tasks, auth, identity, linking, webhook or secrets.
 - Verification: focused frontend suite 7/7 and TypeScript check. Rollout stays under PR #447 and its feature flag gate.
 - Remaining gaps: native VK writes in this PR are photo-only; video, motion, payments, real-device VK signed-launch, and key-rotation security gates remain separately unverified.
+
+
+## 2026-11-10 — PR #447 VK E2E missing-tasks regression
+- CI run 42881458591 browser-e2e failed at shared-account administrator preview with Cannot read properties of undefined (reading some); a mocked native-state response had no tasks field.
+- Root cause: task auto-refresh assumed tasks existed on every response, and work history also accessed native.tasks without guarding missing fields.
+- TDD: added a failing incomplete-native-state test (crash reproduced), then normalized runtime tasks through Array.isArray and made incomplete history explicitly unavailable rather than falsely empty. The catalog still renders and no automatic retry is triggered for malformed data.
+- Verification: 8/8 focused Jest tests, TypeScript and ESLint passed; full production Telegram export and exact e2e/shared-account-preview.mjs passed on both admin and nonadmin, with VK entry checks at width 430. An initial local attempt built VK export (instead of the Telegram export expected by this particular script) and failed at a missing Profile button; the corrected CI-equivalent command passes.
+- Scope: read-only UI robustness only; no provider, balance, auth, shared-wallet or VK secret changes.

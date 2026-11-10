@@ -78,7 +78,10 @@ export function VkStandaloneDiscovery() {
   const [retry, setRetry] = useState(0)
   // Poll only active tasks while the owner is watching their history. A
   // completed/failed result stops the timer; background tabs make no requests.
-  const hasActiveVkTask = native?.tasks.some(task =>
+  // Treat an incomplete response as unavailable history, not an empty history.
+  // Never let a malformed native-state response blank the whole VK catalog.
+  const nativeTasks = Array.isArray(native?.tasks) ? native.tasks : null
+  const hasActiveVkTask = nativeTasks?.some(task =>
     ['pending', 'submitting', 'processing', 'queued'].includes(task.status),
   ) === true
 
@@ -187,8 +190,9 @@ export function VkStandaloneDiscovery() {
       </div>
       {!native && !nativeError ? <p role="status">Загружаем историю…</p> : null}
       {native?.is_blocked ? <p role="alert">Доступ VK-бота ограничен. Обратитесь в поддержку.</p> : null}
-      {native && native.tasks.length === 0 ? <p>Генераций пока нет.</p> : null}
-      {native?.tasks.map(task => (
+      {native && nativeTasks === null ? <p role="alert">История работ временно недоступна. Обновите список.</p> : null}
+      {native && nativeTasks?.length === 0 ? <p>Генераций пока нет.</p> : null}
+      {nativeTasks?.map(task => (
         <article key={task.task_id} className="space-y-1 rounded-xl border border-border/70 bg-card p-3 text-sm">
           <p className="font-medium">#{task.task_id} · {task.task_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · {task.model}</p>
           <p className="text-muted-foreground">Статус: {task.status === 'completed' ? 'Готово' : task.status === 'failed' ? 'Ошибка' : 'В работе'} · {task.cost} 🍌</p>
