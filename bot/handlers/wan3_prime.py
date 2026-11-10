@@ -22,6 +22,8 @@ from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
+from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycleError
+from bot.services.wan3_prime_media import Wan3PrimeValidationError
 from bot.services.wan3_prime_service import Wan3PrimeService
 
 logger = logging.getLogger(__name__)
@@ -1102,7 +1104,7 @@ async def quote_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
             client_request_id=draft.client_request_id,
             recipe=build_wan3_payload(draft),
         )
-    except (ValueError, RuntimeError) as exc:
+    except (ValueError, RuntimeError):
         await callback.message.answer("Не удалось проверить материалы и настройки. Проверьте файлы и попробуйте снова.", parse_mode=None)
         await callback.answer("Проверьте материалы и настройки", show_alert=True)
         return
@@ -1140,8 +1142,8 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Запуск уже отправляется. Повтор использует тот же ключ.", show_alert=True)
         return
     async with lock:
-        runtime = await _runtime()
         try:
+            runtime = await _runtime()
             result = await runtime.launch_telegram_wan3_prime(
                 telegram_id=actor_id,
                 client_request_id=draft.client_request_id,
@@ -1149,8 +1151,36 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
                 quote_hash=draft.quote_hash,
                 recipe=build_wan3_payload(draft),
             )
-        except Exception:  # noqa: BLE001 - FSM boundary preserves draft and reports safe failure
-            await callback.answer("Сеть оборвалась. Ключ запуска сохранён; повторите подтверждение.", show_alert=True)
+        except Wan3PrimeLifecycleError as exc:
+            logger.warning(
+                "Wan3 Telegram confirm rejected: telegram_id=%s client_request_id=%s code=%s error_type=%s",
+                actor_id, draft.client_request_id, exc.code, type(exc).__name__,
+            )
+            if exc.code in {"stale_quote", "missing_quote"}:
+                invalidate_quote(draft)
+                await state.update_data(**draft_to_state(draft))
+                message = "Расчёт устарел. Вернитесь в дашборд и рассчитайте стоимость заново."
+            elif exc.code == "insufficient_credits":
+                message = "Недостаточно кредитов для запуска. Пополните баланс."
+            elif exc.code == "idempotency_conflict":
+                message = "Ключ уже связан с другой задачей. Откройте новую задачу."
+            else:
+                message = "Не удалось подтвердить запуск. Проверьте материалы и настройки."
+            await callback.answer(message, show_alert=True)
+            return
+        except Wan3PrimeValidationError as exc:
+            logger.warning(
+                "Wan3 Telegram confirm validation rejected: telegram_id=%s client_request_id=%s error_type=%s",
+                actor_id, draft.client_request_id, type(exc).__name__,
+            )
+            await callback.answer("Не удалось подтвердить запуск. Проверьте референсы и обновите расчёт.", show_alert=True)
+            return
+        except Exception as exc:  # retry with the same idempotency key
+            logger.exception(
+                "Wan3 Telegram confirm failed: telegram_id=%s client_request_id=%s error_type=%s",
+                actor_id, draft.client_request_id, type(exc).__name__,
+            )
+            await callback.answer("Не удалось подтвердить запуск. Ключ сохранён; повторите подтверждение.", show_alert=True)
             return
     status = str(result.get("status") or "unknown")
     internal_task_id = result.get("internal_task_id") or "неизвестен"
