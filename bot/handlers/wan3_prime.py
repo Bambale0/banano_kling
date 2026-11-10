@@ -1169,11 +1169,24 @@ async def confirm_wan3_prime(callback: types.CallbackQuery, state: FSMContext):
             await callback.answer(message, show_alert=True)
             return
         except Wan3PrimeValidationError as exc:
+            detail = str(exc)
+            if detail == "Result storage capacity is full; no funds were charged":
+                reason = "result_capacity_full"
+                message = ("Хранилище результатов Wan 3.0 временно заполнено. "
+                           "Запуск не выполнен, списаний нет. Повторите позже.")
+            elif detail == "Not enough result storage space; no funds were charged":
+                reason = "result_disk_space_low"
+                message = ("На сервере недостаточно места для результата Wan 3.0. "
+                           "Запуск не выполнен, списаний нет. Повторите позже.")
+            else:
+                reason = "media_or_recipe_validation"
+                message = "Не удалось подтвердить запуск. Проверьте референсы и обновите расчёт."
             logger.warning(
-                "Wan3 Telegram confirm validation rejected: telegram_id=%s client_request_id=%s error_type=%s",
-                actor_id, draft.client_request_id, type(exc).__name__,
+                "Wan3 Telegram confirm validation rejected: telegram_id=%s "
+                "client_request_id=%s error_type=%s status=%s reason=%s",
+                actor_id, draft.client_request_id, type(exc).__name__, exc.status, reason,
             )
-            await callback.answer("Не удалось подтвердить запуск. Проверьте референсы и обновите расчёт.", show_alert=True)
+            await callback.answer(message, show_alert=True)
             return
         except Exception as exc:  # retry with the same idempotency key
             logger.exception(
