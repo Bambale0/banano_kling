@@ -461,9 +461,18 @@ def _guard(handler):
             return await handler(request)
         except AuthenticationError as exc:
             logger.info('shared_account_authentication_rejected path=%s reason=%s', request.path, str(exc))
-            return response({'ok': False, 'error': str(exc)}, 401)
+            denied = response({'ok': False, 'error': str(exc)}, 401)
+            # An unauthenticated multipart upload has not been consumed.
+            # Never reuse its keep-alive connection: the unread boundary can
+            # corrupt parsing of the next authorized request on that socket.
+            if request.path.endswith('/vk-image-upload'):
+                denied.force_close()
+            return denied
         except PermissionError as exc:
-            return response({'ok': False, 'error': str(exc)}, 403)
+            denied = response({'ok': False, 'error': str(exc)}, 403)
+            if request.path.endswith('/vk-image-upload'):
+                denied.force_close()
+            return denied
         except PreviewConflict as exc:
             return response({'ok': False, 'error': str(exc)}, 409)
         except LinkExpired:
