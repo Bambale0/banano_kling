@@ -130,6 +130,7 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         profile_data = await profile.json()
         assert profile_data['account']['id'] == session['account']['id']
         assert profile_data['preview']['telegram_bot_username'] == 'Neuromixx_bot'
+        assert profile_data['preview']['vk_community_id'] is None
         assert profile_data['preview']['telegram_linked'] is False
         assert profile_data['preview']['linked_platforms'] == ['telegram']
         again = await (await login(client)).json()
@@ -137,6 +138,102 @@ async def test_admin_can_login_and_reuse_a_platform_neutral_account(monkeypatch)
         assert 'credits' not in session['account']  # No invented/migrated wallet.
         assert (await client.post(ROOT + '/logout', headers=headers)).status == 200
         assert (await client.get(ROOT + '/me', headers=headers)).status == 401
+
+
+async def test_vk_only_session_reveals_configured_native_chat_without_telegram(monkeypatch):
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        profile = await (await client.get(ROOT + '/me', headers=headers)).json()
+        assert profile['preview']['vk_community_id'] == 239915802
+        assert profile['preview']['telegram_linked'] is False
+        assert (await client.get(ROOT + '/wallet', headers=headers)).status == 403
+
+
+async def test_vk_only_public_trends_without_telegram(monkeypatch):
+    from bot import database
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    author = await database.get_or_create_user(97100001)
+    trend = await database.create_prompt(
+        author_id=author.id, title='Портрет',
+        description='Вариант портрета',
+        prompt_text='Unpublished recipe detail test only',
+        tags=['trend'], category='photo', model='banana_pro',
+        generation_settings={'kind': 'image', 'user_fields': [
+            {'key': 'age', 'label': 'Возраст', 'original_value': '37'}]},
+    )
+    await database.approve_prompt(trend['id'])
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        response = await client.get(ROOT + '/trends', headers=headers)
+        assert response.status == 200, await response.text()
+        data = await response.json()
+        cards = [item for group in data['categories'] for item in group['items']]
+        match = next(x for x in cards if x['id'] == trend['id'])
+        assert match['generation_type'] == 'image'
+        assert 'prompt_text' not in match
+        assert 'author_id' not in match
+        assert '37' not in str(data)
+        category_page = await client.get(
+            ROOT + '/trends?view=category&category_id=unassigned&page=1',
+            headers=headers,
+        )
+        assert category_page.status == 200, await category_page.text()
+        listing = await category_page.json()
+        assert any(x['id'] == trend['id'] for x in listing['items'])
+        assert 'Unpublished recipe detail' not in str(listing)
+        for query in ('?view=category&category_id=abc', '?view=category&category_id=unassigned&page=1001'):
+            assert (await client.get(ROOT + '/trends' + query, headers=headers)).status == 400
+        assert (await client.get(ROOT + '/trends')).status == 401
+
+
+async def test_vk_only_feed_does_not_expose_foreign_source_or_identity(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot import database
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    get_feed = AsyncMock(return_value=[{
+        'id': 123, 'gen_type': 'video', 'likes_count': 8,
+        'preview_url': 'https://example.test/preview.jpg',
+        'result_url': 'https://example.test/video.mp4',
+        'prompt': 'nonpublic recipe',
+        'reference_images': ['https://example.test/reference.jpg'],
+        'author_telegram_id': 99111,
+        'is_mine': True,
+    }])
+    monkeypatch.setattr(database, 'get_feed_generations', get_feed)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        auth = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await auth.json())['session_token']}
+        response = await client.get(ROOT + '/trends?view=feed', headers=headers)
+        assert response.status == 200
+        payload = await response.json()
+        assert payload['items'] == [{
+            'id': 123, 'generation_type': 'video',
+            'preview_url': 'https://example.test/preview.jpg',
+            'result_url': 'https://example.test/video.mp4',
+            'likes_count': 8,
+        }]
+        assert get_feed.await_args.kwargs['viewer_user_id'] is None
+        assert get_feed.await_args.kwargs['include_unavailable'] is False
+        assert (await client.get(ROOT + '/trends?view=private', headers=headers)).status == 400
+        telegram = await login(client, 1001)
+        tg_headers = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
+        assert (await client.get(ROOT + '/trends', headers=tg_headers)).status == 403
 
 
 async def test_enabled_preview_allows_ordinary_telegram_linking_but_not_admin_surfaces():

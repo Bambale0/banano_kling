@@ -213,9 +213,72 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
   })).link, signal)
 }
 
+export interface VkPublicTrend {
+  id: number
+  title: string
+  description: string
+  preview_url: string | null
+  preview_poster_url: string | null
+  generation_type: 'image' | 'video'
+}
+
+export interface VkPublicTrendCategory {
+  id: number | string
+  title: string
+  emoji: string
+  total: number
+  items: VkPublicTrend[]
+}
+
+export interface VkPublicFeedItem {
+  id: number
+  generation_type: 'image' | 'video'
+  preview_url: string | null
+  result_url: string | null
+  likes_count: number
+}
+
+export type VkPublicDiscovery =
+  | { ok: true; categories: VkPublicTrendCategory[]; can_generate_in_app: false }
+  | { ok: true; items: VkPublicFeedItem[]; can_generate_in_app: false }
+
+export async function fetchVkPublicDiscovery(
+  view: 'trends' | 'feed',
+  signal?: AbortSignal,
+): Promise<VkPublicDiscovery> {
+  // A new signed VK bearer is scoped to this read-only request, then revoked.
+  // Never create or impersonate a Telegram user to fetch public media.
+  return withPreviewSession(headers => request<VkPublicDiscovery>(
+    'trends' + (view === 'feed' ? '?view=feed' : ''),
+    { headers, signal },
+  ), signal)
+}
+
+export interface VkPublicCategoryPage {
+  ok: true
+  category: { id: number | string; title: string; emoji: string }
+  items: VkPublicTrend[]
+  page: number
+  has_more: boolean
+  can_generate_in_app: false
+}
+
+export async function fetchVkPublicCategory(
+  categoryId: number | string, page = 1, signal?: AbortSignal,
+): Promise<VkPublicCategoryPage> {
+  if (!Number.isSafeInteger(page) || page < 1 || page > 1000) {
+    throw new Error('Некорректная страница трендов.')
+  }
+  return withPreviewSession(headers => request<VkPublicCategoryPage>(
+    'trends?view=category&category_id=' + encodeURIComponent(categoryId) + '&page=' + page,
+    { headers, signal },
+  ), signal)
+}
+
 export interface AccountPreviewAccess {
   revision: number
   vk_app_id: number | null
+  vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
   linked_platforms?: ('telegram' | 'vk')[]

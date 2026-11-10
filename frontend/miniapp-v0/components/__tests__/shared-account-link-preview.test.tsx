@@ -4,7 +4,7 @@ import { SharedAccountLinkPreview } from '../shared-account-link-preview'
 import {
   acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, previewAccountLink, updateAccountLink,
 } from '@/lib/shared-account-api'
-import { accountLinkUrl, currentAccountPlatform, incomingAccountLink } from '@/lib/account-platform'
+import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, nativeTelegramMiniAppUrl } from '@/lib/account-platform'
 import { buildTelegramMiniAppUrl } from '@/lib/api'
 
 jest.mock('@/lib/api', () => ({ buildTelegramMiniAppUrl: jest.fn(() => 'https://t.me/configured_bot?startapp') }))
@@ -14,6 +14,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchAccountPreviewAccess: jest.fn(),
 }))
 jest.mock('@/lib/account-platform', () => ({
+  ...jest.requireActual('@/lib/account-platform'),
   currentAccountPlatform: jest.fn(), accountLinkUrl: jest.fn(), incomingAccountLink: jest.fn(),
 }))
 
@@ -57,13 +58,31 @@ afterEach(() => {
   jest.useRealTimers()
 })
 
-test('one connect click creates an opt-in invitation and opens Telegram without a code field', async () => {
+test('Telegram invitation uses the native Mini App URI supported by installed clients', () => {
+  expect(nativeTelegramMiniAppUrl(`https://t.me/Neuromixx_bot?startapp=link_${inviteToken}`))
+    .toBe(`tg://resolve?domain=Neuromixx_bot&startapp=link_${inviteToken}`)
+})
+
+test.each([
+  `https://t.me.evil.example/Neuromixx_bot?startapp=link_${inviteToken}`,
+  `https://evil.example/Neuromixx_bot?startapp=link_${inviteToken}`,
+  `http://t.me/Neuromixx_bot?startapp=link_${inviteToken}`,
+  'https://t.me/Neuromixx_bot?startapp=link_bad',
+  `https://t.me/Neuromixx_bot?startapp=link_${inviteToken}&extra=1`,
+  `https://t.me/Neuromixx_bot/extra?startapp=link_${inviteToken}`,
+])('native Telegram navigation rejects unsafe or malformed invitations: %s', url => {
+  expect(() => nativeTelegramMiniAppUrl(url)).toThrow('Некорректная ссылка.')
+})
+
+test('VK connect attempts native Telegram on first click and offers a retry link', async () => {
   jest.mocked(createAccountLink).mockResolvedValue(pending)
   render(<SharedAccountLinkPreview vkAppId={null} />)
   fireEvent.click(await screen.findByRole('button', { name: 'Привязать Telegram' }))
   await waitFor(() => expect(createAccountLink).toHaveBeenCalledWith('telegram', expect.any(AbortSignal), true))
-  await waitFor(() => expect(popup.location.replace).toHaveBeenCalledWith('https://t.me/test_bot?startapp=link_' + inviteToken))
+  expect(await screen.findByRole('link', { name: 'Открыть приложение Telegram' })).toHaveAttribute('href', 'tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
+  expect(screen.getByRole('link', { name: 'Открыть через браузер' })).toHaveAttribute('href', 'https://t.me/test_bot?startapp=link_' + inviteToken)
   expect(window.open).toHaveBeenCalledWith('about:blank', '_blank')
+  expect(popup.location.replace).toHaveBeenCalledWith('tg://resolve?domain=test_bot&startapp=link_' + inviteToken)
   expect(popup.opener).toBeNull()
   expect(accountLinkUrl).toHaveBeenLastCalledWith('telegram', inviteToken, 123, 'test_bot')
   expect(screen.getByRole('region', { name: 'Ожидание привязки' })).toBeInTheDocument()
@@ -109,6 +128,7 @@ test('incoming deep link previews source but does not link a visitor without con
   jest.mocked(previewAccountLink).mockResolvedValue(offered)
   render(<SharedAccountLinkPreview vkAppId={null} />)
   expect(await screen.findByText(/ВКонтакте №381643597/)).toBeInTheDocument()
+  expect(screen.getByText(/Средства старого VK-бота пока остаются отдельно/)).toBeInTheDocument()
   expect(previewAccountLink).toHaveBeenCalledWith(inviteToken, expect.any(AbortSignal))
   expect(acceptAccountLink).not.toHaveBeenCalled()
   expect(updateAccountLink).not.toHaveBeenCalled()
@@ -194,7 +214,7 @@ test('stalled account status has a deadline and retry without silently linking',
   expect(createAccountLink).not.toHaveBeenCalled()
 })
 
-test('two immediate clicks cannot create multiple invitations or orphan popups', async () => {
+test('two immediate VK clicks cannot create duplicate invitations or orphan popups', async () => {
   let resolveInvitation!: (value: typeof pending) => void
   jest.mocked(createAccountLink).mockReturnValue(new Promise(resolve => { resolveInvitation = resolve }))
   render(<SharedAccountLinkPreview vkAppId={123} />)
@@ -205,6 +225,7 @@ test('two immediate clicks cannot create multiple invitations or orphan popups',
   expect(createAccountLink).toHaveBeenCalledTimes(1)
   await act(async () => resolveInvitation(pending))
   expect(popup.location.replace).toHaveBeenCalledTimes(1)
+  expect(screen.getAllByRole('link', { name: 'Открыть приложение Telegram' })).toHaveLength(1)
 })
 
 test('expired pending invitation restores the connect button instead of trapping the user', async () => {
@@ -229,5 +250,6 @@ test('backend without source-consent support fails closed instead of creating a 
   expect(await screen.findByText('Сервер привязки требует обновления. Попробуйте позже.')).toBeInTheDocument()
   expect(popup.close).toHaveBeenCalled()
   expect(popup.location.replace).not.toHaveBeenCalled()
+  expect(screen.queryByRole('link', { name: 'Открыть приложение Telegram' })).not.toBeInTheDocument()
   expect(screen.queryByRole('region', { name: 'Ожидание привязки' })).not.toBeInTheDocument()
 })

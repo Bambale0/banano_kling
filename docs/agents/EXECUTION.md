@@ -3039,3 +3039,13 @@ Verification progress:
   key. The operator chose to retain the old key, so the branch may be reviewed
   but must not be merged or deployed publicly. Production remains unchanged and
   administrator-only.
+
+## 2026-11-09 — VK → Telegram native account-link launch
+- Baseline: `tanyapi@14a719c3db05e7c419a63e73c74ab4d63f7af4c8`; branch `fix/vk-telegram-native-link-20261109`.
+- Symptom: in some VK mobile WebViews, “Привязать Telegram” opens the mobile Telegram website instead of the installed app.
+- Code finding: `SharedAccountLinkPreview.beginLink()` preopened `about:blank`, then after async invitation creation redirected the popup to an `https://t.me/...startapp=link_...` URL. VK's embedded browser may handle HTTPS internally rather than using the Telegram OS handler. Real-device reproduction is still required.
+- Change: strict conversion from trusted Telegram Mini App invitation URL to `tg://resolve?domain=...&startapp=...`; on source click, attempt native launch through the reserved popup, never automatic web navigation; retain a visible direct native-app link and explicit HTTPS browser fallback while read-only status polling continues. VK-target links and backend consent/merge protocol are unchanged.
+- Safety: no server route, database, balance, pricing, credential, referrer or enrollment change. Invocation token validated before native conversion; no token logging or storage. A blocked native scheme leaves the pending invitation on screen. Existing source confirmation remains mandatory.
+- Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
+- Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
+- Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.
