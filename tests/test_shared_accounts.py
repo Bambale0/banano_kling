@@ -33,6 +33,7 @@ async def account_database(request, monkeypatch, isolated_database):
     import psycopg
 
     from bot import postgres_aiosqlite
+    from bot.handlers import trend_success_compat
     from bot.postgres_pool import close_postgres_pool
 
     parsed = urlsplit(dsn)
@@ -44,6 +45,11 @@ async def account_database(request, monkeypatch, isolated_database):
     # instead of reusing the previous schema's process-wide readiness cache.
     monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_READY', False)
     monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_LOCK', None)
+    # The process-wide trend success DDL cache belongs to a database schema.
+    # Every test creates a brand-new PG schema; reusing this readiness marker
+    # silently skips trend_generation_runs DDL on the second case.
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_READY', False)
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_LOCK', None)
     async with await psycopg.AsyncConnection.connect(dsn) as connection:
         await connection.execute('CREATE SCHEMA ' + schema)
         await connection.execute('SET search_path TO ' + schema)
