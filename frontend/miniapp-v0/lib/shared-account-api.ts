@@ -250,7 +250,7 @@ export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNative
 export interface VkPublicTrend {
   id: number
   can_repeat_in_app?: boolean
-  user_fields?: { key: string; label: string; field_type?: string; required?: boolean; max_length?: number }[]
+  user_fields?: { key: string; label: string; type?: 'text' | 'number' | 'date'; field_type?: string; required?: boolean; max_length?: number }[]
   title: string
   description: string
   preview_url: string | null
@@ -338,15 +338,27 @@ export interface VkTrendRequest {
   expected_cost?: number
 }
 
+// The shared-account backend rejects request bodies above 32 KiB. Count
+// UTF-8 bytes (not JS characters) before creating a session or uploading data.
+function vkGenerationBody(payload: VkImageRequest | VkTrendRequest): string {
+  const body = JSON.stringify(payload)
+  if (new Blob([body]).size > 32768) {
+    throw new Error('Сократите промпт или число референсов: запрос слишком большой.')
+  }
+  return body
+}
+
 export async function generateVkImage(payload: VkImageRequest, signal?: AbortSignal) {
+  const body = vkGenerationBody(payload)
   return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-image', {
-    method: 'POST', headers, body: JSON.stringify(payload), signal,
+    method: 'POST', headers, body, signal,
   }), signal)
 }
 
 export async function repeatVkTrend(payload: VkTrendRequest, signal?: AbortSignal) {
+  const body = vkGenerationBody(payload)
   return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-trend', {
-    method: 'POST', headers, body: JSON.stringify(payload), signal,
+    method: 'POST', headers, body, signal,
   }), signal)
 }
 

@@ -97,7 +97,10 @@ test('signed VK-only user quotes and repeats a photo trend without Telegram', as
     ok: true, can_generate_in_app: true,
     categories: [{ id: 77, title: 'Портреты', emoji: '🎨', total: 1,
       items: [{ ...card(5, 'Ретро портрет'), can_repeat_in_app: true,
-        user_fields: [{ key: 'age', label: 'Возраст', required: true }] }] }],
+        user_fields: [
+          { key: 'age', label: 'Возраст', type: 'number', required: true },
+          { key: 'date', label: 'Дата', type: 'date', required: true },
+        ] }] }],
   })
   jest.mocked(uploadVkImage).mockResolvedValue('https://example.test/uploads/vk-refs/image/2001/' + 'a'.repeat(32) + '.jpg')
   jest.mocked(repeatVkTrend)
@@ -105,7 +108,10 @@ test('signed VK-only user quotes and repeats a photo trend without Telegram', as
     .mockResolvedValueOnce({ ok: true, task_id: 73, cost: 2.5 })
   render(<VkStandaloneDiscovery />)
   fireEvent.click(await screen.findByRole('button', { name: 'Повторить «Ретро портрет»' }))
+  expect(screen.getByLabelText('Возраст')).toHaveAttribute('type', 'number')
+  expect(screen.getByLabelText('Дата')).toHaveAttribute('type', 'date')
   fireEvent.change(screen.getByLabelText('Возраст'), { target: { value: '33' } })
+  fireEvent.change(screen.getByLabelText('Дата'), { target: { value: '2026-11-10' } })
   const file = new File(['fake image'], 'face.jpg', { type: 'image/jpeg' })
   fireEvent.change(screen.getByLabelText('Фото-референсы'), { target: { files: [file] } })
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
@@ -115,7 +121,7 @@ test('signed VK-only user quotes and repeats a photo trend without Telegram', as
   const paid = jest.mocked(repeatVkTrend).mock.calls[1][0]
   expect(paid.trend_id).toBe(5)
   expect(paid.expected_cost).toBe(2.5)
-  expect(paid.user_values).toEqual({ age: '33' })
+  expect(paid.user_values).toEqual({ age: '33', date: '2026-11-10' })
   expect(paid.reference_urls).toHaveLength(1)
   expect(paid.client_request_id).toMatch(/^[A-Za-z0-9_-]{16,80}$/)
   expect(screen.queryByText('Привяжите Telegram')).not.toBeInTheDocument()

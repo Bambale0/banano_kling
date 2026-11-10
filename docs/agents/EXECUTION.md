@@ -3049,3 +3049,14 @@ Verification progress:
 - Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
 - Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
 - Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.
+
+
+## 2026-11-10 — VK-only native image Mini App PR #447 release gate
+- Baseline: tanyapi b896e1e69f01a69945f448470d0d2b47f1f4566a; draft head b73da2f6f57ad9a331f74425eec790d6afb5a351; native VK master d9b419bb425c3143c17f8d58ed92e862b09774fc.
+- Goal: signed VK-only actor can quote, upload scoped references, submit an idempotent native VK photo, repeat supported approved image trend and see native VK tasks/history without Telegram. Photo only, no video parity or live shared-wallet migration claimed.
+- Root causes: legacy add_post JSON guard intercepts multipart; sanitized trend loses model/quality before eligibility; browser misreads type as field_type; Cyrillic text may exceed 32-KiB backend JSON limit.
+- Corrections: direct multipart route behind signed auth, pre-sanitization eligibility flag, linked wallet double-writer guard, accurate native error mapping 402/409, field type and UTF-8 request-size validation before auth.
+- Verification: safe backend suite 4921 passed / 283 skipped and 83 subtests; focused VK frontend 20 passed; TypeScript passed. Earlier CI head failed on multipart; new code requires fresh CI and exact production SHA check.
+- Rollout safety: VK Mini App writes flag is enabled in both production .env files but current VK image route remains 404. Reconcile feature flags before deployment. No payment/ledger migration or live wallet writes in this work.
+- Rollback: disable VK writes flag in both services, preserve tasks/refunds/ledger and reference files; no blind re-submit of ambiguous provider requests.
+- Playbooks: Bambale0/skills diagnosing-bugs+tdd+code-review, Bambale0/claw backend-integration, anthropics webapp-testing.

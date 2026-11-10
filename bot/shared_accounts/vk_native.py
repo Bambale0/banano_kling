@@ -13,6 +13,9 @@ from urllib.parse import urlsplit
 
 import aiohttp
 
+from .errors import PreviewConflict
+from .wallet import InsufficientFunds
+
 
 def _internal_origin() -> str:
     value = os.getenv('VK_NATIVE_INTERNAL_ORIGIN', 'http://127.0.0.1:1777').strip()
@@ -96,10 +99,12 @@ async def submit_native_vk_image(vk_user_id: int, payload: dict) -> dict:
             'X-Internal-Signature': signature,
         }, allow_redirects=False) as result,
     ):
+        if result.status == 400:
+            raise ValueError('Invalid or stale VK image request')
         if result.status == 402:
-            raise RuntimeError('insufficient_balance')
+            raise InsufficientFunds('Insufficient VK balance')
         if result.status == 409:
-            raise ValueError('idempotency_conflict')
+            raise PreviewConflict('VK generation request conflicts with an earlier submission')
         if result.status == 403:
             raise PermissionError('VK user is blocked')
         if result.status != 200:

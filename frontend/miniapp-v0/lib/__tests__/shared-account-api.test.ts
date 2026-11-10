@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -25,6 +25,26 @@ test('dedicated VK build refuses a cached Telegram launch before making any requ
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
   await expect(checkAccountPreviewLogin()).rejects.toThrow('Откройте приложение из ВКонтакте.')
   expect(global.fetch).not.toHaveBeenCalled()
+})
+
+test('oversized Cyrillic native prompt is rejected clearly before auth or media requests', async () => {
+  await expect(generateVkImage({
+    model: 'nano_banana_pro', prompt: 'Я'.repeat(17000), aspect: '1:1',
+    resolution: '2K', reference_photos: [], quote_only: true,
+  })).rejects.toThrow('Сократите промпт или число референсов')
+  expect(global.fetch).not.toHaveBeenCalled()
+})
+
+test('native Cyrillic prompt within the byte budget reaches the signed generation API', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'source' } }))
+    .mockResolvedValueOnce(reply(200, { task_id: 0, cost: 2.5, quote_only: true }))
+    .mockResolvedValueOnce(reply(200))
+  const payload = { model: 'nano_banana_pro', prompt: 'Я'.repeat(15000), aspect: '1:1',
+    resolution: '2K', reference_photos: [], quote_only: true }
+  await expect(generateVkImage(payload)).resolves.toEqual(expect.objectContaining({ cost: 2.5 }))
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-image')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual(payload)
 })
 
 test('VK launch forwards the signed query intact and never substitutes Telegram credentials', async () => {

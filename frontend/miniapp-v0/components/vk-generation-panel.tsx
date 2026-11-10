@@ -159,7 +159,7 @@ export function VkGenerationPanel({
       {(trend.user_fields || []).map(field => <label key={field.key} className="block space-y-1 text-sm">
         {field.label}
         <input aria-label={field.label} value={userValues[field.key] || ''} disabled={busy}
-          type={field.field_type === 'date' ? 'date' : field.field_type === 'number' ? 'number' : 'text'}
+          type={(field.type || field.field_type) === 'date' ? 'date' : (field.type || field.field_type) === 'number' ? 'number' : 'text'}
           maxLength={field.max_length || 400}
           required={field.required !== false}
           onChange={event => { invalidate(); setUserValues(prev => ({ ...prev, [field.key]: event.target.value })) }}

@@ -24,6 +24,7 @@ from .store import (
 )
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import fetch_native_vk_state, submit_native_vk_image
+from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -150,14 +151,7 @@ def _vk_public_trend_card(card: dict) -> dict:
         'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
         'can_repeat_in_app': (
             os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
-            and settings.get('kind') == 'image'
-            and settings.get('model') in {'banana_pro', 'banana_2', 'gpt_image_2'}
-            and settings.get('quality') in {'2K', '4K'}
-            and settings.get('ratio') in {'1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'}
-            and settings.get('user_input', 'photo') == 'photo'
-            and str(settings.get('count') or 1) == '1'
-            and not settings.get('reference_contract')
-            and not settings.get('genjutsu_recipe_id')
+            and card.get('vk_native_image_repeat_supported') is True
         ),
         'user_fields': safe.get('user_fields', []),
     }
@@ -182,6 +176,8 @@ async def _vk_writer_actor(request: web.Request) -> int:
     account = await get_session(_bearer(request), policy.revision)
     if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
         raise PermissionError('Verified VK session required')
+    if 'telegram' in await linked_platforms(account.id):
+        raise PermissionError('Linked accounts must use the common studio')
     return account.identity.external_id
 
 
@@ -245,6 +241,8 @@ async def vk_native_trend(request: web.Request) -> web.Response:
         prompt = await get_prompt_by_id(parsed.trend_id, approved_public_only=True)
         if not prompt:
             raise ValueError('Trend unavailable')
+        if not supports_native_vk_image_trend(prompt):
+            raise ValueError('Trend is not supported by VK generation')
         trusted = trend_api.trusted_trend_run(
             prompt, parsed.reference_urls, parsed.user_values,
         )
@@ -256,9 +254,7 @@ async def vk_native_trend(request: web.Request) -> web.Response:
         or trusted.reference_contract
         or int(trusted.settings.get('count') or 1) != 1):
         raise ValueError('Trend requires a different generation workflow')
-    native_models = {'banana_pro': 'nano_banana_pro',
-                     'banana_2': 'nano_banana_2', 'gpt_image_2': 'gpt_image_2'}
-    model = native_models.get(trusted.model)
+    model = NATIVE_IMAGE_MODELS.get(trusted.model)
     quality = str(trusted.settings.get('quality') or '2K')
     if not model or quality not in {'2K', '4K'}:
         raise ValueError('Trend is not supported by VK generation')
@@ -506,7 +502,10 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
-    app.router.add_post(root + '/vk-image-upload', _guard(vk_image_upload))
+    # This route authenticates the signed VK session before reading bytes.
+    # The legacy add_post wrapper attempts JSON parsing first and drains a
+    # multipart body. Register directly, as the existing owned-media APIs do.
+    app.router.add_route('POST', root + '/vk-image-upload', _guard(vk_image_upload))
     app.router.add_post(root + '/vk-image', _guard(vk_native_image))
     app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
     app.router.add_post(root + '/logout', _guard(logout))
