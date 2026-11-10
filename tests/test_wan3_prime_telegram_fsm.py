@@ -349,3 +349,43 @@ async def test_unknown_status_message_honest_and_no_fake_balance_calls(runtime):
     assert "Task ID" in text
     assert runtime.launches[-1]["telegram_id"] == 101
 
+
+@pytest.mark.asyncio
+async def test_confirm_stale_quote_retains_key_and_shows_requote(runtime):
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycleError
+    state = FakeState()
+    await open_mode(state, runtime, "reference")
+    await upload(state, "audio", "sound", filename="sound.mp3")
+    await set_prompt(state, "-")
+    await wan3_prime.quote_wan3_prime(FakeCallback("wan3_quote"), state)
+    draft = wan3_prime.draft_from_state(await state.get_data())
+
+    async def broken(**kwargs):
+        raise Wan3PrimeLifecycleError("Quote is stale", status=409, code="stale_quote")
+    runtime.launch_telegram_wan3_prime = broken
+
+    cb = FakeCallback("wan3_confirm")
+    await wan3_prime.confirm_wan3_prime(cb, state)
+    assert "Расчёт устарел" in cb.answers[-1][0]
+    new_draft = wan3_prime.draft_from_state(await state.get_data())
+    assert new_draft.idempotency_key == draft.idempotency_key
+    assert new_draft.quote_hash is None
+
+@pytest.mark.asyncio
+async def test_confirm_timeout_logs_and_preserves_key(runtime, caplog):
+    state = FakeState()
+    await open_mode(state, runtime, "reference")
+    await upload(state, "audio", "sound", filename="sound.mp3")
+    await set_prompt(state, "-")
+    await wan3_prime.quote_wan3_prime(FakeCallback("wan3_quote"), state)
+    old = wan3_prime.draft_from_state(await state.get_data())
+    async def failed(**kwargs):
+        raise TimeoutError("timeout")
+    runtime.launch_telegram_wan3_prime = failed
+    cb = FakeCallback("wan3_confirm")
+    with caplog.at_level("ERROR", logger="bot.handlers.wan3_prime"):
+        await wan3_prime.confirm_wan3_prime(cb, state)
+    assert "Не удалось подтвердить запуск" in cb.answers[-1][0]
+    assert "Wan3 Telegram confirm failed" in caplog.text
+    assert old.client_request_id in caplog.text
+    assert old.idempotency_key == wan3_prime.draft_from_state(await state.get_data()).idempotency_key
