@@ -138,12 +138,18 @@ async def profile(request: web.Request) -> web.Response:
 
 
 
-def _vk_public_trend_card(card: dict) -> dict:
+def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
+    from bot.miniapp_links import prompt_link
     from bot.trend_visibility import public_trend_settings
+
     settings = card.get('generation_settings') or {}
     safe = public_trend_settings(card)
     return {
         'id': int(card['id']),
+        'share_link': (
+            prompt_link(None, card['id'], platform='vk', vk_app_id=vk_app_id)
+            if vk_app_id else None
+        ),
         'title': str(card.get('title') or ''),
         'description': str(card.get('description') or ''),
         'preview_url': card.get('preview_url'),
@@ -234,10 +240,15 @@ async def vk_native_trend(request: web.Request) -> web.Response:
     body = await _body(request)
     if set(body) - {'trend_id', 'user_values', 'reference_urls', 'client_request_id', 'quote_only', 'expected_cost'}:
         raise ValueError('Invalid trend request')
-    from bot import trend_api
+    from bot import trend_api, trend_catalog
     from bot.database import get_prompt_by_id
     try:
         parsed = trend_api.parse_trend_run_request(body)
+        # A guessed trend ID must not bypass the same editorial visibility
+        # rules as public VK deep links. Hidden-category/unlisted recipes
+        # must never be executable, even when approved in the database.
+        if not await trend_catalog.public_trend_by_id(parsed.trend_id):
+            raise ValueError('Trend unavailable')
         prompt = await get_prompt_by_id(parsed.trend_id, approved_public_only=True)
         if not prompt:
             raise ValueError('Trend unavailable')
@@ -284,6 +295,23 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
     if not policy.allows_public(account.identity) or account.identity.platform != 'vk':
         raise PermissionError('VK session required')
     view = request.query.get('view', 'trends')
+    if view == 'item':
+        from bot import trend_catalog
+
+        raw_id = request.query.get('trend_id', '')
+        if not raw_id.isascii() or not raw_id.isdecimal() or not 0 < len(raw_id) <= 16:
+            raise ValueError('Invalid trend identifier')
+        trend_id = int(raw_id)
+        if trend_id <= 0:
+            raise ValueError('Invalid trend identifier')
+        item = await trend_catalog.public_trend_by_id(trend_id)
+        if item is None:
+            return response({'ok': False, 'error': 'Тренд не найден'}, 404)
+        return response({
+            'ok': True,
+            'item': _vk_public_trend_card(item, vk_app_id=policy.vk_app_id),
+            'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',
+        })
     if view == 'trends':
         from bot import trend_catalog
         categories = await trend_catalog.list_catalog(
@@ -295,7 +323,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'title': item['title'],
                 'emoji': item['emoji'],
                 'total': item['total'],
-                'items': [_vk_public_trend_card(card) for card in item['items']],
+                'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in item['items']],
             }
             for item in categories
         ]
@@ -320,7 +348,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
         return response({
             'ok': True,
             'category': {'id': meta['id'], 'title': meta['title'], 'emoji': meta['emoji']},
-            'items': [_vk_public_trend_card(card) for card in category['items']],
+            'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in category['items']],
             'has_more': bool(category['has_more']),
             'page': page,
             'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',

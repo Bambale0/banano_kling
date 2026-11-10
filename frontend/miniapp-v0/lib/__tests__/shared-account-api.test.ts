@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -206,4 +206,20 @@ test('wrong-platform invitation is not mistaken for missing admin permission', a
   await expect(previewAccountLink('x'.repeat(43))).rejects.toThrow(
     'Это приглашение предназначено другому аккаунту или платформе.',
   )
+})
+
+
+test('direct public VK trend lookup stays within signed platform API, without Telegram launch', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(200, {
+      item: { id: 5, title: 'Safe trend', preview_url: null, share_link: 'https://vk.com/app123#prompt_5' },
+      can_generate_in_app: true,
+    }))
+    .mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicTrend(5)).resolves.toEqual(expect.objectContaining({ can_generate_in_app: true }))
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=item&trend_id=5')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(expect.arrayContaining([expect.stringContaining('t.me')]))
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  await expect(fetchVkPublicTrend(-4)).rejects.toThrow('Некорректный тренд')
 })

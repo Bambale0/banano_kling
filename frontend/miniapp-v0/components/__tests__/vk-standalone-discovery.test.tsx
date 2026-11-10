@@ -1,11 +1,12 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
+  fetchVkPublicTrend: jest.fn(),
   fetchVkNativeState: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
@@ -20,6 +21,7 @@ const card = (id: number, title: string) => ({
 })
 
 beforeEach(() => {
+  window.history.replaceState({}, '', '/')
   jest.resetAllMocks()
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, is_blocked: false,
@@ -191,4 +193,43 @@ test('VK-only can quote and create an image using native VK wallet', async () =>
   expect(jest.mocked(generateVkImage).mock.calls[1][0]).toEqual(expect.objectContaining({
     prompt: 'A castle on the moon', expected_cost: 2.5, model: 'nano_banana_pro',
   }))
+})
+
+
+test('VK prompt deep link opens the exact public trend without Telegram and can repeat it', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=signed#prompt_5_ref_CODE')
+  const deepTrend = { ...card(5, 'Тренд по ссылке'), can_repeat_in_app: true,
+    share_link: 'https://vk.com/app123#prompt_5' }
+  jest.mocked(fetchVkPublicTrend).mockResolvedValue({
+    ok: true, item: deepTrend, can_generate_in_app: true,
+  })
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Тренд по ссылке')).toBeInTheDocument()
+  expect(fetchVkPublicTrend).toHaveBeenCalledWith(5, expect.anything())
+  fireEvent.click(screen.getByRole('button', { name: 'Повторить «Тренд по ссылке»' }))
+  expect(screen.getByRole('region', { name: 'Повтор тренда' })).toBeInTheDocument()
+  expect(screen.queryByText('Привяжите Telegram')).not.toBeInTheDocument()
+})
+
+test('a video trend deep link opens the public preview and sharing URL, without fake photo repeat', async () => {
+  window.history.replaceState({}, '', '/#prompt_8')
+  jest.mocked(fetchVkPublicTrend).mockResolvedValue({
+    ok: true, can_generate_in_app: true,
+    item: { ...card(8, 'Видео по ссылке'), generation_type: 'video',
+      can_repeat_in_app: false, share_link: 'https://vk.com/app123#prompt_8' },
+  })
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Видео по ссылке')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Повторить «Видео по ссылке»' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Ссылка на «Видео по ссылке»' }))
+  expect(screen.getByRole('textbox', { name: 'Ссылка на тренд' })).toHaveValue('https://vk.com/app123#prompt_8')
+})
+
+test('invalid or unavailable shared trend has a clear error and can return to catalog', async () => {
+  window.history.replaceState({}, '', '/#prompt_999')
+  jest.mocked(fetchVkPublicTrend).mockRejectedValue(new Error('Тренд не найден'))
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByRole('alert')).toHaveTextContent('Тренд не найден')
+  fireEvent.click(screen.getByRole('button', { name: 'Вернуться к трендам' }))
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
 })
