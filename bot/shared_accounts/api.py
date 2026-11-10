@@ -152,7 +152,12 @@ def _vk_public_trend_card(card: dict) -> dict:
             os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
             and settings.get('kind') == 'image'
             and settings.get('model') in {'banana_pro', 'banana_2', 'gpt_image_2'}
+            and settings.get('quality') in {'2K', '4K'}
+            and settings.get('ratio') in {'1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9'}
+            and settings.get('user_input', 'photo') == 'photo'
+            and str(settings.get('count') or 1) == '1'
             and not settings.get('reference_contract')
+            and not settings.get('genjutsu_recipe_id')
         ),
         'user_fields': safe.get('user_fields', []),
     }

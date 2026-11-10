@@ -54,6 +54,12 @@ def verified_image_urls(actor_id: int, raw: object) -> list[str]:
 def _write_image(actor_id: int, raw: bytes) -> str:
     if not raw or len(raw) > MAX_UPLOAD_BYTES:
         raise ValueError('Image is too large or empty')
+    # iOS Photos supplies HEIC/HEIF; match the existing Mini App codec.
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except ImportError:
+        pass
     try:
         with Image.open(io.BytesIO(raw)) as image:
             if image.width * image.height > MAX_PIXELS or min(image.size) <= 0:
