@@ -22,8 +22,8 @@ from .store import (
     linked_telegram_id,
     revoke_session,
 )
-from .vk_native import fetch_native_vk_state, submit_native_vk_image
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
+from .vk_native import fetch_native_vk_state, submit_native_vk_image
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)

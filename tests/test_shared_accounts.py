@@ -580,6 +580,7 @@ async def test_equal_external_ids_on_both_platforms_remain_different_accounts(mo
 
 async def test_vk_only_native_photo_submit_uses_verified_actor_not_telegram(monkeypatch):
     from unittest.mock import AsyncMock
+
     from bot.shared_accounts import api
 
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
@@ -613,6 +614,7 @@ async def test_vk_only_native_photo_submit_uses_verified_actor_not_telegram(monk
 
 async def test_vk_native_photo_submit_disabled_fail_closed(monkeypatch):
     from unittest.mock import AsyncMock
+
     from bot.shared_accounts import api
 
     monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
@@ -631,6 +633,7 @@ async def test_vk_native_photo_submit_disabled_fail_closed(monkeypatch):
 
 async def test_vk_trend_image_executes_hidden_approved_recipe_without_exposing_prompt(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock
+
     from bot import database
     from bot.shared_accounts import api
 
@@ -638,8 +641,8 @@ async def test_vk_trend_image_executes_hidden_approved_recipe_without_exposing_p
     monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
     submit = AsyncMock(return_value={'task_id': 81, 'cost': 2.5})
     monkeypatch.setattr(api, 'submit_native_vk_image', submit, raising=False)
-    from bot.shared_accounts import vk_image_refs
     from bot.config import config
+    from bot.shared_accounts import vk_image_refs
     monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
     monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
     image_folder = vk_image_refs.ROOT / '2001'
@@ -678,8 +681,10 @@ async def test_vk_trend_image_executes_hidden_approved_recipe_without_exposing_p
 
 async def test_vk_native_upload_is_jpeg_sanitized_owner_scoped_and_not_telegram(monkeypatch, tmp_path):
     import io
-    from PIL import Image
+
     from aiohttp import FormData
+    from PIL import Image
+
     from bot.config import config
     from bot.shared_accounts import vk_image_refs
 
@@ -749,6 +754,7 @@ async def test_signed_native_write_rpc_rejects_tampering_and_nonlocal_origin(mon
 
 async def test_vk_image_upload_rejects_unowned_references_and_stale_auth(monkeypatch, tmp_path):
     from unittest.mock import AsyncMock
+
     from bot.config import config
     from bot.shared_accounts import api, vk_image_refs
 
@@ -780,8 +786,10 @@ async def test_vk_image_upload_rejects_unowned_references_and_stale_auth(monkeyp
 
 
 async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch, tmp_path):
-    from PIL import Image
     import io
+
+    from PIL import Image
+
     from bot.config import config
     from bot.shared_accounts import vk_image_refs
 

@@ -36,7 +36,7 @@ def verified_image_urls(actor_id: int, raw: object) -> list[str]:
     valid: list[str] = []
     for raw_url in raw:
         if not isinstance(raw_url, str):
-            raise ValueError('Invalid VK reference URL')
+            raise TypeError('Invalid VK reference URL')
         parsed = urlsplit(raw_url)
         if (parsed.scheme != parsed_base.scheme or parsed.netloc != parsed_base.netloc
             or parsed.query or parsed.fragment or

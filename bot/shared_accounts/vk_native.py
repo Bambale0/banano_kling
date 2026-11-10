@@ -88,21 +88,23 @@ async def submit_native_vk_image(vk_user_id: int, payload: dict) -> dict:
     message = b'\n'.join([timestamp.encode(), b'POST', path.encode(), body])
     signature = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
     timeout = aiohttp.ClientTimeout(total=12, connect=2)
-    async with aiohttp.ClientSession(timeout=timeout) as client:
-        async with client.post(origin + path, data=body, headers={
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as client,
+        client.post(origin + path, data=body, headers={
             'Content-Type': 'application/json',
             'X-Internal-Timestamp': timestamp,
             'X-Internal-Signature': signature,
-        }, allow_redirects=False) as result:
-            if result.status == 402:
-                raise RuntimeError('insufficient_balance')
-            if result.status == 409:
-                raise ValueError('idempotency_conflict')
-            if result.status == 403:
-                raise PermissionError('VK user is blocked')
-            if result.status != 200:
-                raise RuntimeError('VK native image generation unavailable')
-            data = await result.json()
+        }, allow_redirects=False) as result,
+    ):
+        if result.status == 402:
+            raise RuntimeError('insufficient_balance')
+        if result.status == 409:
+            raise ValueError('idempotency_conflict')
+        if result.status == 403:
+            raise PermissionError('VK user is blocked')
+        if result.status != 200:
+            raise RuntimeError('VK native image generation unavailable')
+        data = await result.json()
     if (not isinstance(data, dict) or data.get('ok') is not True
         or type(data.get('task_id')) is not int
         or not 0 <= data['task_id'] < 2**63
