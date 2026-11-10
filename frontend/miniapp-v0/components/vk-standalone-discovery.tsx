@@ -76,6 +76,21 @@ export function VkStandaloneDiscovery() {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(true)
   const [retry, setRetry] = useState(0)
+  // Poll only active tasks while the owner is watching their history. A
+  // completed/failed result stops the timer; background tabs make no requests.
+  const hasActiveVkTask = native?.tasks.some(task =>
+    ['pending', 'submitting', 'processing', 'queued'].includes(task.status),
+  ) === true
+
+  useEffect(() => {
+    if (view !== 'mine' || !hasActiveVkTask) return
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        setNativeRetry(current => current + 1)
+      }
+    }, 15000)
+    return () => window.clearInterval(timer)
+  }, [view, hasActiveVkTask])
 
   useEffect(() => {
     const controller = new AbortController()

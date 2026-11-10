@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
 import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
@@ -91,6 +91,41 @@ test('VK-only sees native VK balance and its results without Telegram ID', async
   expect(screen.queryByText('Telegram ID')).not.toBeInTheDocument()
 })
 
+
+test('unfinished VK task refreshes automatically while work history is open, then stops', async () => {
+  jest.useFakeTimers()
+  try {
+    const working = {
+      ok: true as const, registered: true, balance: 12.5, is_blocked: false,
+      tasks: [{ task_id: 95, task_type: 'photo', model: 'nano_banana_pro',
+        status: 'processing', cost: 2.5, result_url: null, created_at: '2026-11-10 12:00:00' }],
+    }
+    const completed = {
+      ...working, tasks: [{ ...working.tasks[0], status: 'completed',
+        result_url: 'https://example.test/completed.jpg' }],
+    }
+    jest.mocked(fetchVkNativeState)
+      .mockResolvedValueOnce(working)
+      .mockResolvedValue(completed)
+    render(<VkStandaloneDiscovery />)
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+    expect(screen.getByText(/#95/)).toBeInTheDocument()
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      jest.advanceTimersByTime(15000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('link', { name: 'Открыть результат #95' }))
+      .toHaveAttribute('href', 'https://example.test/completed.jpg')
+    await act(async () => { jest.advanceTimersByTime(30000) })
+    expect(fetchVkNativeState).toHaveBeenCalledTimes(2)
+  } finally {
+    jest.useRealTimers()
+  }
+})
 
 test('signed VK-only user quotes and repeats a photo trend without Telegram', async () => {
   jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({

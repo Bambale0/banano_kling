@@ -3076,3 +3076,12 @@ Verification progress:
 - Rollout safety: VK Mini App writes flag is enabled in both production .env files but current VK image route remains 404. Reconcile feature flags before deployment. No payment/ledger migration or live wallet writes in this work.
 - Rollback: disable VK writes flag in both services, preserve tasks/refunds/ledger and reference files; no blind re-submit of ambiguous provider requests.
 - Playbooks: Bambale0/skills diagnosing-bugs+tdd+code-review, Bambale0/claw backend-integration, anthropics webapp-testing.
+
+
+## 2026-11-10 — VK-only task completion visibility
+- User scenario: VK-only user creates a native photo and watches the My Works section; results must become visible without Telegram and without manual page refresh.
+- Root cause: VK standalone discovery fetched native state only at mount or manual refresh; a completed async task was invisible until the user pressed Refresh.
+- TDD: added a failing Jest case (native state fetched only once after task is processing), then a visibility-gated 15-second refresh only while the My Works section is open and a task is queued, pending, submitting or processing. It stops automatically on completion, unmount, and view switch.
+- Scope: no changes to payments, balances, provider tasks, auth, identity, linking, webhook or secrets.
+- Verification: focused frontend suite 7/7 and TypeScript check. Rollout stays under PR #447 and its feature flag gate.
+- Remaining gaps: native VK writes in this PR are photo-only; video, motion, payments, real-device VK signed-launch, and key-rotation security gates remain separately unverified.
