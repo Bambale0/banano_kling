@@ -958,6 +958,7 @@ async def test_native_vk_video_disabled_even_if_photo_enabled(monkeypatch):
 async def test_native_vk_video_bridge_hmac_exact_body_and_loopback(monkeypatch):
     import hashlib
     import hmac
+
     from bot.shared_accounts.vk_native import submit_native_vk_video
 
     monkeypatch.setenv('VK_MINIAPP_VIDEO_WRITES_ENABLED', '1')
