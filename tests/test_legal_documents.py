@@ -174,7 +174,9 @@ async def test_privacy_policy_is_attached_as_file_even_if_url_configured(monkeyp
     callback.answer.assert_awaited_once()
 
 
-def test_legal_document_attachment_offer_fails_closed_on_invalid_pdf(tmp_path, monkeypatch):
+def test_legal_document_attachment_offer_fails_closed_on_invalid_pdf(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "public-offer.pdf"
     path.write_text("not a pdf", encoding="utf-8")
     monkeypatch.setattr(legal_documents, "_OFFER_PDF_PATH", path)
@@ -237,7 +239,9 @@ async def test_multi_part_legal_text_is_paced_with_markup_only_on_last(monkeypat
     monkeypatch.setattr(legal_documents.asyncio, "sleep", fake_sleep)
     message = SimpleNamespace(answer=AsyncMock())
     markup = object()
-    await legal_documents.send_legal_parts(message, ["часть 1", "часть 2", "конец"], markup)
+    await legal_documents.send_legal_parts(
+        message, ["часть 1", "часть 2", "конец"], markup
+    )
 
     assert message.answer.await_count == 3
     fake_sleep.assert_any_await(1.1)
