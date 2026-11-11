@@ -21,6 +21,9 @@ class _FakeCursor:
     async def execute(self, sql: str, params=None):
         self.statements.append(" ".join(sql.split()))
 
+    async def fetchone(self):
+        return ("contract_test_database", "contract_test_schema")
+
 
 class _FakeConnection:
     def __init__(self):
@@ -44,7 +47,10 @@ async def test_postgres_trend_success_schema_uses_real_helper_cursor(monkeypatch
     monkeypatch.setattr(compat.db_backend, "is_postgres", lambda: True)
     monkeypatch.setattr(postgres_backend, "_ensure_postgres_helpers", original_helpers)
     monkeypatch.setattr(compat, "_INSTALLED", False)
-    monkeypatch.setattr(compat, "_HELPERS_EXTENDED", False)
+    # Each test has its own DB/schema namespace; reset only the cache of
+    # namespaces, not the actual production helper behavior.
+    monkeypatch.setattr(compat, "_HELPERS_EXTENDED_SCHEMAS", set())
+    monkeypatch.setattr(compat, "_HELPERS_EXTENSION_LOCK", None)
 
     compat.install_trend_success_postgres_compat()
 
