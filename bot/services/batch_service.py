@@ -103,23 +103,17 @@ class BatchEditingService:
                 )
                 return None
 
-            # Создаём поддиректорию по дате
             date_str = datetime.now().strftime("%Y%m%d")
-            upload_dir = os.path.join("static", "uploads", date_str)
-            os.makedirs(upload_dir, exist_ok=True)
-
-            # Генерируем уникальное имя файла
             file_id = str(uuid.uuid4())[:8]
-            filename = f"{file_id}.{file_ext}"
-            filepath = os.path.join(upload_dir, filename)
+            safe_ext = str(file_ext or "bin").lower().strip(".")
+            if not safe_ext.isalnum() or len(safe_ext) > 10:
+                safe_ext = "bin"
+            filename = f"{file_id}.{safe_ext}"
+            from bot.services.media_storage import persist_upload_bytes
 
-            # Сохраняем файл
-            with open(filepath, "wb") as f:
-                f.write(bytes(file_bytes))
-
-            # Формируем публичный URL
-            base_url = config.static_base_url
-            public_url = f"{base_url}/uploads/{date_str}/{filename}"
+            public_url = persist_upload_bytes(
+                f"{date_str}/{filename}", bytes(file_bytes)
+            )
 
             logger.info(f"Saved batch result: {public_url}")
             return public_url

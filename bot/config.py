@@ -246,6 +246,52 @@ class Config:
     R2_ENDPOINT: str = os.getenv("R2_ENDPOINT", "")
     R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "")
 
+    # Canonical reference and generated-media storage. ``local`` preserves the
+    # historical static/uploads behavior; ``s3`` targets Selectel or another
+    # explicitly configured S3-compatible endpoint.
+    MEDIA_STORAGE_BACKEND: str = (
+        os.getenv("MEDIA_STORAGE_BACKEND", "local").strip().lower()
+    )
+    MEDIA_S3_ENDPOINT: str = os.getenv("MEDIA_S3_ENDPOINT", "").strip().rstrip("/")
+    MEDIA_S3_REGION: str = os.getenv("MEDIA_S3_REGION", "").strip()
+    MEDIA_S3_BUCKET: str = os.getenv("MEDIA_S3_BUCKET", "").strip()
+    MEDIA_S3_ACCESS_KEY_ID: str = field(
+        default_factory=lambda: os.getenv("MEDIA_S3_ACCESS_KEY_ID", "").strip(),
+        repr=False,
+    )
+    MEDIA_S3_SECRET_ACCESS_KEY: str = field(
+        default_factory=lambda: os.getenv("MEDIA_S3_SECRET_ACCESS_KEY", "").strip(),
+        repr=False,
+    )
+    MEDIA_S3_KEY_PREFIX: str = (
+        os.getenv("MEDIA_S3_KEY_PREFIX", "uploads").strip().strip("/")
+    )
+    MEDIA_S3_PUBLIC_BASE_URL: str = (
+        os.getenv("MEDIA_S3_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    )
+    MEDIA_S3_FORCE_PATH_STYLE: bool = os.getenv(
+        "MEDIA_S3_FORCE_PATH_STYLE", "1"
+    ).lower() in ("1", "true", "yes", "on")
+    MEDIA_S3_KEEP_LOCAL_CACHE: bool = os.getenv(
+        "MEDIA_S3_KEEP_LOCAL_CACHE", "0"
+    ).lower() in ("1", "true", "yes", "on")
+    MEDIA_S3_CACHE_TTL_SECONDS: int = int(
+        os.getenv("MEDIA_S3_CACHE_TTL_SECONDS", "3600")
+    )
+    MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS: int = int(
+        os.getenv("MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS", "900")
+    )
+    MEDIA_S3_CONNECT_TIMEOUT_SECONDS: int = int(
+        os.getenv("MEDIA_S3_CONNECT_TIMEOUT_SECONDS", "10")
+    )
+    MEDIA_S3_READ_TIMEOUT_SECONDS: int = int(
+        os.getenv("MEDIA_S3_READ_TIMEOUT_SECONDS", "120")
+    )
+    MEDIA_S3_MAX_ATTEMPTS: int = int(os.getenv("MEDIA_S3_MAX_ATTEMPTS", "3"))
+    MEDIA_S3_PRESIGN_TTL_SECONDS: int = int(
+        os.getenv("MEDIA_S3_PRESIGN_TTL_SECONDS", "900")
+    )
+
     # Partner programme
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
     PRIVACY_POLICY_URL: str = os.getenv("PRIVACY_POLICY_URL", "")

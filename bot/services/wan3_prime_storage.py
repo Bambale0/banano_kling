@@ -411,7 +411,6 @@ class Wan3PrimeStorage:
         ext = (info.extension or Path(filename).suffix).lower()
         media_key = upload_id or uuid.uuid4().hex
         dest = canonical_child_path(UPLOAD_ROOT, f"{actor.user_id}/{media_key}{ext}")
-        public_url = _public_url_for_path(dest)
         async with db_backend.connect(_sqlite_path()) as db:
             db.row_factory = db_backend.Row
             await lock_storage(db)
@@ -430,6 +429,15 @@ class Wan3PrimeStorage:
                     raise Wan3PrimeValidationError("Upload assembly lease changed", status=409)
             await assert_capacity(db, actor.user_id, info.size_bytes, exclude_upload_id=upload_id or "")
             digest = await asyncio.to_thread(copy_atomic, path, dest)
+            from bot.services.media_storage import persist_upload_file
+
+            public_url = await asyncio.to_thread(
+                persist_upload_file,
+                dest.resolve().relative_to(Path("static/uploads").resolve()).as_posix(),
+                dest,
+                content_type=content_type,
+                cache_control="private, max-age=0",
+            )
             await db.execute(
                 "INSERT INTO wan3_prime_media "
                 "(user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source) "

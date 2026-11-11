@@ -2830,6 +2830,22 @@ async def _cleanup_loop():
             logger.exception("Cleanup iteration failed")
         await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
 
+
+async def _media_cache_cleanup_loop() -> None:
+    """Bound S3 materialization disk use independently of daily retention."""
+    from bot.services.media_storage import cleanup_materialized_cache, is_s3_enabled
+
+    interval = max(60, int(config.MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS))
+    while True:
+        try:
+            if is_s3_enabled():
+                stats = await asyncio.to_thread(cleanup_materialized_cache)
+                if stats["removed_count"]:
+                    logger.info("Materialized media cache cleanup stats: %s", stats)
+        except Exception:
+            logger.exception("S3 media cache cleanup iteration failed")
+        await asyncio.sleep(interval)
+
 async def _start_wan_for_polling(bot: Bot) -> None:
     if config.WEBHOOK_HOST:
         return  # The aiohttp application owns the webhook-mode lifecycle.
@@ -2845,6 +2861,10 @@ async def _start_wan_for_polling(bot: Bot) -> None:
 
 async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
     """Действия при старте бота"""
+    # Fail closed in polling mode too, not just when aiohttp routes are built.
+    from bot.services.media_storage import validate_media_storage_configuration
+
+    validate_media_storage_configuration()
     logger.info("Bot starting...")
 
     # База данных уже инициализирована в main() функции
@@ -2923,6 +2943,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         # aiogram.Bot does not expose an event loop attribute in some versions.
         # Use asyncio.create_task to schedule background tasks on the running loop.
         asyncio.create_task(_cleanup_loop())
+        asyncio.create_task(_media_cache_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
         asyncio.create_task(_lava_reconcile_loop(bot))
         asyncio.create_task(_memory_dump_loop(bot))
@@ -5584,10 +5605,34 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     app["bot"] = bot
     app["dp"] = dp
 
-    # Serve static uploads directory to fix 404 errors for Novita image downloads
-    app.router.add_static(
-        "/uploads/", path="static/uploads", show_index=False, name="uploads"
+    # Preserve the public /uploads contract while S3-backed objects are the
+    # canonical copy. Local mode keeps aiohttp's optimized static resource.
+    from bot.services.media_storage import (
+        is_s3_enabled,
+        presigned_upload_url,
+        validate_media_storage_configuration,
     )
+
+    validate_media_storage_configuration()
+    if is_s3_enabled():
+        async def s3_upload_handler(request: web.Request) -> web.StreamResponse:
+            relative = str(request.match_info.get("path") or "")
+            try:
+                location = await asyncio.to_thread(presigned_upload_url, relative)
+            except ValueError:
+                raise web.HTTPNotFound(text="Media not found")
+            except Exception:
+                logger.exception("Failed to sign S3 media redirect: key=%s", relative)
+                raise web.HTTPServiceUnavailable(text="Media temporarily unavailable")
+            response = web.HTTPTemporaryRedirect(location=location)
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
+
+        app.router.add_get("/uploads/{path:.*}", s3_upload_handler, name="uploads")
+    else:
+        app.router.add_static(
+            "/uploads/", path="static/uploads", show_index=False, name="uploads"
+        )
     setup_browser_auth_routes(app)
     setup_feed_reference_media_routes(app)
     from bot.genjutsu.runtime import setup_genjutsu
@@ -5649,7 +5694,13 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
             auth = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             if auth != HEALTH_SECRET:
                 return web.json_response({"error": "unauthorized"}, status=401)
-        return web.json_response({"status": "ok", "service": "tanya-bot"})
+        return web.json_response(
+            {
+                "status": "ok",
+                "service": "tanya-bot",
+                "media_storage": str(config.MEDIA_STORAGE_BACKEND or "local").lower(),
+            }
+        )
 
     app.router.add_get("/health", health_check)
 

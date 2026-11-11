@@ -218,7 +218,22 @@ def _resolve_existing_upload_variant(candidate: str | None) -> str | None:
 
 def _resolve_local_upload_path(source: str) -> str | None:
     candidate = _local_upload_candidate(source)
-    return _resolve_existing_upload_variant(candidate)
+    existing = _resolve_existing_upload_variant(candidate)
+    if not candidate:
+        return existing
+    try:
+        selected = existing or candidate
+        relative = os.path.relpath(selected, os.path.join("static", "uploads"))
+        if relative.startswith(".."):
+            return None
+        from bot.services.media_storage import materialize_upload
+
+        materialized = materialize_upload(relative.replace(os.sep, "/"))
+        if materialized:
+            _upload_dir_variants.cache_clear()
+        return materialized
+    except Exception:
+        return None
 
 
 def resolve_local_upload_path(source: str) -> str | None:
@@ -295,7 +310,14 @@ def image_source_to_supported_image_url(source: str | bytes | bytearray) -> str:
 
             rel_path = os.path.relpath(png_path, os.path.join("static", "uploads"))
             rel_path = rel_path.replace(os.sep, "/")
-            return f"{config.static_base_url.rstrip('/')}/uploads/{rel_path}"
+            from bot.services.media_storage import persist_upload_file
+
+            return persist_upload_file(
+                rel_path,
+                png_path,
+                content_type="image/png",
+                cache_control="private, max-age=0",
+            )
     except Exception:
         return source
 
@@ -326,7 +348,14 @@ def image_source_to_provider_safe_png_url(source: str | bytes | bytearray) -> st
 
         rel_path = os.path.relpath(png_path, os.path.join("static", "uploads"))
         rel_path = rel_path.replace(os.sep, "/")
-        return f"{config.static_base_url.rstrip('/')}/uploads/{rel_path}"
+        from bot.services.media_storage import persist_upload_file
+
+        return persist_upload_file(
+            rel_path,
+            png_path,
+            content_type="image/png",
+            cache_control="private, max-age=0",
+        )
     except Exception:
         return source
 
@@ -399,7 +428,17 @@ def reference_sources_to_contact_sheet_url(
         return None
 
     rel_url = f"{rel_dir.replace(os.sep, '/')}/{filename}"
-    return f"{config.static_base_url.rstrip('/')}/uploads/{rel_url}"
+    try:
+        from bot.services.media_storage import persist_upload_file
+
+        return persist_upload_file(
+            rel_url,
+            out_path,
+            content_type="image/jpeg",
+            cache_control="private, max-age=0",
+        )
+    except Exception:
+        return None
 
 
 def is_reference_contact_sheet_url(source: str | None) -> bool:

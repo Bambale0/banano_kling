@@ -719,9 +719,16 @@ class Kling4Lifecycle:
                     raise Kling4Error(
                         "Публичный адрес результатов не настроен.", status=503
                     )
-                from bot.services.wan3_prime_storage import _public_url_for_path
+                from bot.services.media_storage import persist_upload_file
 
-                result_path, result_url = str(path), _public_url_for_path(path)
+                result_path = str(path)
+                result_url = await asyncio.to_thread(
+                    persist_upload_file,
+                    path.resolve().relative_to(Path("static/uploads").resolve()).as_posix(),
+                    path,
+                    content_type="video/mp4",
+                    cache_control="private, max-age=0",
+                )
                 status = "done"
             async with db.connect(database.DATABASE_PATH) as conn:
                 await conn.execute(

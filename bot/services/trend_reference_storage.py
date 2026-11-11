@@ -325,9 +325,19 @@ async def persist_trend_reference(
         digest[:12],
         len(data),
     )
+    from bot.services.media_storage import is_s3_enabled, persist_upload_file
+
+    relative = target.relative_to(Path("static/uploads")).as_posix()
+    durable_url = await asyncio.to_thread(
+        persist_upload_file,
+        relative,
+        target,
+        content_type=normalized_mime,
+        cache_control="private, max-age=0",
+    )
     return PersistedTrendReference(
         media_type=normalized_type,
-        file_url=_public_url(target),
+        file_url=durable_url if is_s3_enabled() else _public_url(target),
         file_hash=digest,
         mime_type=normalized_mime,
         size_bytes=len(data),

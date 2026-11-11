@@ -41,6 +41,16 @@ def test_miniapp_url_from_env_file_is_respected(monkeypatch, tmp_path):
 
 
 class TestConfig:
+    def test_media_storage_defaults_to_local(self):
+        cfg = Config()
+        assert cfg.MEDIA_STORAGE_BACKEND == "local"
+        assert cfg.MEDIA_S3_KEEP_LOCAL_CACHE is False
+
+    def test_s3_secret_is_not_exposed_in_repr(self):
+        cfg = Config()
+        cfg.MEDIA_S3_SECRET_ACCESS_KEY = "never-print-this"
+        assert "never-print-this" not in repr(cfg)
+
     def test_admin_ids(self):
         cfg = Config()
         cfg.ADMIN_IDS_STR = "123,456"
