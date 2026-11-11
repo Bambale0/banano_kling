@@ -56,6 +56,11 @@ def test_empty_legal_text_is_not_sent():
     assert legal_documents.telegram_text_parts(" \n\t ") == []
 
 
+def test_exact_whitespace_is_preserved_in_full_legal_text():
+    source = "   Публичная оферта 👩‍💻\\n\\n"
+    assert "".join(legal_documents.telegram_text_parts(source)) == source
+
+
 def test_tiny_limit_rejected():
     with pytest.raises(ValueError):
         legal_documents.telegram_text_parts("abc", max_utf16_units=1)
