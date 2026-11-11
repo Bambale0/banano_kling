@@ -3,7 +3,6 @@
 import subprocess
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'retain_vk_immutable_assets.sh'
 
 
@@ -30,7 +29,7 @@ def test_immutable_asset_collision_fails_closed_without_overwrite(tmp_path):
     staging.mkdir()
     (previous / 'same.js').write_text('legacy')
     (staging / 'same.js').write_text('new')
-    result = subprocess.run(['bash', str(SCRIPT), str(previous), str(staging)], capture_output=True, text=True)
+    result = subprocess.run(['bash', str(SCRIPT), str(previous), str(staging)], capture_output=True, text=True, check=False)
     assert result.returncode == 4
     assert (staging / 'same.js').read_text() == 'new'
 
