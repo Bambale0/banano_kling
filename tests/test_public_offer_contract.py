@@ -24,14 +24,16 @@ def test_exact_public_offer_assets_are_bundled_server_side_only():
     assert not (miniapp_legal / "public-offer.txt").exists()
 
 
-def test_backend_offer_uses_only_local_resources():
+def test_backend_offer_has_exact_local_text_fallback_and_https_link():
     source = (
         ROOT / "bot" / "handlers" / "public_offer_compat.py"
     ).read_text(encoding="utf-8")
 
-    assert "anketa.prodamus.ru" not in source
     assert "public-offer.txt" in source
-    assert "public-offer.pdf" in source
+    assert "https_document_url" in source
+    assert "telegram_text_parts" in source
+    assert "answer_document(" not in source
+    assert "FSInputFile(" not in source
     assert "Публичная оферта" in source
 
 
@@ -63,8 +65,9 @@ def test_partner_offer_uses_full_local_document_before_legacy_handler():
     )
 
     assert '"partner_offer"' in offer_source
-    assert "PUBLIC_OFFER_PDF_PATH" in offer_source
-    assert "Публичная оферта · полный документ" in offer_source
+    assert "PUBLIC_OFFER_TEXT_PATH" in offer_source
+    assert '"full document"' not in offer_source
+    assert "answer_document(" not in offer_source
     assert "Текст будет дополнен юристом" not in offer_source
     assert "Текст будет дополнен юристом" not in legacy_source
 
@@ -89,9 +92,11 @@ def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
     more_keyboard = keyboards_source.split("def get_more_menu_keyboard():", 1)[1].split(
         "def get_admin_keyboard", 1
     )[0]
+    # Only inspect the partner menu itself, not the separate legal-documents
+    # component declared immediately after it.
     partner_keyboards = keyboards_source.split(
         "def get_partner_program_keyboard", 1
-    )[1].split("def get_settings_keyboard", 1)[0]
+    )[1].split("def get_legal_documents_keyboard", 1)[0]
 
     assert 'text="📜 Публичная оферта"' in more_keyboard
     assert 'callback_data="more_public_offer"' in more_keyboard
