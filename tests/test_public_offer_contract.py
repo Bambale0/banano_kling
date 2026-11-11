@@ -92,9 +92,11 @@ def test_telegram_offer_is_exposed_in_more_and_removed_from_partner_ui():
     more_keyboard = keyboards_source.split("def get_more_menu_keyboard():", 1)[1].split(
         "def get_admin_keyboard", 1
     )[0]
+    # Only inspect the partner menu itself, not the separate legal-documents
+    # component declared immediately after it.
     partner_keyboards = keyboards_source.split(
         "def get_partner_program_keyboard", 1
-    )[1].split("def get_settings_keyboard", 1)[0]
+    )[1].split("def get_legal_documents_keyboard", 1)[0]
 
     assert 'text="📜 Публичная оферта"' in more_keyboard
     assert 'callback_data="more_public_offer"' in more_keyboard
