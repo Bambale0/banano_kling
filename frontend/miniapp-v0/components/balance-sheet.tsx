@@ -141,7 +141,9 @@ export function BalanceSheet() {
     : 0
   const missingCredits = Math.max(0, requiredCredits - user.credits)
   const selectedCredits = selectedPackage ? totalPackageCredits(selectedPackage) : 0
-  const selectedProvider = selectedPackage ? preferredProviderForPackage(selectedPackage) : null
+  const selectedProvider = selectedPackage
+    ? preferredProviderForPackage(selectedPackage, vkPaymentsOnly ? 'vk' : 'telegram')
+    : null
   const selectedPrice = selectedPackage && selectedProvider
     ? paymentPriceLabel(selectedPackage, selectedProvider)
     : null
