@@ -253,6 +253,20 @@ export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNative
   ), signal)
 }
 
+export interface VkNativeCommerce {
+  ok: true
+  registered: boolean
+  balance: number | null
+  payment_packages: { id: string; price_rub: number; credits: number; lava_offer_id: string | null; methods: string[] }[]
+  payments: { amount_rub: number; status: 'paid' | 'pending' | 'failed'; created_at: string }[]
+  referrals: { first_level_count: number; second_level_count: number; earned_rub: number }
+}
+
+export async function fetchVkNativeCommerce(signal?: AbortSignal): Promise<VkNativeCommerce> {
+  // Native VK session owns the actor ID. No Telegram account projection.
+  return withPreviewSession(headers => request<VkNativeCommerce>('vk-commerce', { headers, signal }), signal)
+}
+
 export interface VkPublicTrend {
   id: number
   share_link?: string | null

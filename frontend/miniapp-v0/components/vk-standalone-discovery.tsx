@@ -9,7 +9,9 @@ import {
   fetchVkPublicTrend,
   fetchVkPublicFeedItem,
   fetchVkNativeState,
+  fetchVkNativeCommerce,
   type VkNativeState,
+  type VkNativeCommerce,
   type VkPublicCategoryPage,
   type VkPublicDiscovery,
   type VkPublicFeedItem,
@@ -77,6 +79,8 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
 export function VkStandaloneDiscovery() {
   const [view, setView] = useState<'trends' | 'feed' | 'mine'>('trends')
   const [native, setNative] = useState<VkNativeState | null>(null)
+  const [commerce, setCommerce] = useState<VkNativeCommerce | null>(null)
+  const [commerceError, setCommerceError] = useState('')
   const [repeatItem, setRepeatItem] = useState<VkPublicTrend | null>(null)
   const [linkedTrendId, setLinkedTrendId] = useState<number | null>(null)
   const [linkedTrend, setLinkedTrend] = useState<VkPublicTrend | null>(null)
@@ -230,6 +234,20 @@ export function VkStandaloneDiscovery() {
   }, [nativeRetry])
 
   useEffect(() => {
+    if (view !== 'mine') return
+    const controller = new AbortController()
+    setCommerceError('')
+    fetchVkNativeCommerce(controller.signal).then(result => {
+      if (!controller.signal.aborted) setCommerce(result)
+    }).catch(error => {
+      if (!controller.signal.aborted) setCommerceError(
+        error instanceof Error ? error.message : 'Не удалось получить историю оплат.',
+      )
+    })
+    return () => controller.abort()
+  }, [view, nativeRetry])
+
+  useEffect(() => {
     const controller = new AbortController()
     if (view === 'mine') {
       setBusy(false)
@@ -376,6 +394,20 @@ export function VkStandaloneDiscovery() {
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
     </section> : null}
     {view === 'mine' ? <div className="space-y-3">
+      {commerce?.registered && <section aria-label="Мои оплаты и партнёрство ВКонтакте"
+        className="space-y-2 rounded-xl border border-border/70 bg-card p-3 text-sm">
+        <h3 className="text-base font-semibold">Оплаты и партнёрская программа</h3>
+        <p>Рефералов первого уровня: {commerce.referrals.first_level_count}</p>
+        <p>Второго уровня: {commerce.referrals.second_level_count}</p>
+        <p>Партнёрский доход: {commerce.referrals.earned_rub} ₽</p>
+        <h4 className="font-medium">Последние оплаты</h4>
+        {commerce.payments.length ? <ul className="space-y-1">
+          {commerce.payments.map((payment, index) => <li key={`${payment.created_at}-${index}`}>
+            {payment.amount_rub} ₽ · {payment.status === 'paid' ? 'Зачислено' : payment.status === 'pending' ? 'Ожидает оплату' : 'Не оплачено'}
+          </li>)}
+        </ul> : <p>Пополнений пока нет.</p>}
+      </section>}
+      {commerceError && <p role="alert" className="text-sm">История оплат VK недоступна: {commerceError}</p>}
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-base font-semibold">Мои генерации ВКонтакте</h3>
         <button type="button" className="text-sm underline" onClick={() => setNativeRetry(v => v + 1)}>Обновить</button>
