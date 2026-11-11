@@ -929,3 +929,92 @@ async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypat
         monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED')
         profile = await client.get(ROOT + '/me', headers=auth)
         assert (await profile.json())['preview']['full_app_ready'] is False
+
+
+async def test_platform_actor_is_signed_and_never_invents_telegram_wallet(monkeypatch):
+    from bot.shared_accounts.actor import resolve_platform_actor
+    from bot.shared_accounts.errors import AuthenticationError
+    from bot.shared_accounts.store import revoke_session
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        vk = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert vk.status == 200
+        vk_token = (await vk.json())['session_token']
+        tg = await login(client, 2001)
+        tg_token = (await tg.json())['session_token']
+        vk_actor = await resolve_platform_actor(vk_token, expected_platform='vk')
+        tg_actor = await resolve_platform_actor(tg_token, expected_platform='telegram')
+
+        assert vk_actor.platform == 'vk' and vk_actor.external_id == 2001
+        assert tg_actor.platform == 'telegram' and tg_actor.external_id == 2001
+        assert vk_actor.shared_account_id != tg_actor.shared_account_id
+        assert vk_actor.owner_key == 'vk:2001' and tg_actor.owner_key == 'telegram:2001'
+        assert vk_actor.wallet_platform == 'vk' and tg_actor.wallet_platform == 'telegram'
+        assert vk_actor.linked_telegram_id is None
+        with pytest.raises(PermissionError):
+            await resolve_platform_actor(tg_token, expected_platform='vk')
+        with pytest.raises(PermissionError):
+            await resolve_platform_actor(vk_token, expected_platform='telegram')
+
+        await revoke_session(vk_token)
+        with pytest.raises(AuthenticationError):
+            await resolve_platform_actor(vk_token, expected_platform='vk')
+        assert (await resolve_platform_actor(tg_token)).platform == 'telegram'
+
+
+async def test_platform_actor_for_vk_only_does_not_touch_legacy_telegram_users(monkeypatch):
+    from bot import db as db_backend
+    from bot.shared_accounts.actor import resolve_platform_actor
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        async with db_backend.connect() as db:
+            before = (await (await db.execute('SELECT count(*) FROM users')).fetchone())[0]
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(34567),
+        })
+        assert signed.status == 200
+        token = (await signed.json())['session_token']
+        actor = await resolve_platform_actor(token, expected_platform='vk')
+        assert actor.linked_telegram_id is None
+        assert actor.account_id == actor.shared_account_id
+        async with db_backend.connect() as db:
+            after = (await (await db.execute('SELECT count(*) FROM users')).fetchone())[0]
+        assert before == after
+
+
+async def test_platform_actor_keeps_verified_wallet_platform_after_optional_link(monkeypatch):
+    from bot.shared_accounts.actor import resolve_platform_actor
+    from tests.test_shared_account_links import pair
+
+    async with pair(monkeypatch) as (client, source, target):
+        invitation_response = await client.post(ROOT + '/links', headers=source, json={
+            'target_platform': 'vk', 'confirm_source': True,
+        })
+        assert invitation_response.status == 200
+        invitation = (await invitation_response.json())['link']
+        linked = await client.post(ROOT + '/links/accept', headers=target, json={
+            'token': invitation['token'], 'confirm': True,
+        })
+        assert linked.status == 200
+        assert (await linked.json())['link']['state'] == 'committed'
+        vk_session = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert vk_session.status == 200
+        bearer = (await vk_session.json())['session_token']
+        actor = await resolve_platform_actor(bearer)
+        assert actor.platform == 'vk'
+        assert actor.external_id == 2001
+        assert actor.linked_platforms == ('telegram', 'vk')
+        # Identity linking does not imply a legacy Telegram user exists.
+        # The adapter must never create one to make a UI gate pass.
+        assert actor.linked_telegram_id is None
+        assert actor.wallet_platform == 'vk'
+        assert actor.owner_key == 'vk:2001'
+        assert actor.shared_account_id == (await vk_session.json())['account']['id']
