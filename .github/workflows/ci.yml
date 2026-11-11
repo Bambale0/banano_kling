@@ -188,7 +188,7 @@ jobs:
                   link.unlink()
               link.symlink_to(Path(source).resolve())
           with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as paths:
-              paths.write(str(bin_dir) + "\\n")
+              paths.write(str(bin_dir) + "\n")
           PY
               export PATH="$RUNNER_TEMP/ci-static-ffmpeg:$PATH"
             fi
