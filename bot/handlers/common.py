@@ -4199,9 +4199,8 @@ async def show_partner(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "legal_documents")
 async def show_legal_documents(callback: types.CallbackQuery):
-    """One legal documents entry point for the bot, top-up, and partners."""
-    await _safe_show_text(
-        callback.message,
+    """Show documents without replacing active checkout or invoice messages."""
+    await callback.message.answer(
         "📄 <b>Юридические документы</b>\n\n"
         "Ознакомьтесь с условиями сервиса и обработкой персональных данных:",
         reply_markup=get_legal_documents_keyboard(),
