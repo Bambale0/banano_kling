@@ -71,6 +71,45 @@ async def fetch_native_vk_state(vk_user_id: int) -> dict:
 
 
 
+async def fetch_native_vk_commerce(vk_user_id: int) -> dict:
+    """HMAC-only read of VK's authoritative purchases/partners; never TG wallet."""
+    if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
+        raise ValueError('Invalid verified VK identity')
+    secret = os.getenv('INTERNAL_API_SECRET', '')
+    if not secret:
+        raise RuntimeError('VK internal authentication is not configured')
+    path = f'/internal/v1/miniapp/users/{vk_user_id}/commerce'
+    stamp = str(int(time.time()))
+    signature = hmac.new(
+        secret.encode(), f'{stamp}\nGET\n{path}\n'.encode(), hashlib.sha256,
+    ).hexdigest()
+    timeout = aiohttp.ClientTimeout(total=5, connect=2)
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as client,
+        client.get(_internal_origin() + path, allow_redirects=False, headers={
+            'X-Internal-Timestamp': stamp, 'X-Internal-Signature': signature,
+        }) as result,
+    ):
+        if result.status == 403:
+            raise PermissionError('Native VK account is blocked')
+        if result.status != 200:
+            raise RuntimeError('VK native commerce unavailable')
+        data = await result.json()
+    if (
+        not isinstance(data, dict) or data.get('ok') is not True
+        or type(data.get('registered')) is not bool
+        or (data.get('balance') is not None and
+            (type(data['balance']) not in (int, float) or data['balance'] < 0))
+        or not isinstance(data.get('payment_packages'), list)
+        or not isinstance(data.get('payments'), list)
+        or not isinstance(data.get('referrals'), dict)
+        or len(data['payments']) > 10
+        or len(data['payment_packages']) > 50
+    ):
+        raise RuntimeError('VK native commerce response invalid')
+    return data
+
+
 async def submit_native_vk_image(vk_user_id: int, payload: dict) -> dict:
     """Delegate a single idempotent charge+task to native VK. Never pass TG ID."""
     import json
