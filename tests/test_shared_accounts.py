@@ -996,7 +996,7 @@ async def test_vk_only_direct_trend_link_requires_signature_and_hides_recipe(mon
     await database.approve_prompt(prompt['id'])
     link_query = '?view=item&trend_id=' + str(prompt['id'])
     async with preview_client() as client:
-        await enable(client, vk_app_id=123)
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
         no_token = await client.get(ROOT + '/trends' + link_query)
         assert no_token.status == 401
         signed = await client.post(ROOT + '/session', json={
@@ -1008,7 +1008,7 @@ async def test_vk_only_direct_trend_link_requires_signature_and_hides_recipe(mon
         payload = await item.json()
         assert payload['item']['id'] == prompt['id']
         assert payload['item']['title'] == 'Deep link for VK'
-        assert payload['item']['share_link'] == 'https://vk.com/app123#prompt_' + str(prompt['id'])
+        assert payload['item']['share_link'] == 'https://vk.com/app123_-239915802#prompt_' + str(prompt['id'])
         assert 'Private owned prompt' not in str(payload)
         assert 'prompt_text' not in str(payload)
         assert 'reference_urls' not in str(payload)
@@ -1102,7 +1102,7 @@ async def test_vk_only_feed_link_uses_publication_not_trend_and_never_leaks_reci
     monkeypatch.setattr(database, 'get_feed_generation_card', fetch)
     link = '?view=feed_item&gen_id=370766'
     async with preview_client() as client:
-        await enable(client, vk_app_id=123)
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
         assert (await client.get(ROOT + '/trends' + link)).status == 401
         signed = await client.post(ROOT + '/session', json={
             'platform': 'vk', 'launch_data': vk_launch(2001),
@@ -1115,7 +1115,7 @@ async def test_vk_only_feed_link_uses_publication_not_trend_and_never_leaks_reci
         assert data['item']['id'] == 370766
         assert data['item']['generation_type'] == 'video'
         assert data['item']['model'] == 'seedance_2_5'
-        assert data['item']['share_link'] == 'https://vk.com/app123#feed_370766'
+        assert data['item']['share_link'] == 'https://vk.com/app123_-239915802#feed_370766'
         assert data['item']['can_repeat_in_app'] is False
         for secret in ('HIDDEN_AUTHORED_PROMPT', 'PRIVATE_INPUT', 'PRIVATE_REFERRAL_CODE', 'PRIVATE_INTERNAL_KEY'):
             assert secret not in str(data)
