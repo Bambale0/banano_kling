@@ -3155,3 +3155,11 @@ private references and browser-provided actor information fail closed.
 - New signed VK-only `account-preview/vk-video` quote/generation bridge targets the authoritative VK SQLite ledger over exact-body HMAC, paired with deployed native service at `609eeeed`.
 - `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains OFF. No prices, payment settings, balances or providers are changed.
 - This is a narrow infrastructure slice, NOT complete #451 parity. Reconciliation of uncertain video provider submissions, media delivery, refund correctness, full video form and real VK WebView financial acceptance remain release gates.
+
+## 2026-11-11 — VK-only quick topup provider selection, #437
+
+- Rebased original #437 on current `tanyapi` in an isolated worktree with a conflict-free merge; its original changes affect only BalanceSheet selected provider, platform-aware preferred provider and associated tests.
+- TDD caught a remaining reachability bug: `GenerationFundingOffer` selected the smallest package that covered the credit shortage even if the VK user had no configured Lava checkout for that package. This showed an unavailable Robokassa/Stars-based "Купить" CTA in a VK Mini App and could lead to a dead-end topup sheet.
+- VK funding offer now filters to packages with a real `lava_offer_id` before recommending a quick checkout; if none exists, no unsupported quick purchase CTA is rendered. The shared UI remains unchanged on Telegram, and all package values remain from authenticated bootstrap/configuration. No fake merchant offer, wallet credit, runtime business settings or payment API write is introduced.
+- RED: 2 new VK-focused frontend tests failed on original branch. GREEN: 32 targeted Jest tests, TypeScript and scoped ESLint passed. Full Jest and production VK build are separate release gates.
+- Real money, successful Lava invoice creation, webhook replay and reward accounting were **not** simulated by this UI fix. Those must pass before #451 full acceptance; do not conflate a safe provider-selection UI with the full native VK payment implementation.

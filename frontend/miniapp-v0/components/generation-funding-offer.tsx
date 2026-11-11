@@ -4,6 +4,7 @@ import { Banana, Wallet } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { useOptionalApp } from '@/lib/app-context'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import {
   paymentPriceLabel,
   preferredProviderForPackage,
@@ -35,8 +36,14 @@ export function GenerationFundingOffer({
     app && app.state.mode === 'live' && !app.state.user.isAdmin && !adminFree &&
     typeof cost === 'number' && Number.isFinite(cost) && cost > 0,
   )
+  const platform = currentAccountPlatform()
+  // A VK user must never be routed to a Telegram-only checkout. The native
+  // VK Mini App currently supports only configured Lava offers.
+  const payablePackages = platform === 'vk'
+    ? app?.state.paymentPackages.filter(pkg => Boolean(pkg.lava_offer_id)) ?? []
+    : app?.state.paymentPackages ?? []
   const offer = eligible
-    ? selectTopupPackages(cost!, credits, app!.state.paymentPackages)
+    ? selectTopupPackages(cost!, credits, payablePackages)
     : { shortage: 0, recommended: null, alternative: null }
 
   useEffect(() => {
@@ -59,10 +66,10 @@ export function GenerationFundingOffer({
     app.openBalance({ packageId: option?.package.id, requiredCredits: cost })
   }
 
-  const price = (option: TopupPackageOption) => paymentPriceLabel(
-    option.package,
-    preferredProviderForPackage(option.package),
-  )
+  const price = (option: TopupPackageOption) => {
+    const provider = preferredProviderForPackage(option.package, platform)
+    return provider ? paymentPriceLabel(option.package, provider) : 'оплата недоступна'
+  }
 
   return (
     <section
