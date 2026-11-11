@@ -50,12 +50,21 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
     this gate, the existing legacy Telegram routes remain unchanged.
     """
     base = miniapp_root.rstrip('/') + '/api/'
+    native_task_paths = frozenset({
+        base + 'task-history', base + 'task-detail',
+    })
 
     @web.middleware
     async def middleware(request: web.Request, handler):
-        # Every existing Telegram operation is byte-for-byte untouched until
-        # the full VK adapter rollout is explicitly enabled.
-        if os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1':
+        # Existing TG routes remain untouched until an explicit native VK
+        # domain flag is enabled. Partial task-history never unlocks the full
+        # VK shell; it only adds an owner-scoped adapter to the SAME routes.
+        full_enabled = os.getenv('VK_FULL_APP_PARITY_ENABLED') == '1'
+        native_tasks_enabled = (
+            os.getenv('VK_NATIVE_TASKS_ENABLED') == '1'
+            and request.path in native_task_paths
+        )
+        if not full_enabled and not native_tasks_enabled:
             return await handler(request)
         # Never accept opaque VK session tokens in URL query strings.
         # Such tokens may leak through request logs, referrers or browser
@@ -70,8 +79,7 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             }, status=400)
         if (request.method == 'OPTIONS'
             or not request.path.startswith(base)
-            or request.path.startswith(base + 'account-preview/')
-            or os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1'):
+            or request.path.startswith(base + 'account-preview/')):
             # In production, the gateway is an exact no-op: do not eagerly
             # read JSON bodies or alter Telegram transport behaviour.
             return await handler(request)
@@ -125,11 +133,16 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             return web.json_response({'ok': False, 'error': 'Account unavailable'}, status=503)
 
         adapter = full_vk_adapter(request.app)
+        if adapter is None and actor.linked_telegram_id is not None:
+            # Existing linked sessions use the previous Telegram studio until
+            # every platform-aware adapter is ready, not a mixture of wallets.
+            return await handler(request)
+        if adapter is None and native_tasks_enabled:
+            task_adapter = request.app.get('vk_native_tasks_adapter')
+            if (getattr(task_adapter, 'ready_operations', None) == frozenset({'tasks'})
+                and callable(getattr(task_adapter, 'handle', None))):
+                adapter = task_adapter
         if adapter is None:
-            # Linked accounts have a legacy working studio. An operator
-            # accidentally enabling an incomplete adapter cannot break it.
-            if actor.linked_telegram_id is not None:
-                return await handler(request)
             return web.json_response({
                 'ok': False, 'error': 'VK studio integration unavailable',
             }, status=503)

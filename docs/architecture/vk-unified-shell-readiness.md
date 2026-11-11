@@ -136,3 +136,41 @@ Full GitHub PostgreSQL and end-to-end validations are independent release gates.
 
 **Not yet shipped:** the shared eight-tab VK-only UI still cannot safely use
 the TG legacy API endpoints. `VK_FULL_APP_PARITY_ENABLED` is not enabled.
+
+
+## Native VK task history integration (2026-11-11, NOT production)
+
+Native `tanyavk` has an HMAC-only, read-only API at
+`POST /internal/v1/miniapp/users/{vk_user_id}/tasks/history` and
+`POST /internal/v1/miniapp/users/{vk_user_id}/tasks/detail`.
+The exact method/path/JSON body are signed by `INTERNAL_API_SECRET`
+and scoped to the verified native VK actor; browser claims are ignored.
+History pages contain 8 tasks plus a namespaced keyset continuation cursor
+`vk:<id>`. Unlike the old summary, history is not limited to 40 recent
+tasks. Stale/deleted/foreign cursors reset to the owner's latest page.
+Details return an owned task only; raw prompts and reference recipes
+are deliberately withheld because the native VK DB cannot yet determine
+which copied trend recipes are protected.
+
+`VkNativeTaskService` converts this signed data to the EXACT existing
+`/mini-app/api/task-history` and `/mini-app/api/task-detail`
+response contract. `VkNativeTasksAdapter` advertises only `tasks`
+readiness. `VK_NATIVE_TASKS_ENABLED` is a separate OFF-by-default
+switch for these two standard paths. No wallet/credit/provider actions
+are performed and the complete `VK_FULL_APP_PARITY_ENABLED` readiness
+stays false, since no full native studio has been implemented yet.
+
+The native service must be released before enabling
+`VK_NATIVE_TASKS_ENABLED` in the common backend. Tests include
+HMAC, actor-collision, no synthetic Telegram user, foreign task 404,
+cursor reset, blocked owner 403, replay and exact immutable account
+balance. Local cross-repository test used a temporary SQLite DB,
+not a production user or provider.
+
+**Next gates to an actually identical VK and TG app:** real native
+bootstrap (including truthful supported model/price metadata),
+fully shared photo/video/Motion/service execution and delivery, media
+reference ownership, feed/trend publishing/repeating, checkout and
+referrals with audited VK wallet, and a signed VK WebView acceptance
+on the same code SHA. Never expose a supposedly ready common shell
+before these domains are implemented.

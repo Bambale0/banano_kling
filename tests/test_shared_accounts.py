@@ -1222,3 +1222,93 @@ def test_actual_miniapp_setup_installs_single_shared_vk_gateway():
                for name in middleware_names) == 1
     assert any("cors" in name for name in middleware_names)
     assert any("json_errors" in name for name in middleware_names)
+
+
+@pytest.mark.asyncio
+async def test_partial_native_vk_history_uses_same_route_without_opening_full_shell(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts.gateway import vk_miniapp_gateway
+    from bot.shared_accounts.native_tasks import VkNativeTasksAdapter
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '1')
+    monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED', raising=False)
+
+    native_service = SimpleNamespace(
+        history=AsyncMock(return_value={
+            'ok': True, 'recent_tasks': [{'task_id': 'vk:22'}],
+            'next_cursor': None, 'cursor_reset': False,
+        }),
+        detail=AsyncMock(return_value={
+            'ok': True, 'task': {
+                'task_id': 'vk:22', 'prompt': '',
+                'prompt_hidden': True,
+            },
+        }),
+    )
+    legacy = AsyncMock(side_effect=lambda request: web.json_response({'legacy': True}))
+    app = web.Application(middlewares=[vk_miniapp_gateway('/mini-app')])
+    app['vk_native_tasks_adapter'] = VkNativeTasksAdapter(native_service)
+    setup_shared_account_routes(app, '/mini-app')
+    app.router.add_post('/mini-app/api/task-history', legacy)
+    app.router.add_post('/mini-app/api/task-detail', legacy)
+
+    async with TestClient(TestServer(app)) as client:
+        print('TRACE_NATIVE_TASK_GATE','        await enable(client, vk_app_id=123)',flush=True)
+        await enable(client, vk_app_id=123)
+        print('TRACE_NATIVE_TASK_GATE',"        signed = await client.post(ROOT + '/sess",flush=True)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        token = (await signed.json())['session_token']
+        auth = {'init_data': 'vk_session:' + token}
+
+        # Old separate shell remains blocked, but this one native domain
+        # already answers using the SAME route/DTO as Telegram.
+        print('TRACE_NATIVE_TASK_GATE',"        preview = await client.get(ROOT + '/me',",flush=True)
+        preview = await client.get(ROOT + '/me', headers={
+            'Authorization': 'Bearer ' + token,
+        })
+        assert (await preview.json())['preview']['full_app_ready'] is False
+        print('TRACE_NATIVE_TASK_GATE',"        response = await client.post('/mini-app/",flush=True)
+        response = await client.post('/mini-app/api/task-history', json=auth)
+        assert response.status == 200
+        assert (await response.json())['recent_tasks'][0]['task_id'] == 'vk:22'
+        native_service.history.assert_awaited_once()
+        actual_actor = native_service.history.await_args.args[0]
+        assert actual_actor.platform == 'vk' and actual_actor.external_id == 2001
+        assert actual_actor.linked_telegram_id is None
+        print('TRACE_NATIVE_TASK_GATE',"        detail = await client.post('/mini-app/ap",flush=True)
+        detail = await client.post('/mini-app/api/task-detail',
+                                   json={**auth, 'task_id': 'vk:22'})
+        assert detail.status == 200
+        assert (await detail.json())['task']['prompt_hidden'] is True
+        legacy.assert_not_awaited()
+
+        print('TRACE_NATIVE_TASK_GATE',"        malicious = await client.post('/mini-app",flush=True)
+        malicious = await client.post('/mini-app/api/task-history',
+                                      json={**auth, 'telegram_id': 2001})
+        assert malicious.status == 400
+        print('TRACE_NATIVE_TASK_GATE',"        invalid = await client.post('/mini-app/a",flush=True)
+        invalid = await client.post('/mini-app/api/task-history',
+                                    json={'init_data': 'vk_session:invalid'})
+        assert invalid.status == 401
+        assert native_service.history.await_count == 1
+        assert legacy.await_count == 0
+
+        print('TRACE_NATIVE_TASK_GATE',"        tg = await client.post('/mini-app/api/ta",flush=True)
+        tg = await client.post('/mini-app/api/task-history', json={
+            'init_data': telegram_launch(1001),
+        })
+        assert tg.status == 200
+        assert (await tg.json())['legacy'] is True
+        legacy.assert_awaited_once()
+
+        monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '0')
+        print('TRACE_NATIVE_TASK_GATE',"        fallback = await client.post('/mini-app/",flush=True)
+        fallback = await client.post('/mini-app/api/task-history', json=auth)
+        assert fallback.status == 200
+        assert legacy.await_count == 2
