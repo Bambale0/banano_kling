@@ -200,7 +200,7 @@ export function VkStandaloneDiscovery() {
   const openShareLink = (item: VkPublicTrend) => {
     const url = item.share_link || ''
     // Trusted app origin and public ID only, no signed session or private media.
-    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*#prompt_[1-9][0-9]*$/.test(url)) return
+    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#prompt_[1-9][0-9]*$/.test(url)) return
     setShareTitle(item.title)
     setShareLink(url)
     setShareCopyMessage('')

@@ -164,7 +164,8 @@ async def profile(request: web.Request) -> web.Response:
     }})
 
 
-def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
+def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None,
+                          vk_community_id: int | None = None) -> dict:
     from bot.miniapp_links import prompt_link
     from bot.trend_visibility import public_trend_settings
 
@@ -173,7 +174,7 @@ def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
     return {
         'id': int(card['id']),
         'share_link': (
-            prompt_link(None, card['id'], platform='vk', vk_app_id=vk_app_id)
+            prompt_link(None, card['id'], platform='vk', vk_app_id=vk_app_id, vk_community_id=vk_community_id)
             if vk_app_id else None
         ),
         'title': str(card.get('title') or ''),
@@ -358,7 +359,8 @@ async def vk_native_trend(request: web.Request) -> web.Response:
     return response({'ok': True, **result})
 
 
-def _vk_public_feed_card(card: dict, *, vk_app_id: int) -> dict:
+def _vk_public_feed_card(card: dict, *, vk_app_id: int,
+                         vk_community_id: int | None = None) -> dict:
     """Public media and share navigation only, never the original task recipe.
 
     Feed publication IDs live in a separate namespace from editorial prompt
@@ -383,7 +385,7 @@ def _vk_public_feed_card(card: dict, *, vk_app_id: int) -> dict:
         'duration': card.get('duration'),
         'feed_blurred': bool(card.get('feed_blurred')),
         'media_unavailable': bool(card.get('media_unavailable')),
-        'share_link': feed_link(None, int(card['id']), platform='vk', vk_app_id=vk_app_id),
+        'share_link': feed_link(None, int(card['id']), platform='vk', vk_app_id=vk_app_id, vk_community_id=vk_community_id),
         # Never interpret visible content or public status as authorization
         # for a paid remix. That is a separate actor/ledger/ref contract.
         'can_repeat_in_app': False,
@@ -417,7 +419,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
             return response({'ok': False, 'error': 'Публикация не найдена'}, 404)
         return response({
             'ok': True,
-            'item': _vk_public_feed_card(card, vk_app_id=policy.vk_app_id),
+            'item': _vk_public_feed_card(card, vk_app_id=policy.vk_app_id, vk_community_id=policy.vk_community_id),
         })
     if view == 'item':
         from bot import trend_catalog
@@ -433,7 +435,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
             return response({'ok': False, 'error': 'Тренд не найден'}, 404)
         return response({
             'ok': True,
-            'item': _vk_public_trend_card(item, vk_app_id=policy.vk_app_id),
+            'item': _vk_public_trend_card(item, vk_app_id=policy.vk_app_id, vk_community_id=policy.vk_community_id),
             'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',
         })
     if view == 'trends':
@@ -447,7 +449,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'title': item['title'],
                 'emoji': item['emoji'],
                 'total': item['total'],
-                'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in item['items']],
+                'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id, vk_community_id=policy.vk_community_id) for card in item['items']],
             }
             for item in categories
         ]
@@ -472,7 +474,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
         return response({
             'ok': True,
             'category': {'id': meta['id'], 'title': meta['title'], 'emoji': meta['emoji']},
-            'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in category['items']],
+            'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id, vk_community_id=policy.vk_community_id) for card in category['items']],
             'has_more': bool(category['has_more']),
             'page': page,
             'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',

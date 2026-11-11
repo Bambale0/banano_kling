@@ -1,5 +1,5 @@
 import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
-import { accountLaunch, currentAccountPlatform, type AccountPlatform } from './account-platform'
+import { accountLaunch, currentAccountPlatform, setVerifiedVkCommunity, type AccountPlatform } from './account-platform'
 import type { Task } from './types'
 
 export interface AccountPreviewSettings {
@@ -547,6 +547,10 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
     activeAppSessionToken = token
     activeAppAccountId = login.account.id
     activeAppSessionPlatform = verifiedLaunch.platform
+    setVerifiedVkCommunity(
+      verifiedLaunch.platform === 'vk' ? profile.preview.vk_app_id : null,
+      verifiedLaunch.platform === 'vk' ? (profile.preview.vk_community_id ?? null) : null,
+    )
     return profile.preview
   } catch (error) {
     await revokeAppSession(token)
@@ -559,6 +563,7 @@ export async function stopAccountAppSession(): Promise<void> {
   activeAppSessionToken = ''
   activeAppAccountId = ''
   activeAppSessionPlatform = null
+  setVerifiedVkCommunity(null, null)
   clearPlatformSessionToken()
   await revokeAppSession(token)
 }

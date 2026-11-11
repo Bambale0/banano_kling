@@ -183,6 +183,24 @@ test('VK commerce unavailable does not blank the trend catalog, balance, or hist
   expect(screen.getByText(/VK-баланс: 12.5/)).toBeInTheDocument()
 })
 
+test('community-scoped trend share link is displayed without rejecting the trusted owner suffix', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: false,
+    categories: [{ id: 1, title: 'Тренды', emoji: '✨', total: 1, items: [{
+      id: 2534, title: 'Is my boyfriend', description: '',
+      preview_url: null, preview_poster_url: null,
+      generation_type: 'video', can_repeat_in_app: false,
+      share_link: 'https://vk.com/app54880352_-239915802#prompt_2534',
+      user_fields: [],
+    }] }],
+  })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Ссылка на «Is my boyfriend»' }))
+  expect(screen.getByRole('textbox', { name: 'Ссылка на тренд' })).toHaveValue(
+    'https://vk.com/app54880352_-239915802#prompt_2534',
+  )
+})
+
 test('incomplete native state does not blank trends or the work history', async () => {
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, is_blocked: false,

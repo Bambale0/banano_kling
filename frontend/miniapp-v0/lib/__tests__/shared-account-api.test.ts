@@ -1,5 +1,6 @@
 import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
+import { platformMiniAppUrl } from '../account-platform'
 
 jest.mock('../api', () => ({
   getApiBasePath: () => '/mini-app/api',
@@ -135,6 +136,7 @@ test('unlinked VK retains one revocable in-memory session for history refresh wi
     preview: {
       revision: 1,
       vk_app_id: 123,
+      vk_community_id: 239915802,
       telegram_bot_username: 'Neuromixx_bot',
       telegram_linked: false,
     },
@@ -144,6 +146,7 @@ test('unlinked VK retains one revocable in-memory session for history refresh wi
 
   const access = await startAccountAppSession()
   expect(access.telegram_linked).toBe(false)
+  expect(platformMiniAppUrl('prompt_2534')).toBe('https://vk.com/app123_-239915802#prompt_2534')
   expect(setPlatformSessionToken).toHaveBeenCalledWith('b'.repeat(43))
   const history = await fetchVkNativeState()
   expect(history.balance).toBe(12.5)
@@ -156,6 +159,7 @@ test('unlinked VK retains one revocable in-memory session for history refresh wi
     Authorization: 'Bearer ' + 'b'.repeat(43),
   }))
   await stopAccountAppSession()
+  expect(platformMiniAppUrl('prompt_2534')).toBe('https://vk.com/app123#prompt_2534')
   expect(fetch.mock.calls[3][0]).toBe('/mini-app/api/account-preview/logout')
 })
 
