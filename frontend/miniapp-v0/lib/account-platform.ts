@@ -2,6 +2,29 @@ import { getInitData, getRuntimeBotUsername, getStartParamFallback } from './api
 
 export type AccountPlatform = 'telegram' | 'vk'
 
+// Server-authenticated VK community identity. Kept in module memory only,
+// never derived from a browser-provided owner ID or persisted in storage.
+let verifiedVkAppId: number | null = null
+let verifiedVkCommunityId: number | null = null
+
+export function setVerifiedVkCommunity(appId: number | null, communityId: number | null): void {
+  if (appId !== null && communityId !== null
+      && Number.isSafeInteger(appId) && appId > 0
+      && Number.isSafeInteger(communityId) && communityId > 0) {
+    verifiedVkAppId = appId
+    verifiedVkCommunityId = communityId
+    return
+  }
+  verifiedVkAppId = null
+  verifiedVkCommunityId = null
+}
+
+function vkCommunitySuffix(appId: number): string {
+  return appId === verifiedVkAppId && verifiedVkCommunityId !== null
+    ? `_-${verifiedVkCommunityId}`
+    : ''
+}
+
 /** Preserve VK's original signed launch parameters in memory only. VK
  * WebViews may replace the URL before React starts. Neither this snapshot
  * nor the browser actor is trusted: the server still verifies VK HMAC/TTL.
@@ -41,7 +64,7 @@ export function platformMiniAppUrl(startParam: string, telegramBotUsername = '')
     if (typeof window === 'undefined') return ''
     const appId = Number(new URLSearchParams(vkLaunchData()).get('vk_app_id') || 0)
     return Number.isSafeInteger(appId) && appId > 0
-      ? `https://vk.com/app${appId}#${encodeURIComponent(param)}`
+      ? `https://vk.com/app${appId}${vkCommunitySuffix(appId)}#${encodeURIComponent(param)}`
       : ''
   }
   const username = telegramBotUsername.trim().replace(/^@/, '') || getRuntimeBotUsername()
@@ -67,7 +90,7 @@ export function accountLinkUrl(platform: AccountPlatform, token: string, vkAppId
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Некорректная ссылка.')
   if (platform === 'vk') {
     if (!vkAppId) throw new Error('Сначала укажите ID приложения ВК.')
-    return `https://vk.com/app${vkAppId}#link_${token}`
+    return `https://vk.com/app${vkAppId}${vkCommunitySuffix(vkAppId)}#link_${token}`
   }
   const username = telegramBotUsername.trim().replace(/^@/, '') || getRuntimeBotUsername()
   if (!/^[A-Za-z0-9_]+$/.test(username)) throw new Error('Имя бота пока не настроено.')
