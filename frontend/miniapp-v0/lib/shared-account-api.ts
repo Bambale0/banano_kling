@@ -1,5 +1,6 @@
 import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
 import { accountLaunch, currentAccountPlatform, type AccountPlatform } from './account-platform'
+import type { Task } from './types'
 
 export interface AccountPreviewSettings {
   enabled: boolean
@@ -240,6 +241,8 @@ export interface VkNativeState {
   balance: number | null
   is_blocked: boolean
   tasks: VkNativeTask[]
+  /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
+  recent_tasks?: Task[]
 }
 
 export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNativeState> {
@@ -447,6 +450,8 @@ export interface AccountPreviewAccess {
   vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  /** Server-advertised readiness for every shared-shell operation. Not an identity link. */
+  full_app_ready?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 
