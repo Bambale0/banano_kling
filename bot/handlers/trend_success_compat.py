@@ -12,17 +12,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from functools import wraps
 from typing import Any
 
 from bot import database
 from bot import db as db_backend
-from bot.database import DATABASE_PATH
+from bot.database import DATABASE_PATH as _INITIAL_DATABASE_PATH
+
+# Existing schema test fixtures patch this symbol; runtime reads the active
+# database path from bot.database instead of importing a stale snapshot.
+DATABASE_PATH = _INITIAL_DATABASE_PATH
 
 logger = logging.getLogger(__name__)
 
 _SCHEMA_LOCK: asyncio.Lock | None = None
 _SCHEMA_READY = False
+_SCHEMA_READY_SOURCE: tuple[str, str] | None = None
 _INSTALLED = False
 TREND_TAG = "trend"
 
@@ -34,14 +40,32 @@ def _schema_lock() -> asyncio.Lock:
     return _SCHEMA_LOCK
 
 
+def _active_schema_source() -> tuple[str, str]:
+    """Readiness must not leak between DBs or PostgreSQL schemas.
+
+    PostgreSQL pools select a schema through DATABASE_URL options; SQLite
+    tests can replace bot.database.DATABASE_PATH dynamically.
+    """
+    source = (
+        os.getenv("DATABASE_URL", db_backend.DATABASE_URL)
+        if db_backend.is_postgres()
+        else str(database.DATABASE_PATH)
+    )
+    return (db_backend.backend_name(), source)
+
+
 async def ensure_trend_generation_run_schema() -> None:
-    global _SCHEMA_READY
-    if _SCHEMA_READY:
+    global _SCHEMA_READY, _SCHEMA_READY_SOURCE
+    source = _active_schema_source()
+    if _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
         return
     async with _schema_lock():
-        if _SCHEMA_READY:
+        source = _active_schema_source()
+        if _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
             return
-        async with db_backend.connect(DATABASE_PATH) as db:
+        # SQLite executes DDL here. PostgreSQL creates this through the
+        # real psycopg bootstrap cursor; compatibility execute skips DDL.
+        async with db_backend.connect() as db:
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS trend_generation_runs (
@@ -60,6 +84,7 @@ async def ensure_trend_generation_run_schema() -> None:
             )
             await db.commit()
         _SCHEMA_READY = True
+        _SCHEMA_READY_SOURCE = source
 
 
 async def register_trend_generation_run(
@@ -83,7 +108,7 @@ async def register_trend_generation_run(
         normalized_user_id = None
 
     await ensure_trend_generation_run_schema()
-    async with db_backend.connect(DATABASE_PATH) as db:
+    async with db_backend.connect() as db:
         cursor = await db.execute(
             """
             INSERT INTO trend_generation_runs(task_id, trend_id, user_id)
@@ -113,7 +138,7 @@ async def get_trend_success_counts(
 
     await ensure_trend_generation_run_schema()
     placeholders = ",".join("?" for _ in normalized)
-    async with db_backend.connect(DATABASE_PATH) as db:
+    async with db_backend.connect() as db:
         db.row_factory = db_backend.Row
         cursor = await db.execute(
             f"""

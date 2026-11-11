@@ -84,3 +84,72 @@ def test_success_count_query_uses_completed_generation_rows() -> None:
     assert "task_id TEXT PRIMARY KEY" in source
     assert "JOIN generation_tasks g ON g.task_id = r.task_id" in source
     assert "g.status = 'completed'" in source
+
+
+@pytest.mark.asyncio
+async def test_trend_run_schema_tracks_active_sqlite_database(tmp_path, monkeypatch):
+    # The same server process can move between independent SQLite DBs during
+    # tests/reconfiguration; a global boolean must not attach to the wrong DB.
+    import aiosqlite
+
+    from bot import database
+    from bot import db as db_backend
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_READY", False)
+    monkeypatch.setattr(trend_success_compat, "_SCHEMA_LOCK", None)
+    files = [tmp_path / "user-a.sqlite", tmp_path / "user-b.sqlite"]
+    for file in files:
+        monkeypatch.setattr(database, "DATABASE_PATH", str(file))
+        monkeypatch.setattr(db_backend, "DATABASE_PATH", str(file))
+        await database.init_db()
+        await trend_success_compat.ensure_trend_generation_run_schema()
+        async with aiosqlite.connect(file) as db:
+            row = await (await db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name = 'trend_generation_runs'"
+            )).fetchone()
+            assert row is not None, f"trend run table was not created in {file.name}"
+
+
+@pytest.mark.asyncio
+async def test_pg_trend_success_helpers_run_again_in_another_schema(monkeypatch):
+    from bot import postgres_aiosqlite as pg
+    from bot.services import trend_success_postgres_compat as compat
+
+    monkeypatch.setattr(compat.db_backend, "is_postgres", lambda: True)
+    monkeypatch.setattr(compat, "_INSTALLED", False)
+    monkeypatch.setattr(compat, "_HELPERS_EXTENDED_SCHEMAS", set())
+    monkeypatch.setattr(compat, "_HELPERS_EXTENSION_LOCK", None)
+
+    async def original(_conn):
+        return None
+    monkeypatch.setattr(pg, "_ensure_postgres_helpers", original)
+
+    class Conn:
+        def __init__(self, schema):
+            self.schema = schema
+            self.commands = []
+            self.last = ""
+        def cursor(self):
+            return self
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_):
+            pass
+        async def execute(self, query):
+            self.last = query
+            self.commands.append(query)
+        async def fetchone(self):
+            return ("test_db", self.schema)
+        async def commit(self):
+            pass
+
+    compat.install_trend_success_postgres_compat()
+    first, second = Conn("test_schema_a"), Conn("test_schema_b")
+    await pg._ensure_postgres_helpers(first)
+    await pg._ensure_postgres_helpers(second)
+    assert sum("CREATE TABLE IF NOT EXISTS trend_generation_runs" in sql
+               for sql in first.commands) == 1
+    assert sum("CREATE TABLE IF NOT EXISTS trend_generation_runs" in sql
+               for sql in second.commands) == 1
