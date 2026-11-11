@@ -406,9 +406,10 @@ try {
     await page.goto(base + '?vk_app_id=123&vk_user_id=2001&sign=browser-fixture#link_' + token)
     if (admin) {
       await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Лента', 'Сервисы', 'Профиль']) {
         assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
       }
+      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0, 'Motion remains Telegram-only')
       assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Linked opening must not accept or confirm')
       assert.ok(requests.some(path => path.endsWith('/bootstrap')), 'Linked VK admin must initialize the shared app')
       assert.ok(appCredentials.length >= 1)
