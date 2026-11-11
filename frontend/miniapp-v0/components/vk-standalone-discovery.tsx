@@ -7,11 +7,13 @@ import {
   fetchVkPublicCategory,
   fetchVkPublicDiscovery,
   fetchVkPublicTrend,
+  fetchVkPublicFeedItem,
   fetchVkNativeState,
   type VkNativeState,
   type VkPublicCategoryPage,
   type VkPublicDiscovery,
   type VkPublicFeedItem,
+  type VkPublicFeedLink,
   type VkPublicTrend,
 } from '@/lib/shared-account-api'
 
@@ -80,6 +82,10 @@ export function VkStandaloneDiscovery() {
   const [linkedTrend, setLinkedTrend] = useState<VkPublicTrend | null>(null)
   const [linkedTrendError, setLinkedTrendError] = useState('')
   const [linkedTrendLoading, setLinkedTrendLoading] = useState(false)
+  const [linkedFeedTarget, setLinkedFeedTarget] = useState<{ kind: 'feed' | 'remix'; genId: number } | null>(null)
+  const [linkedFeed, setLinkedFeed] = useState<VkPublicFeedLink['item'] | null>(null)
+  const [linkedFeedError, setLinkedFeedError] = useState('')
+  const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [shareTitle, setShareTitle] = useState('')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
@@ -106,6 +112,8 @@ export function VkStandaloneDiscovery() {
         startParamFromLocation(window.location.search, window.location.hash),
       )
       setLinkedTrendId(target?.kind === 'prompt' ? target.promptId : null)
+      setLinkedFeedTarget(target?.kind === 'feed' || target?.kind === 'remix'
+        ? { kind: target.kind, genId: target.genId } : null)
     }
     updateTarget()
     window.addEventListener('hashchange', updateTarget)
@@ -139,6 +147,40 @@ export function VkStandaloneDiscovery() {
     })
     return () => controller.abort()
   }, [linkedTrendId])
+
+  useEffect(() => {
+    if (!linkedFeedTarget) {
+      setLinkedFeed(null)
+      setLinkedFeedError('')
+      setLinkedFeedLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    setView('feed')
+    setCategoryId(null)
+    setLinkedFeed(null)
+    setLinkedFeedError('')
+    setLinkedFeedLoading(true)
+    fetchVkPublicFeedItem(linkedFeedTarget.genId, controller.signal).then(result => {
+      if (!controller.signal.aborted) setLinkedFeed(result.item)
+    }).catch(error => {
+      if (!controller.signal.aborted) {
+        setLinkedFeedError(error instanceof Error ? error.message : 'Не удалось открыть публикацию.')
+      }
+    }).finally(() => {
+      if (!controller.signal.aborted) setLinkedFeedLoading(false)
+    })
+    return () => controller.abort()
+  }, [linkedFeedTarget])
+
+  const closeLinkedFeed = () => {
+    if (/^#(?:feed|remix)_/.test(window.location.hash)) {
+      window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
+    }
+    setLinkedFeedTarget(null)
+    setLinkedFeed(null)
+    setLinkedFeedError('')
+  }
 
   const closeLinkedTrend = () => {
     if (window.location.hash.startsWith('#prompt_')) {
@@ -219,6 +261,7 @@ export function VkStandaloneDiscovery() {
 
   const switchView = (next: 'trends' | 'feed' | 'mine') => {
     closeLinkedTrend()
+    closeLinkedFeed()
     setShareLink('')
     setView(next)
     setRepeatItem(null)
@@ -298,6 +341,40 @@ export function VkStandaloneDiscovery() {
       <button type="button" onClick={closeLinkedTrend}
         className="rounded-lg border border-border p-2 text-sm">Вернуться к трендам</button>
     </div> : null}
+    {view === 'feed' && linkedFeedTarget ? <section
+      role="region"
+      aria-label={linkedFeedTarget.kind === 'remix' ? 'Повтор публикации из ленты' : 'Публикация из ленты'}
+      className="space-y-3 rounded-xl border border-border bg-card p-3">
+      <h3 className="text-base font-semibold">
+        {linkedFeedTarget.kind === 'remix' ? 'Повтор публикации из ленты' : 'Публикация из ленты'}
+      </h3>
+      {linkedFeedLoading ? <p role="status">Загружаем публикацию…</p> : null}
+      {linkedFeedError ? <p role="alert" className="text-destructive">{linkedFeedError}</p> : null}
+      {linkedFeed ? <>
+        {linkedFeed.feed_blurred || linkedFeed.media_unavailable
+          ? <p role="status">Медиа этой публикации сейчас недоступно.</p>
+          : <Preview
+              title="Публичная работа"
+              image={linkedFeed.generation_type === 'image'
+                ? linkedFeed.preview_url || linkedFeed.result_url
+                : linkedFeed.preview_poster_url}
+              video={linkedFeed.generation_type === 'video'
+                ? linkedFeed.result_url || linkedFeed.preview_url : null}
+            />}
+        <p className="text-sm text-muted-foreground">
+          {linkedFeed.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'}
+          {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
+          {' · ❤ '}{linkedFeed.likes_count}
+        </p>
+        {linkedFeedTarget.kind === 'remix'
+          ? <p className="text-sm text-muted-foreground">
+              Повтор этой публикации в VK Mini App пока не подключён к защищённому VK-балансу.
+              Скрытые автором промпт и референсы не раскрываются.
+            </p> : null}
+      </> : null}
+      <button type="button" onClick={closeLinkedFeed}
+        className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
+    </section> : null}
     {view === 'mine' ? <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
         <h3 className="text-base font-semibold">Мои генерации ВКонтакте</h3>
@@ -318,17 +395,17 @@ export function VkStandaloneDiscovery() {
         </article>
       ))}
     </div> : null}
-    {view !== 'mine' && linkedTrendId === null && categoryId !== null ? (
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null ? (
       <button type="button" className="text-sm underline" onClick={() => {
         setCategoryId(null); setCategory(null); setPage(1)
       }}>← Ко всем трендам</button>
     ) : null}
-    {view !== 'mine' && linkedTrendId === null && error ? <div role="alert" className="space-y-2 text-sm">
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && error ? <div role="alert" className="space-y-2 text-sm">
       <p>{error}</p>
       <button type="button" className="underline" onClick={() => setRetry(x => x + 1)}>Повторить загрузку</button>
     </div> : null}
-    {view !== 'mine' && linkedTrendId === null && busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
-    {view !== 'mine' && linkedTrendId === null && categoryId !== null && category ? <>
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null && category ? <>
       <h3 className="text-lg font-semibold">{category.category.emoji} {category.category.title}</h3>
       <div className="grid grid-cols-2 gap-3">
         {category.items.map(item => <TrendCard key={item.id} item={item}
@@ -339,7 +416,7 @@ export function VkStandaloneDiscovery() {
         {busy ? 'Загрузка…' : 'Показать ещё'}
       </button> : null}
     </> : null}
-    {view !== 'mine' && linkedTrendId === null && categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
       <div key={group.id} className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-base font-semibold">{group.emoji} {group.title}</h3>
@@ -355,7 +432,7 @@ export function VkStandaloneDiscovery() {
         </div>
       </div>
     )) : null}
-    {view !== 'mine' && linkedTrendId === null && categoryId === null && discovery && 'items' in discovery ? (
+    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
         {discovery.items.map(item => <FeedCard key={item.id} item={item} />)}
       </div>

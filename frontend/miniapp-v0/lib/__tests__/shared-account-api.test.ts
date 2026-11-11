@@ -262,3 +262,16 @@ test('VK feed and trend start parameters remain disjoint even when IDs match', a
   expect(startParamFromLocation('?vk_app_id=54880352&vk_user_id=1&sign=secret',
     '#feed_370766_ref_27QT0YCB')).toBe('feed_370766_ref_27QT0YCB')
 })
+
+test('signed public feed HTTP 404 gives a publication-specific error and revokes the session', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(404, { error: 'Публикация не найдена' }))
+    .mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicFeedItem(370766)).rejects.toThrow('Публикация не найдена')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=feed_item&gen_id=370766')
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(
+    expect.arrayContaining([expect.stringContaining('view=item&trend_id=')]),
+  )
+})
