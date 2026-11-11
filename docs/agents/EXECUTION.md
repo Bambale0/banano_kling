@@ -1,3 +1,11 @@
+## 2026-11-12 — Lava.top first; hide Robokassa from checkout choices
+- Task branch: `fix/lava-top-first-hide-robokassa-20261112`, based on `tanyapi`. Scope: payment selection only; no balance, invoice, webhook, provider credentials or database changes.
+- Confirmed root cause: `BalanceSheet` hardcoded a Robokassa primary CTA above other methods and labeled Lava as additional; `preferredProviderForPackage` selected Robokassa before configured Lava; Telegram keyboard listed Stars and CryptoBot ahead of Lava.
+- User-visible target: new Telegram Mini App and VK Mini App top-ups show configured Lava.top card/SBP options before reserve KASSA and other checkout choices; no Robokassa new-purchase button. Telegram bot shows Lava first when enabled. No fabricated Lava availability: offers still originate from package configuration.
+- Compatibility: preserve Robokassa payment types, payment creation endpoint, webhook/reconciliation and existing pending transactions; do not disable or delete the provider. Old clients/callbacks remain server-compatible. VK still permits only configured Lava and must not fall back to Telegram-only methods.
+- Test plan: existing VK/Telegram preference regression updated for Lava-first and fallback cases; Telegram inline keyboard order/availability test added. Require frontend lint/types/Jest/browser E2E and backend payment regressions in protected PR checks. No new paid live transaction until financial smoke is explicitly accepted.
+- Rollout: review PR to `tanyapi`, arm repository native squash auto-merge, wait for mandatory green gates; verify exact production SHA and rendered frontend and Telegram buttons. Rollback by reverting this UI-only PR. Production release not assumed from a PR commit.
+
 ## 2026-11-09 — NEUROMIX legal documents: offer as text/link and privacy entry
 - Baseline `tanyapi@cbf1a6199287e3917f971a27209b595422926edf`; task branch `fix/tanyapi-legal-documents-20261109`. Changes are isolated from `main`/`dev` and production; review PR remains draft until legal approval.
 - User intent: stop delivering `static/ofert.md` as Telegram file; provide readable offer and privacy policy on bot and before payment, including legacy buttons. No changes to billing, user balances or providers.
