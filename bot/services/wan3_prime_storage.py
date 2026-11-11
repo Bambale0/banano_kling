@@ -429,15 +429,22 @@ class Wan3PrimeStorage:
                     raise Wan3PrimeValidationError("Upload assembly lease changed", status=409)
             await assert_capacity(db, actor.user_id, info.size_bytes, exclude_upload_id=upload_id or "")
             digest = await asyncio.to_thread(copy_atomic, path, dest)
-            from bot.services.media_storage import persist_upload_file
+            # Production references live under static/uploads. Isolated storage
+            # harnesses can use a separate root with their own URL resolver.
+            uploads_root = Path("static/uploads").resolve()
+            resolved_dest = dest.resolve()
+            if resolved_dest.is_relative_to(uploads_root):
+                from bot.services.media_storage import persist_upload_file
 
-            public_url = await asyncio.to_thread(
-                persist_upload_file,
-                dest.resolve().relative_to(Path("static/uploads").resolve()).as_posix(),
-                dest,
-                content_type=content_type,
-                cache_control="private, max-age=0",
-            )
+                public_url = await asyncio.to_thread(
+                    persist_upload_file,
+                    resolved_dest.relative_to(uploads_root).as_posix(),
+                    dest,
+                    content_type=content_type,
+                    cache_control="private, max-age=0",
+                )
+            else:
+                public_url = _public_url_for_path(dest)
             await db.execute(
                 "INSERT INTO wan3_prime_media "
                 "(user_id, telegram_id, kind, public_url, local_path, filename, content_type, size_bytes, sha256, media_info, source) "
