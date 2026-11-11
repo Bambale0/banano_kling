@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
 import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
@@ -262,7 +262,10 @@ test.each([
   expect(fetchVkPublicFeedItem).toHaveBeenCalledWith(370766, expect.anything())
   expect(fetchVkPublicTrend).not.toHaveBeenCalled()
   expect(detail).not.toHaveTextContent('Тренд по ссылке')
-  expect(detail.querySelector('button[aria-label="Оплатить повтор"]')).toBeNull()
+  expect(within(detail).queryByRole('button', { name: /Повторить|Оплатить|Создать за/ })).not.toBeInTheDocument()
+  if (kind === 'remix') {
+    expect(detail).toHaveTextContent('Повтор этой публикации в VK Mini App пока не подключён')
+  }
   expect(screen.queryByText('HIDDEN_AUTHOR_PROMPT')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Вернуться к ленте' }))
   expect(window.location.hash).toBe('')
@@ -273,6 +276,6 @@ test('missing VK feed publication reports its own error instead of opening a num
   jest.mocked(fetchVkPublicFeedItem).mockRejectedValue(new Error('Публикация не найдена'))
   render(<VkStandaloneDiscovery />)
   const detail = await screen.findByRole('region', { name: 'Публикация из ленты' })
-  expect(detail).toHaveTextContent('Публикация не найдена')
+  expect(await within(detail).findByRole('alert')).toHaveTextContent('Публикация не найдена')
   expect(fetchVkPublicTrend).not.toHaveBeenCalled()
 })
