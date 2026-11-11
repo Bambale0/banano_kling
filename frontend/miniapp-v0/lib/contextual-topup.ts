@@ -24,9 +24,9 @@ export function preferredProviderForPackage(
   platform: 'telegram' | 'vk' = 'telegram',
 ): PaymentProvider | null {
   if (platform === 'vk') return pkg.lava_offer_id ? 'lava_card' : null
-  if (pkg.robokassa_enabled) return 'robokassa'
-  if (pkg.freekassa_enabled) return 'freekassa_card'
+  // Robokassa stays supported for existing invoices but is not offered for new purchases.
   if (pkg.lava_offer_id) return 'lava_card'
+  if (pkg.freekassa_enabled) return 'freekassa_card'
   return 'telegram_stars'
 }
 
