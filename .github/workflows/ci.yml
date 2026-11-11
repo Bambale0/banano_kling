@@ -273,12 +273,17 @@ jobs:
         id: build
         run: npm run build
 
-      - name: Use Ubuntu archive for browser dependencies
+      - name: Use reachable signed Ubuntu mirror for browser dependencies
         run: |
           set -Eeuo pipefail
           for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
             [ -f "$source" ] || continue
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
+            sudo sed -i \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' "$source"
           done
 
       - name: Install Chromium and WebKit runtimes
