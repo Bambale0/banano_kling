@@ -1,5 +1,6 @@
 import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
-import { accountLaunch } from './account-platform'
+import { accountLaunch, currentAccountPlatform, type AccountPlatform } from './account-platform'
+import type { Task } from './types'
 
 export interface AccountPreviewSettings {
   enabled: boolean
@@ -39,13 +40,18 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ? 'ВК не подтвердил отправку. Проверьте чат перед повторными действиями.'
       : 'Доставка пока недоступна или её статус изменился. Обновите статус.')
   }
+  if (response.status === 409 && (path === 'vk-image' || path === 'vk-trend')) throw new Error('Этот запрос уже используется для другой генерации. Измените данные и создайте новый запрос.')
   if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
+  if (response.status === 403 && path.startsWith('vk-')) throw new Error('VK-аккаунт не может выполнить операцию. Проверьте доступ к боту.')
   if (response.status === 403) throw new Error(path.startsWith('links')
     ? 'Это приглашение предназначено другому аккаунту или платформе.'
     : 'Требуется доступ администратора.')
-  if (response.status === 402) throw new Error('Недостаточно доступных тестовых средств.')
+  if (response.status === 402) throw new Error(path.startsWith('vk-') ? 'Недостаточно бананов на VK-балансе.' : 'Недостаточно доступных тестовых средств.')
+  if (response.status === 404 && path.startsWith('trends?view=feed_item&gen_id=')) {
+    throw new Error('Публикация не найдена.')
+  }
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -78,6 +84,12 @@ export async function saveAccountPreviewSettings(
 }
 
 async function withPreviewSession<T>(operation: (headers: Record<string, string>, accountId: string) => Promise<T>, signal?: AbortSignal): Promise<T> {
+  // A signed VK Mini App already keeps its session in memory. Reuse it for
+  // profile/history/discovery instead of re-signing the original vk_ts query
+  // on every refresh (VK launch signatures expire while the app stays open).
+  if (activeAppSessionToken && activeAppSessionPlatform === 'vk' && currentAccountPlatform() === 'vk') {
+    return operation({ Authorization: `Bearer ${activeAppSessionToken}` }, activeAppAccountId)
+  }
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
     method: 'POST', signal, body: JSON.stringify(accountLaunch()),
   })
@@ -213,15 +225,239 @@ export async function updateAccountLink(link: AccountLink, action: 'get' | 'conf
   })).link, signal)
 }
 
+export interface VkNativeTask {
+  task_id: number
+  task_type: string
+  model: string
+  status: string
+  cost: number
+  result_url: string | null
+  created_at: string
+}
+
+export interface VkNativeState {
+  ok: true
+  registered: boolean
+  balance: number | null
+  is_blocked: boolean
+  tasks: VkNativeTask[]
+  /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
+  recent_tasks?: Task[]
+}
+
+export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNativeState> {
+  // Resolve a fresh signed VK identity for each read. The native VK balance
+  // is NEVER inferred from a Telegram identity or a client-supplied user ID.
+  return withPreviewSession(headers => request<VkNativeState>(
+    'vk-native-state', { headers, signal },
+  ), signal)
+}
+
+export interface VkPublicTrend {
+  id: number
+  share_link?: string | null
+  can_repeat_in_app?: boolean
+  user_fields?: { key: string; label: string; type?: 'text' | 'number' | 'date'; field_type?: string; required?: boolean; max_length?: number }[]
+  title: string
+  description: string
+  preview_url: string | null
+  preview_poster_url: string | null
+  generation_type: 'image' | 'video'
+}
+
+export interface VkPublicTrendCategory {
+  id: number | string
+  title: string
+  emoji: string
+  total: number
+  items: VkPublicTrend[]
+}
+
+export interface VkPublicFeedItem {
+  id: number
+  generation_type: 'image' | 'video'
+  preview_url: string | null
+  result_url: string | null
+  likes_count: number
+}
+
+export type VkPublicDiscovery =
+  | { ok: true; categories: VkPublicTrendCategory[]; can_generate_in_app: boolean }
+  | { ok: true; items: VkPublicFeedItem[]; can_generate_in_app: boolean }
+
+export async function fetchVkPublicDiscovery(
+  view: 'trends' | 'feed',
+  signal?: AbortSignal,
+): Promise<VkPublicDiscovery> {
+  // A new signed VK bearer is scoped to this read-only request, then revoked.
+  // Never create or impersonate a Telegram user to fetch public media.
+  return withPreviewSession(headers => request<VkPublicDiscovery>(
+    'trends' + (view === 'feed' ? '?view=feed' : ''),
+    { headers, signal },
+  ), signal)
+}
+
+export interface VkPublicTrendLink {
+  ok: true
+  item: VkPublicTrend
+  can_generate_in_app: boolean
+}
+
+export async function fetchVkPublicTrend(
+  trendId: number, signal?: AbortSignal,
+): Promise<VkPublicTrendLink> {
+  if (!Number.isSafeInteger(trendId) || trendId < 1) {
+    throw new Error('Некорректный тренд по ссылке.')
+  }
+  return withPreviewSession(headers => request<VkPublicTrendLink>(
+    'trends?view=item&trend_id=' + trendId, { headers, signal },
+  ), signal)
+}
+
+/** One public feed publication; NOT an editorial trend/prompt recipe.
+ * Original references and prompts are deliberately excluded from this API.
+ */
+export interface VkPublicFeedLink {
+  ok: true
+  item: {
+    id: number
+    generation_type: 'image' | 'video'
+    model: string
+    preview_url: string | null
+    preview_poster_url?: string | null
+    result_url: string | null
+    likes_count: number
+    shares_count: number
+    comments_count: number
+    aspect_ratio: string
+    duration?: number | null
+    feed_blurred: boolean
+    media_unavailable: boolean
+    share_link: string
+    /** Native VK feed remix is a separate authorized operation, not this read. */
+    can_repeat_in_app: false
+  }
+}
+
+export async function fetchVkPublicFeedItem(
+  feedGenId: number, signal?: AbortSignal,
+): Promise<VkPublicFeedLink> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId < 1) {
+    throw new Error('Некорректная публикация из ленты.')
+  }
+  return withPreviewSession(headers => request<VkPublicFeedLink>(
+    'trends?view=feed_item&gen_id=' + feedGenId, { headers, signal },
+  ), signal)
+}
+
+export interface VkPublicCategoryPage {
+  ok: true
+  category: { id: number | string; title: string; emoji: string }
+  items: VkPublicTrend[]
+  page: number
+  has_more: boolean
+  can_generate_in_app: boolean
+}
+
+export async function fetchVkPublicCategory(
+  categoryId: number | string, page = 1, signal?: AbortSignal,
+): Promise<VkPublicCategoryPage> {
+  if (!Number.isSafeInteger(page) || page < 1 || page > 1000) {
+    throw new Error('Некорректная страница трендов.')
+  }
+  return withPreviewSession(headers => request<VkPublicCategoryPage>(
+    'trends?view=category&category_id=' + encodeURIComponent(categoryId) + '&page=' + page,
+    { headers, signal },
+  ), signal)
+}
+
+export interface VkNativeGenerationResult {
+  ok: true
+  task_id: number
+  cost: number
+  quote_only?: boolean
+}
+
+export interface VkImageRequest {
+  model: string
+  prompt: string
+  aspect: string
+  resolution: string
+  reference_photos: string[]
+  client_request_id?: string
+  quote_only?: boolean
+  expected_cost?: number
+}
+
+export interface VkTrendRequest {
+  trend_id: number
+  reference_urls: string[]
+  user_values: Record<string, string>
+  client_request_id?: string
+  quote_only?: boolean
+  expected_cost?: number
+}
+
+// The shared-account backend rejects request bodies above 32 KiB. Count
+// UTF-8 bytes (not JS characters) before creating a session or uploading data.
+function vkGenerationBody(payload: VkImageRequest | VkTrendRequest): string {
+  const body = JSON.stringify(payload)
+  if (new Blob([body]).size > 32768) {
+    throw new Error('Сократите промпт или число референсов: запрос слишком большой.')
+  }
+  return body
+}
+
+export async function generateVkImage(payload: VkImageRequest, signal?: AbortSignal) {
+  const body = vkGenerationBody(payload)
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-image', {
+    method: 'POST', headers, body, signal,
+  }), signal)
+}
+
+export async function repeatVkTrend(payload: VkTrendRequest, signal?: AbortSignal) {
+  const body = vkGenerationBody(payload)
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-trend', {
+    method: 'POST', headers, body, signal,
+  }), signal)
+}
+
+export async function uploadVkImage(file: File, signal?: AbortSignal): Promise<string> {
+  if (!file || !file.size || file.size > 12 * 1024 * 1024) {
+    throw new Error('Фото должно быть не больше 12 МБ.')
+  }
+  return withPreviewSession(async headers => {
+    const body = new FormData()
+    body.append('image', file)
+    const response = await fetch(getApiBasePath() + '/account-preview/vk-image-upload', {
+      method: 'POST', cache: 'no-store', credentials: 'same-origin', headers,
+      body, signal,
+    })
+    if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
+    if (response.status === 413) throw new Error('Фото слишком большое. Используйте файл до 12 МБ.')
+    if (!response.ok) throw new Error('Не удалось загрузить фото. Попробуйте другое изображение.')
+    const data = await response.json() as { ok?: boolean; url?: string }
+    if (!data.ok || !data.url || !/^https:\/\//.test(data.url)) {
+      throw new Error('Не удалось получить сохранённое фото.')
+    }
+    return data.url
+  }, signal)
+}
+
 export interface AccountPreviewAccess {
   revision: number
   vk_app_id: number | null
+  vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  /** Server-advertised readiness for every shared-shell operation. Not an identity link. */
+  full_app_ready?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 
 let activeAppSessionToken = ''
+let activeAppAccountId = ''
+let activeAppSessionPlatform: AccountPlatform | null = null
 
 async function revokeAppSession(token: string): Promise<void> {
   if (!token) return
@@ -237,10 +473,11 @@ async function revokeAppSession(token: string): Promise<void> {
 
 export async function startAccountAppSession(signal?: AbortSignal): Promise<AccountPreviewAccess> {
   if (activeAppSessionToken) await stopAccountAppSession()
+  const verifiedLaunch = accountLaunch()
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
     method: 'POST',
     signal,
-    body: JSON.stringify(accountLaunch()),
+    body: JSON.stringify(verifiedLaunch),
   })
   const token = login.session_token
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Не удалось подтвердить сессию ВК.')
@@ -250,12 +487,13 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
       headers: { Authorization: `Bearer ${token}` },
     })
     if (profile.account.id !== login.account.id) throw new Error('Не удалось подтвердить аккаунт.')
-    if (!profile.preview.telegram_linked) {
-      await revokeAppSession(token)
-      return profile.preview
-    }
+    // Even an unlinked VK account owns a real VK-side balance and history.
+    // Keep the same revocable session in memory for these endpoints without
+    // inventing a Telegram user or exposing the bearer to URL/storage.
     setPlatformSessionToken(token)
     activeAppSessionToken = token
+    activeAppAccountId = login.account.id
+    activeAppSessionPlatform = verifiedLaunch.platform
     return profile.preview
   } catch (error) {
     await revokeAppSession(token)
@@ -266,6 +504,8 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
 export async function stopAccountAppSession(): Promise<void> {
   const token = activeAppSessionToken
   activeAppSessionToken = ''
+  activeAppAccountId = ''
+  activeAppSessionPlatform = null
   clearPlatformSessionToken()
   await revokeAppSession(token)
 }

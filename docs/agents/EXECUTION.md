@@ -1,3 +1,30 @@
+## 2026-11-09 — NEUROMIX legal documents: offer as text/link and privacy entry
+- Baseline `tanyapi@cbf1a6199287e3917f971a27209b595422926edf`; task branch `fix/tanyapi-legal-documents-20261109`. Changes are isolated from `main`/`dev` and production; review PR remains draft until legal approval.
+- User intent: stop delivering `static/ofert.md` as Telegram file; provide readable offer and privacy policy on bot and before payment, including legacy buttons. No changes to billing, user balances or providers.
+- Audit: `show_partner_offer` first used `answer_document` and only fell back to text on error; `get_more_menu_keyboard` used callback `more_public_offer` while main offer handler listened for `partner_offer`. No approved `static/privacy_policy.md` was found. Existing `PARTNER_OFFER_URL` config was unused in this handler. Public offer identifies a self-employed individual; actual legal operator and payment recipient must be verified before changing published legal terms.
+- Plan/result in branch: (1) plain-text UTF-16-aware Telegram chunking and HTTPS-link validator; (2) new legal documents screen, payment and partner navigation, old callback alias; (3) separate `PRIVACY_POLICY_URL` config with optional approved `static/privacy_policy.md` fallback; (4) tests and privacy policy editorial draft; (5) legal approval -> final approved text or public URL -> CI -> release -> exact-SHA production smoke.
+- Legal safety: `docs/legal/NEUROMIX_PRIVACY_POLICY_DRAFT.md` is **not published**. When neither an approved policy file nor configured HTTPS URL exists, handler reports document unavailable; it does not fabricate or silently serve an unapproved policy.
+- Regression tests added: keyboard access, UTF-16 safety and content preservation, HTTPS-only URLs, offer not sent as document, privacy HTTP link, missing-policy fail-closed. Actual CI and live Telegram acceptance **not yet verified** at this checkpoint.
+- Rollout requirements: approved operator/privacy text and contact details, verify `PARTNER_OFFER_URL` and `PRIVACY_POLICY_URL` only if public HTTPS pages exist, then required PR gates and exact deployed SHA; navigate older `more_public_offer`, new legal screen and payment button; confirm Telegram and Mini App entrypoints. No DB migration. Rollback by reverting task PR.
+
+- 2026-11-11 release continuation: routed actual PDF-first handler in `bot/handlers/public_offer_compat.py` (registered before legacy). It now serves the exact bundled offer as plain text or configured HTTPS link. Restored original More offer callback, retained separate legal documents menu and published `static/privacy_policy.md` with current offer operator (legal verification still advised). Updated regression to exercise the registered handler rather than a shadow handler; before/after CI must be confirmed. No payment, generation or schema modifications.
+
+## 2026-11-10 — Wan 3.0 admin confirmation repeated storage capacity failures
+- Baseline: `tanyapi@feda566ca0d225263f7101dcf9cd72aee893b324`. Separate fix branch and PR; live checkout's unrelated `data/price.json` and operator replays preserved.
+- Root cause: `WAN3_RESULT_GLOBAL_QUOTA_BYTES` was absent from production `.env`, so the code defaulted to 20 GiB. At 15:47 UTC the result directory held 20,316,930,205 bytes and four unsettled tasks reserved another 1,048,576,000 bytes, leaving only 109,330,275 bytes. A new task reserves up to 262,144,000 bytes, so `assert_result_capacity()` rejects it before provider submission and before billing. Telegram catch incorrectly reported this as reference validation. Live logs show multiple `Wan3PrimeValidationError` callbacks for admin 8166443943 at 15:29–15:36 UTC.
+- Immediate production mitigation (local runtime configuration, no source hardcoding): set `WAN3_RESULT_GLOBAL_QUOTA_BYTES=27917287424` (26 GiB) in protected `.env`, backed up to `/root/tanya/.env.tanyapi.before-wan3-capacity-20261110`; restart only bot service with no-build/no-deps and automatic rollback on unhealthy. Confirmed inside running container, Docker healthy, HTTP 200. Read-only preflight shows 6,543,927,817 bytes of headroom after one new task, and 31,437,451,264 free disk bytes. Previous admin replay `wan3_eaf8387e57b64008979bffa5acde153f` is completed, delivered, with zero charges. No files deleted and no balance changes.
+- Code regression: Telegram confirmation now distinguishes result quota saturation and genuine low disk from malformed references; logs stable reason codes and validation status, preserves quote and idempotency key. TDD test reproduced the generic misleading reference error on baseline, then passed after patch. Focused retention/FSM/invariants suite: 25 passed, Ruff clean.
+- Risk: root filesystem about 97% utilized; a 26 GiB result quota is an operational stopgap. Result retention and expansion/migration require an independent storage plan. Existing real results remain protected; do not purge to solve this incident.
+- Rollback: restore protected `.env` backup and recreate only `bot`; revert this PR for the message/log mapping. No schema or financial changes.
+
+## 2026-11-10 — Wan 3.0 Telegram confirmation hotfix
+- Baseline: `tanyapi@b896e1e69f01a69945f448470d0d2b47f1f4566a`; isolated branch `fix/wan3-confirm-hotfix-20261110`. Primary checkout's runtime price edits and replay records are untouched.
+- Incident: Telegram confirmation around 13:14 UTC showed a generic network interruption. Production logs confirm successful upload and quote but no new `Wan3 submit` in that minute; read-only PostgreSQL query found one intent from 13:11 UTC and none at 13:14. Exception details were suppressed by the broad callback handler, so the exact historical exception remains unknown.
+- Fix: distinguish stale/invalid quote, insufficient credit, idempotency conflict, invalid media and unexpected infra failures. Record context (Telegram actor, client_request_id, typed error code) without request contents. Unexpected errors log a traceback. Preserve the same idempotency key on retries; stale quotes require recalculation rather than a misleading network alert. No API, model, price, schema, or billing change.
+- TDD: regression failed on baseline (`stale_quote` displayed "Сеть оборвалась"); passed after patch. Timeout logging and retained idempotency key regressions added. Focused FSM suite: 10 passed; backend Wan 3.0 local suite (excluding integration tests that target PostgreSQL): 74 passed, one existing aiohttp AppKey warning; Ruff, py_compile and diff whitespace checks passed.
+- Release: PR to `tanyapi` via standard protected-branch auto-merge and CI. Post-deploy exact SHA/health/log checks required. No new billable test generation. Rollback: revert PR on `tanyapi`; no DB migration.
+- Guidance: `Bambale0/skills` diagnosing-bugs and tdd; `Bambale0/claw` debugger; `anthropics/skills` had no matching backend flow in search.
+
 ## 2026-11-01 — Seedance admin-test preview aspect ratio
 - Baseline `tanyapi@b213dee0fb561a6d4054abfd169f340ea994e8ea`, task branch `fix/seedance-admin-preview-aspect-20261101`. Main checkout's unrelated runtime price changes are untouched.
 - Incident: Telegram inline video preview appears close to square, while the saved/downloaded Seedance 2.5 video is portrait. Read-only Neironych result check for existing request `efbae843-2b47-407a-8ff1-8422319b2222` returned `done`; read-only content fetch + `ffprobe` confirmed H264 720×1280, sample aspect ratio 1:1, display aspect ratio 9:16, duration 12.064 s. No new provider generation or billing.
@@ -3039,3 +3066,92 @@ Verification progress:
   key. The operator chose to retain the old key, so the branch may be reviewed
   but must not be merged or deployed publicly. Production remains unchanged and
   administrator-only.
+
+## 2026-11-09 — VK → Telegram native account-link launch
+- Baseline: `tanyapi@14a719c3db05e7c419a63e73c74ab4d63f7af4c8`; branch `fix/vk-telegram-native-link-20261109`.
+- Symptom: in some VK mobile WebViews, “Привязать Telegram” opens the mobile Telegram website instead of the installed app.
+- Code finding: `SharedAccountLinkPreview.beginLink()` preopened `about:blank`, then after async invitation creation redirected the popup to an `https://t.me/...startapp=link_...` URL. VK's embedded browser may handle HTTPS internally rather than using the Telegram OS handler. Real-device reproduction is still required.
+- Change: strict conversion from trusted Telegram Mini App invitation URL to `tg://resolve?domain=...&startapp=...`; on source click, attempt native launch through the reserved popup, never automatic web navigation; retain a visible direct native-app link and explicit HTTPS browser fallback while read-only status polling continues. VK-target links and backend consent/merge protocol are unchanged.
+- Safety: no server route, database, balance, pricing, credential, referrer or enrollment change. Invocation token validated before native conversion; no token logging or storage. A blocked native scheme leaves the pending invitation on screen. Existing source confirmation remains mandatory.
+- Verification seam: Jest component interaction and strict deep-link validation. Browser/device acceptance: Android VK, iOS VK, desktop VK; installed/missing Telegram; popup blocked; commit confirmation; recovery from expiry. CI and real-device behavior are not yet verified at authoring time.
+- Rollout: focused test/build gates then protected PR to `tanyapi`, exact-SHA deploy check; rollback is PR revert. No configuration or schema migration.
+- Guidance: `Bambale0/skills` diagnosing-bugs + tdd; `Bambale0/claw` telegram-miniapp + frontend-qa; `anthropics/skills` webapp-testing (Playwright reference). Official Telegram deep-link syntax checked.
+
+
+## 2026-11-10 — VK-only native image Mini App PR #447 release gate
+- Baseline: tanyapi b896e1e69f01a69945f448470d0d2b47f1f4566a; draft head b73da2f6f57ad9a331f74425eec790d6afb5a351; native VK master d9b419bb425c3143c17f8d58ed92e862b09774fc.
+- Goal: signed VK-only actor can quote, upload scoped references, submit an idempotent native VK photo, repeat supported approved image trend and see native VK tasks/history without Telegram. Photo only, no video parity or live shared-wallet migration claimed.
+- Root causes: legacy add_post JSON guard intercepts multipart; sanitized trend loses model/quality before eligibility; browser misreads type as field_type; Cyrillic text may exceed 32-KiB backend JSON limit.
+- Corrections: direct multipart route behind signed auth, pre-sanitization eligibility flag, linked wallet double-writer guard, accurate native error mapping 402/409, field type and UTF-8 request-size validation before auth.
+- Verification: safe backend suite 4921 passed / 283 skipped and 83 subtests; focused VK frontend 20 passed; TypeScript passed. Earlier CI head failed on multipart; new code requires fresh CI and exact production SHA check.
+- Rollout safety: VK Mini App writes flag is enabled in both production .env files but current VK image route remains 404. Reconcile feature flags before deployment. No payment/ledger migration or live wallet writes in this work.
+- Rollback: disable VK writes flag in both services, preserve tasks/refunds/ledger and reference files; no blind re-submit of ambiguous provider requests.
+- Playbooks: Bambale0/skills diagnosing-bugs+tdd+code-review, Bambale0/claw backend-integration, anthropics webapp-testing.
+
+
+## 2026-11-10 — VK-only task completion visibility
+- User scenario: VK-only user creates a native photo and watches the My Works section; results must become visible without Telegram and without manual page refresh.
+- Root cause: VK standalone discovery fetched native state only at mount or manual refresh; a completed async task was invisible until the user pressed Refresh.
+- TDD: added a failing Jest case (native state fetched only once after task is processing), then a visibility-gated 15-second refresh only while the My Works section is open and a task is queued, pending, submitting or processing. It stops automatically on completion, unmount, and view switch.
+- Scope: no changes to payments, balances, provider tasks, auth, identity, linking, webhook or secrets.
+- Verification: focused frontend suite 7/7 and TypeScript check. Rollout stays under PR #447 and its feature flag gate.
+- Remaining gaps: native VK writes in this PR are photo-only; video, motion, payments, real-device VK signed-launch, and key-rotation security gates remain separately unverified.
+
+
+## 2026-11-10 — PR #447 VK E2E missing-tasks regression
+- CI run 42881458591 browser-e2e failed at shared-account administrator preview with Cannot read properties of undefined (reading some); a mocked native-state response had no tasks field.
+- Root cause: task auto-refresh assumed tasks existed on every response, and work history also accessed native.tasks without guarding missing fields.
+- TDD: added a failing incomplete-native-state test (crash reproduced), then normalized runtime tasks through Array.isArray and made incomplete history explicitly unavailable rather than falsely empty. The catalog still renders and no automatic retry is triggered for malformed data.
+- Verification: 8/8 focused Jest tests, TypeScript and ESLint passed; full production Telegram export and exact e2e/shared-account-preview.mjs passed on both admin and nonadmin, with VK entry checks at width 430. An initial local attempt built VK export (instead of the Telegram export expected by this particular script) and failed at a missing Profile button; the corrected CI-equivalent command passes.
+- Scope: read-only UI robustness only; no provider, balance, auth, shared-wallet or VK secret changes.
+
+
+## 2026-11-11 VK direct trend links without Telegram
+
+User scenario: a public VK Mini App link with a #prompt_ID fragment
+opened the VK general catalog, not its target. Both platforms must use
+the same trend catalog and respect the same visibility policy.
+
+Production evidence: VK URL 200, native VK-login route HTTP 303 to
+https://vk.com/app54880352; published catalog 17 categories and
+445 trend placements. Shared Telegram start parameter parser already
+supports prompt_ID, but the VK-only UI was not consuming the hash.
+
+Changes, isolated fix/vk-trend-deeplinks-20261111:
+- A signed VK-only session GET account-preview/trends?view=item&trend_id=N
+  now returns a sanitized public trend card and a server-generated VK
+  permalink. No prompt, provider/private references, or Telegram ID.
+- The public catalog visibility rules now also gate vk-trend paid
+  execution. A RED test proved hidden category prompts could previously
+  execute with guessed IDs (200); after correction it fails before
+  reaching native VK billing.
+- VK UI handles direct hash navigation, hashchange, public preview,
+  eligible image repeat, video preview and a read-only copy/share URL.
+  It never automatically spends money when opening shared links.
+- Existing Telegram routes, balances, pricing and provider logic unchanged.
+
+Release gates: focused backend security and catalog tests, complete safe
+backend pytest, full frontend Jest, TypeScript, ESLint, build:vk,
+CI and production signed VK WebView checks. Direct feed/remix links and
+full eight-tab 1:1 VK parity still require the platform-neutral actor
+adapters for video, Motion, payments and social writes.
+
+No changes to native VK SQLite credits or migrations. Untrusted IDs,
+private references and browser-provided actor information fail closed.
+
+## 2026-11-11 — VK platform actor and same-route gateway integration (#451)
+
+- Baseline: `tanyapi@63d6faff`; changes from draft #454 re-integrated into a fresh isolated worktree because the original PR had conflicts after #453/#455. No production checkout or runtime configuration was edited.
+- Goal: signed, revocable VK-only `PlatformActor` independent of Telegram, same `MiniAppShell` and `/mini-app/api` routing when all native domains actually exist; preserve the distinct `prompt_ID`, `feed_ID`, `remix_ID` namespaces and existing VK-native SQLite ledger.
+- Merge conflicts: preserved `prompt_link(... vk_app_id=...)` and all four existing trends/feed regression tests; appended ten distinct actor/gateway/native-task tests from the architectural branch. No change to prices, provider payloads, wallet balance, user data, migrations or secrets.
+- New code: `bot/shared_accounts/{actor,gateway,native_tasks,task_view}.py`; authenticated actor in preview; task serializer; optional gateway in `bot/miniapp.py`, and server-controlled `full_app_ready` UI capability.
+- Risk mitigation: `VK_FULL_APP_PARITY_ENABLED` remains OFF by default. Incomplete adapter manifest or missing handle cannot mount the full VK shell or route VK calls through legacy Telegram billing. Separate `VK_NATIVE_TASKS_ENABLED` is OFF until `tanyavk` owner-scoped HMAC routes from draft #74 are independently released and proven. Existing linked/TG flows unchanged by default.
+- Verification on merge worktree: 66 passed and 62 skipped (`tests/test_shared_accounts.py` and `tests/test_vk_native_task_history.py`; skipped cases require explicit isolated PG DSN), 14/14 account-platform frontend Jest, TS `tsc --noEmit`, targeted ESLint, Python compileall, diff checks. External provider and payment smoke not performed: no production flag or wallet change is allowed in this slice.
+- Follow-up release gates: complete native adapters across 11 operation domains; native VK video #73, backend #452, native task #74 integration, durable provider reconciliation, payment/partner ledger idempotency, independent VK signed WebView E2E, and exact-SHA production smoke. Do not close #451 or claim full parity until those gates pass.
+
+## 2026-11-11 — native VK video signed BFF integration (feature OFF)
+
+- Baseline `tanyapi@e9587eb4` contains independent actor, shared API gateway and native task-history adapter from PR #458. Reintegrated draft #452 without losing editorial trends and feed publication tests.
+- New signed VK-only `account-preview/vk-video` quote/generation bridge targets the authoritative VK SQLite ledger over exact-body HMAC, paired with deployed native service at `609eeeed`.
+- `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains OFF. No prices, payment settings, balances or providers are changed.
+- This is a narrow infrastructure slice, NOT complete #451 parity. Reconciliation of uncertain video provider submissions, media delivery, refund correctness, full video form and real VK WebView financial acceptance remain release gates.

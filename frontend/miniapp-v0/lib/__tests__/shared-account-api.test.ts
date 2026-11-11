@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -25,6 +25,26 @@ test('dedicated VK build refuses a cached Telegram launch before making any requ
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
   await expect(checkAccountPreviewLogin()).rejects.toThrow('Откройте приложение из ВКонтакте.')
   expect(global.fetch).not.toHaveBeenCalled()
+})
+
+test('oversized Cyrillic native prompt is rejected clearly before auth or media requests', async () => {
+  await expect(generateVkImage({
+    model: 'nano_banana_pro', prompt: 'Я'.repeat(17000), aspect: '1:1',
+    resolution: '2K', reference_photos: [], quote_only: true,
+  })).rejects.toThrow('Сократите промпт или число референсов')
+  expect(global.fetch).not.toHaveBeenCalled()
+})
+
+test('native Cyrillic prompt within the byte budget reaches the signed generation API', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session-token', account: { id: 'source' } }))
+    .mockResolvedValueOnce(reply(200, { task_id: 0, cost: 2.5, quote_only: true }))
+    .mockResolvedValueOnce(reply(200))
+  const payload = { model: 'nano_banana_pro', prompt: 'Я'.repeat(15000), aspect: '1:1',
+    resolution: '2K', reference_photos: [], quote_only: true }
+  await expect(generateVkImage(payload)).resolves.toEqual(expect.objectContaining({ cost: 2.5 }))
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-image')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual(payload)
 })
 
 test('VK launch forwards the signed query intact and never substitutes Telegram credentials', async () => {
@@ -103,7 +123,7 @@ test('linked VK application session stays in memory for the shared API', async (
   await stopAccountAppSession()
 })
 
-test('unlinked VK account does not retain an application credential', async () => {
+test('unlinked VK retains one revocable in-memory session for history refresh without re-signing', async () => {
   const query = 'vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=signed-value'
   window.history.replaceState({}, '', '/?' + query)
   const fetch = jest.mocked(global.fetch)
@@ -118,13 +138,25 @@ test('unlinked VK account does not retain an application credential', async () =
       telegram_bot_username: 'Neuromixx_bot',
       telegram_linked: false,
     },
+  })).mockResolvedValueOnce(reply(200, {
+    registered: true, balance: 12.5, is_blocked: false, tasks: [],
   })).mockResolvedValueOnce(reply(200))
 
   const access = await startAccountAppSession()
-
   expect(access.telegram_linked).toBe(false)
-  expect(setPlatformSessionToken).not.toHaveBeenCalled()
-  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(setPlatformSessionToken).toHaveBeenCalledWith('b'.repeat(43))
+  const history = await fetchVkNativeState()
+  expect(history.balance).toBe(12.5)
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/mini-app/api/account-preview/session',
+    '/mini-app/api/account-preview/me',
+    '/mini-app/api/account-preview/vk-native-state',
+  ])
+  expect(fetch.mock.calls[2][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: 'Bearer ' + 'b'.repeat(43),
+  }))
+  await stopAccountAppSession()
+  expect(fetch.mock.calls[3][0]).toBe('/mini-app/api/account-preview/logout')
 })
 
 test('quick invitation submits signed source consent only with the connect click', async () => {
@@ -173,5 +205,73 @@ test('wrong-platform invitation is not mistaken for missing admin permission', a
     .mockResolvedValueOnce(reply(403)).mockResolvedValueOnce(reply(200))
   await expect(previewAccountLink('x'.repeat(43))).rejects.toThrow(
     'Это приглашение предназначено другому аккаунту или платформе.',
+  )
+})
+
+
+test('direct public VK trend lookup stays within signed platform API, without Telegram launch', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(200, {
+      item: { id: 5, title: 'Safe trend', preview_url: null, share_link: 'https://vk.com/app123#prompt_5' },
+      can_generate_in_app: true,
+    }))
+    .mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicTrend(5)).resolves.toEqual(expect.objectContaining({ can_generate_in_app: true }))
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=item&trend_id=5')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(expect.arrayContaining([expect.stringContaining('t.me')]))
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  await expect(fetchVkPublicTrend(-4)).rejects.toThrow('Некорректный тренд')
+})
+
+
+test('VK feed publication lookup is distinct from an editorial trend recipe', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(200, {
+      item: { id: 370766, generation_type: 'video', model: 'seedance_2_5',
+        preview_url: 'https://assets.example/preview.mp4', result_url: 'https://assets.example/result.mp4',
+        share_link: 'https://vk.com/app123#feed_370766', can_repeat_in_app: false },
+    }))
+    .mockResolvedValueOnce(reply(200))
+  const data = await fetchVkPublicFeedItem(370766)
+  expect(data.item.generation_type).toBe('video')
+  expect(data.item.share_link).toContain('#feed_370766')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=feed_item&gen_id=370766')
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(
+    expect.objectContaining({ Authorization: 'Bearer ' + 'a'.repeat(43) }),
+  )
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(
+    expect.arrayContaining([expect.stringContaining('view=item&trend_id=')]),
+  )
+  await expect(fetchVkPublicFeedItem(0)).rejects.toThrow('Некорректная публикация')
+})
+
+test('VK feed and trend start parameters remain disjoint even when IDs match', async () => {
+  const { parseMiniAppStartParam, startParamFromLocation } = await import('../start-params')
+  expect(parseMiniAppStartParam('feed_370766_ref_27QT0YCB')).toEqual({
+    kind: 'feed', genId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(parseMiniAppStartParam('remix_370766_ref_27QT0YCB')).toEqual({
+    kind: 'remix', genId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(parseMiniAppStartParam('prompt_370766_ref_27QT0YCB')).toEqual({
+    kind: 'prompt', promptId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(startParamFromLocation('?vk_app_id=54880352&vk_user_id=1&sign=secret',
+    '#feed_370766_ref_27QT0YCB')).toBe('feed_370766_ref_27QT0YCB')
+})
+
+test('signed public feed HTTP 404 gives a publication-specific error and revokes the session', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(404, { error: 'Публикация не найдена' }))
+    .mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicFeedItem(370766)).rejects.toThrow('Публикация не найдена')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=feed_item&gen_id=370766')
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(
+    expect.arrayContaining([expect.stringContaining('view=item&trend_id=')]),
   )
 })

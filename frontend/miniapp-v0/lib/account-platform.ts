@@ -51,6 +51,29 @@ export function accountLinkUrl(platform: AccountPlatform, token: string, vkAppId
   return `https://t.me/${username}?startapp=link_${token}`
 }
 
+/** Build an OS-handled deep link only from a validated account-link invitation. */
+export function nativeTelegramMiniAppUrl(httpsLink: string): string {
+  let url: URL
+  try {
+    url = new URL(httpsLink)
+  } catch {
+    throw new Error('Некорректная ссылка.')
+  }
+
+  const username = url.pathname.slice(1)
+  const startParam = url.searchParams.get('startapp')
+  if (
+    url.protocol !== 'https:' || url.hostname !== 't.me' || url.port ||
+    url.username || url.password || url.hash ||
+    !/^[A-Za-z0-9_]+$/.test(username) ||
+    !startParam || !/^link_[A-Za-z0-9_-]{43}$/.test(startParam) ||
+    [...url.searchParams.keys()].length !== 1
+  ) {
+    throw new Error('Некорректная ссылка.')
+  }
+  return `tg://resolve?domain=${encodeURIComponent(username)}&startapp=${encodeURIComponent(startParam)}`
+}
+
 export function incomingAccountLink(): string {
   if (typeof window === 'undefined') return ''
   const hash = window.location.hash.slice(1)

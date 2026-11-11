@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { LinkedAccountsCard } from '@/components/linked-accounts-card'
 import { buildTelegramMiniAppUrl } from '@/lib/api'
-import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, type AccountPlatform } from '@/lib/account-platform'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { accountLinkUrl, currentAccountPlatform, incomingAccountLink, nativeTelegramMiniAppUrl, type AccountPlatform } from '@/lib/account-platform'
 import {
   acceptAccountLink, createAccountLink, fetchAccountPreviewAccess, previewAccountLink,
   updateAccountLink, type AccountLink,
@@ -20,6 +21,8 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
 }) {
   const [link, setLink] = useState<AccountLink | null>(null)
   const [url, setUrl] = useState('')
+  const [copyMessage, setCopyMessage] = useState('')
+  const invitationInput = useRef<HTMLInputElement>(null)
   const [incomingToken, setIncomingToken] = useState('')
   const [incomingPreview, setIncomingPreview] = useState<AccountLink | null>(null)
   const [incomingError, setIncomingError] = useState('')
@@ -139,33 +142,18 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       setMessage(error instanceof Error ? error.message : 'Не удалось открыть другую платформу.')
       return
     }
-    // Open the window synchronously with the click to avoid popup blockers.
-    let popup: Window | null = null
-    try { popup = window.open('about:blank', '_blank') } catch { /* Continue with same-window navigation. */ }
-    if (popup) {
-      try {
-        popup.opener = null
-        popup.document.title = 'Открываем приложение…'
-      } catch { /* Browser-owned cross-origin window. */ }
-    }
+    // VK Android/iOS WebView blocks deep links redirected from an asynchronous
+    // about:blank popup. Do not launch Telegram until a *separate user click*
+    // activates the native tg:// anchor after the invitation is ready.
+    // This leaves the source VK WebView intact to poll for confirmation.
+    setCopyMessage('')
     void run(async signal => {
-      try {
-        const created = await createAccountLink(target, signal, true)
-        if (created.source_confirmed !== true) throw new Error('Сервер привязки требует обновления. Попробуйте позже.')
-        if (signal.aborted) { popup?.close(); return }
-        const targetUrl = accountLinkUrl(target, created.token || '', destination.vkAppId, destination.telegramBotUsername)
-        setLink(created)
-        setUrl(targetUrl)
-        if (popup && !popup.closed) {
-          popup.location.replace(targetUrl)
-        } else {
-          // Embedded VK/Telegram clients may block popups but allow navigation.
-          window.location.assign(targetUrl)
-        }
-      } catch (error) {
-        popup?.close()
-        throw error
-      }
+      const created = await createAccountLink(target, signal, true)
+      if (created.source_confirmed !== true) throw new Error('Сервер привязки требует обновления. Попробуйте позже.')
+      if (signal.aborted) return
+      const targetUrl = accountLinkUrl(target, created.token || '', destination.vkAppId, destination.telegramBotUsername)
+      setLink(created)
+      setUrl(targetUrl)
     })
   }
 
@@ -191,7 +179,7 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
       {incomingPreview ? <>
         <p className="text-sm text-muted-foreground">
           Связать {platformLabel(incomingPreview.source_identity!.platform)} №{incomingPreview.source_identity!.external_id} с этим аккаунтом {platformLabel(currentAccountPlatform())}?
-          Общими станут баланс, история и генерации.
+          В мини-приложении будут доступны баланс, история и генерации Telegram-аккаунта. Средства старого VK-бота пока остаются отдельно и автоматически не переносятся.
         </p>
         <Button disabled={busy} onClick={() => void run(async signal => {
           const result = await acceptAccountLink(incomingToken, signal, true)
@@ -206,8 +194,24 @@ export function SharedAccountLinkPreview({ vkAppId, telegramBotUsername = '', po
     </section> : null}
 
     {!linked && !incomingToken && active && url ? <section aria-label="Ожидание привязки" className="space-y-3 rounded-xl border border-border bg-card p-4">
-      <p className="text-sm text-muted-foreground">Открыли {platformLabel(link.target_platform!)}. Подтвердите там свой аккаунт — здесь статус обновится автоматически.</p>
-      <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть {platformLabel(link.target_platform!)} ещё раз</a></Button>
+      <p className="text-sm text-muted-foreground">{link.target_platform === 'telegram'
+        ? 'Приглашение подготовлено. Нажмите «Открыть приложение Telegram» — открытие должно происходить по вашему нажатию. Подтвердите привязку там; здесь статус обновится автоматически.'
+        : 'Приглашение подготовлено. Откройте ВКонтакте по ссылке ниже и подтвердите там свой аккаунт — здесь статус обновится автоматически.'}</p>
+      {link.target_platform === 'telegram' ? <>
+        <Button asChild className="w-full"><a href={nativeTelegramMiniAppUrl(url)} target="_self">Открыть приложение Telegram</a></Button>
+        <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть через браузер</a></Button>
+        <label className="block text-xs text-muted-foreground" htmlFor="telegram-invitation">Если VK не запускает Telegram, скопируйте ссылку и откройте её в Telegram.</label>
+        <input id="telegram-invitation" ref={invitationInput} value={url} readOnly autoComplete="off"
+          className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs" />
+        <Button variant="outline" onClick={() => void copyTextToClipboard(url, invitationInput.current)
+          .then(() => setCopyMessage('Ссылка скопирована.'))
+          .catch(() => {
+            invitationInput.current?.focus()
+            invitationInput.current?.select()
+            setCopyMessage('Выделите и скопируйте ссылку вручную.')
+          })}>Скопировать ссылку</Button>
+        {copyMessage ? <p role="status" className="text-xs text-muted-foreground">{copyMessage}</p> : null}
+      </> : <Button variant="outline" asChild><a href={url} target="_blank" rel="noopener noreferrer">Открыть ВКонтакте ещё раз</a></Button>}
       <Button variant="ghost" disabled={busy} onClick={() => void run(async signal => {
         applyLink(await updateAccountLink(link, 'cancel', signal))
         setUrl('')

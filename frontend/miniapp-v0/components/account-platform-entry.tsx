@@ -2,12 +2,24 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { VkStandaloneDiscovery } from '@/components/vk-standalone-discovery'
 import { incomingAccountLink } from '@/lib/account-platform'
 import {
   startAccountAppSession,
   stopAccountAppSession,
   type AccountPreviewAccess,
 } from '@/lib/shared-account-api'
+
+/** The VK host handles sign-in and returns fresh signed launch credentials. */
+function VkLoginLink() {
+  return <a
+    className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
+    href="/mini-app/api/account-preview/vk-login"
+    rel="noreferrer"
+  >
+    Войти через ВКонтакте
+  </a>
+}
 
 function VkAccountGate({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<AccountPreviewAccess | null>(null)
@@ -18,8 +30,8 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     const controller = new AbortController()
     let sessionStarted = false
     startAccountAppSession(controller.signal).then(result => {
-      if (controller.signal.aborted) return
-      sessionStarted = result.telegram_linked
+      if (controller.signal.aborted) { void stopAccountAppSession(); return }
+      sessionStarted = true
       setAccess(result)
     }).catch(error => {
       if (!controller.signal.aborted) {
@@ -33,22 +45,55 @@ function VkAccountGate({ children }: { children: ReactNode }) {
   }, [retry])
 
   if (!access) {
-    return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">{message}</p></main>
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6">
+      <p role="status">{message}</p>
+      {message !== 'Подтверждаем вход…' && <VkLoginLink />}
+    </main>
   }
-  if (access.telegram_linked) return children
+  // The shared shell is selected by a trusted backend capability contract,
+  // never simply because VK happened to be linked to Telegram. A legacy
+  // backend without this field preserves the existing linked-account path.
+  if (access.full_app_ready === true
+    || (access.full_app_ready === undefined && access.telegram_linked)) return children
 
-  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Связывание аккаунта ВК">
-    <h1 className="text-xl font-semibold">Свяжите аккаунты ТГ и ВК</h1>
-    <p className="text-sm text-muted-foreground">Это нужно один раз, чтобы в обеих апках были общий баланс, история и генерации.</p>
-    <SharedAccountLinkPreview
-      vkAppId={access.vk_app_id}
-      telegramBotUsername={access.telegram_bot_username}
-      onCommitted={() => {
-        setAccess(null)
-        setMessage('Открываем общую студию…')
-        setRetry(value => value + 1)
-      }}
-    />
+  // A VK-only visitor already has a working native VK bot. Telegram linking
+  // is optional; never spoof Telegram identity or imply shared wallet funds.
+  const communityId = access.vk_community_id
+  const nativeBotUrl = Number.isSafeInteger(communityId) && Number(communityId) > 0
+    ? `https://vk.com/im?sel=-${communityId}`
+    : null
+
+  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-4" aria-label="Студия ВКонтакте">
+    <h1 className="text-xl font-semibold">Создавайте в ВКонтакте</h1>
+    <p className="text-sm text-muted-foreground">
+      Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
+      Общая Mini App с Telegram пока работает после привязки аккаунтов.
+    </p>
+    <VkStandaloneDiscovery />
+    {nativeBotUrl
+      ? <a className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
+          href={nativeBotUrl} target="_blank" rel="noopener noreferrer">
+          Генерировать в боте ВКонтакте
+        </a>
+      : <p role="status" className="text-sm text-muted-foreground">
+          Диалог с ботом сейчас недоступен по прямой ссылке. Вернитесь в сообщения сообщества ВКонтакте.
+        </p>}
+    <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
+      <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
+      <p className="my-3 text-sm text-muted-foreground">
+        После привязки откроется общая студия с балансом, историей и генерациями Telegram.
+        Средства из прежнего VK-бота автоматически не переносятся.
+      </p>
+      <SharedAccountLinkPreview
+        vkAppId={access.vk_app_id}
+        telegramBotUsername={access.telegram_bot_username}
+        onCommitted={() => {
+          setAccess(null)
+          setMessage('Открываем общую студию…')
+          setRetry(value => value + 1)
+        }}
+      />
+    </details>
   </main>
 }
 
@@ -65,9 +110,29 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
     }
   }, [])
   // Do not mount the shared application store before VK authentication finishes.
-  if (platform === null) return null
+  // The first HTML response must also be useful when an older VK WebView fails
+  // to execute/hydrate the JS bundle. Returning null here produces an indefinite
+  // white screen with no way back to VK.
+  if (platform === null) {
+    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return null
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Загрузка ВКонтакте">
+      <h1 className="text-xl font-semibold">Открываем приложение ВКонтакте…</h1>
+      <p role="status" className="text-sm text-muted-foreground">
+        Если этот экран не меняется, откройте приложение из ВКонтакте ещё раз.
+        Telegram для входа не нужен.
+      </p>
+      <VkLoginLink />
+    </main>
+  }
   if (platform === 'vk-launch-required') {
-    return <main className="mx-auto min-h-dvh w-full max-w-lg p-6"><p role="status">Откройте приложение из ВКонтакте.</p></main>
+    return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Вход через ВКонтакте">
+      <h1 className="text-xl font-semibold">Вход в NEUROMIX</h1>
+      <p className="text-sm text-muted-foreground">
+        Войдите через ВКонтакте, чтобы открыть Mini App. Если вы ещё не авторизованы в ВК,
+        он предложит войти в аккаунт. Telegram привязывать не нужно.
+      </p>
+      <VkLoginLink />
+    </main>
   }
   if (platform === 'telegram' && telegramInvitation) {
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Подтверждение Telegram">
