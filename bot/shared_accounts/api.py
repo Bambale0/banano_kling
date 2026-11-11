@@ -118,6 +118,33 @@ def _bearer(request: web.Request) -> str:
     return header[7:]
 
 
+# Readiness belongs to the server, not to the browser's platform flag.
+# Every domain operation must have a native VK actor/storage/payment adapter
+# before the shared Telegram UI can be safely used by a VK-only identity.
+_VK_FULL_APP_OPERATIONS = frozenset({
+    'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+    'services', 'profile', 'payments', 'referrals', 'tasks',
+})
+
+
+def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: bool) -> bool:
+    if platform != 'vk':
+        return True
+    # Retain the established linked-account studio until native VK adapters
+    # are ready, without making Telegram linking a requirement for VK-only
+    # accounts once the full platform implementation is registered.
+    if telegram_linked:
+        return True
+    if os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1':
+        return False
+    adapter = request.app.get('vk_full_app_adapter')
+    return (
+        adapter is not None
+        and type(getattr(adapter, 'ready_operations', None)) is frozenset
+        and _VK_FULL_APP_OPERATIONS.issubset(adapter.ready_operations)
+    )
+
+
 async def profile(request: web.Request) -> web.Response:
     policy = await load_policy()
     if not policy.enabled:
@@ -125,13 +152,17 @@ async def profile(request: web.Request) -> web.Response:
     account = await get_session(_bearer(request), policy.revision)
     if not policy.allows_public(account.identity):
         raise PermissionError('Account access unavailable')
+    is_linked = await linked_telegram_id(account.id) is not None
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
+        'full_app_ready': _vk_full_app_ready(
+            request, platform=account.identity.platform, telegram_linked=is_linked,
+        ),
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
         # A verified VK identity may return to the existing native community
         # bot without claiming access to a second or migrated money source.
         'vk_community_id': policy.vk_community_id if account.identity.platform == 'vk' else None,
-        'telegram_linked': await linked_telegram_id(account.id) is not None,
+        'telegram_linked': is_linked,
         'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})

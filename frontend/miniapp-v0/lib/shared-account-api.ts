@@ -390,6 +390,8 @@ export interface AccountPreviewAccess {
   vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  /** Server-advertised readiness for every shared-shell operation. Not an identity link. */
+  full_app_ready?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 

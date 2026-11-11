@@ -894,3 +894,38 @@ async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch
     with pytest.raises(ValueError, match='temporarily full'):
         await vk_image_refs.save_vk_image(2001, blob.getvalue())
     assert len(list((vk_image_refs.ROOT / '2001').iterdir())) == 1
+
+
+async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        auth = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert profile.status == 200
+        payload = await profile.json()
+        assert payload['preview']['telegram_linked'] is False
+        assert payload['preview']['full_app_ready'] is False
+        # Flags cannot make an incomplete backend silently expose the full
+        # studio. The backend, not the browser, must register ALL adapters.
+        client.app['vk_full_app_adapter'] = SimpleNamespace(ready_operations={
+            'bootstrap', 'photo', 'trends', 'feed',
+        })
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is False
+        client.app['vk_full_app_adapter'] = SimpleNamespace(ready_operations=frozenset({
+            'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+            'services', 'profile', 'payments', 'referrals', 'tasks',
+        }))
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is True
+        monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED')
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is False
