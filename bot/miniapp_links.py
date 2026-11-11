@@ -21,6 +21,20 @@ def _clean_vk_app_id(vk_app_id: int | str | None) -> int:
     return value
 
 
+def _clean_vk_community_id(vk_community_id: int | str | None) -> int | None:
+    # A missing community is a valid *legacy* app. An explicitly configured
+    # but malformed community must fail closed, not create an unrelated link.
+    if vk_community_id is None:
+        return None
+    raw = str(vk_community_id)
+    if type(vk_community_id) not in (int, str) or not raw.isascii() or not raw.isdecimal():
+        raise ValueError("VK community ID is invalid")
+    value = int(raw)
+    if not 0 < value < 2**63:
+        raise ValueError("VK community ID is invalid")
+    return value
+
+
 def miniapp_startapp_link(
     bot_username: str | None,
     start_param: str | None = None,
@@ -43,6 +57,7 @@ def platform_miniapp_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
     fallback_url: str | None = None,
 ) -> str:
     if str(platform or "").strip().lower() != "vk":
@@ -52,6 +67,9 @@ def platform_miniapp_link(
             fallback_url=fallback_url,
         )
     base = f"https://vk.com/app{_clean_vk_app_id(vk_app_id)}"
+    community_id = _clean_vk_community_id(vk_community_id)
+    if community_id is not None:
+        base += f"_-{community_id}"
     param = str(start_param or "").strip()
     return f"{base}#{quote(param, safe='_-')}" if param else base
 
@@ -83,6 +101,7 @@ def referral_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     """Партнёрская ссылка на текущее мини-приложение."""
     return platform_miniapp_link(
@@ -90,6 +109,7 @@ def referral_link(
         referral_start_param(referral_code),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
 
 
@@ -109,12 +129,14 @@ def profile_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     return platform_miniapp_link(
         bot_username,
         profile_start_param(referral_code),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
 
 
@@ -134,12 +156,14 @@ def feed_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     return platform_miniapp_link(
         bot_username,
         feed_start_param(gen_id, referral_code),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
 
 
@@ -167,12 +191,14 @@ def remix_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     return platform_miniapp_link(
         bot_username,
         remix_start_param(gen_id, referral_code),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
 
 
@@ -200,12 +226,14 @@ def prompt_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     return platform_miniapp_link(
         bot_username,
         prompt_start_param(prompt_id, referral_code),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
 
 
@@ -220,10 +248,12 @@ def task_link(
     *,
     platform: str = "telegram",
     vk_app_id: int | str | None = None,
+    vk_community_id: int | str | None = None,
 ) -> str:
     return platform_miniapp_link(
         bot_username,
         task_start_param(task_id),
         platform=platform,
         vk_app_id=vk_app_id,
+        vk_community_id=vk_community_id,
     )
