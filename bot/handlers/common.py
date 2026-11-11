@@ -74,7 +74,7 @@ from bot.keyboards import (
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
 )
-from bot.legal_documents import document_text, https_document_url, telegram_text_parts
+from bot.legal_documents import document_text, https_document_url, send_legal_parts, telegram_text_parts
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
 )
@@ -4244,16 +4244,9 @@ async def _show_legal_document(
 
     await _safe_callback_answer(callback)
     try:
-        for index, part in enumerate(parts):
-            await callback.message.answer(
-                part,
-                reply_markup=(
-                    get_legal_document_view_keyboard()
-                    if index == len(parts) - 1
-                    else None
-                ),
-                parse_mode=None,
-            )
+        await send_legal_parts(
+            callback.message, parts, get_legal_document_view_keyboard()
+        )
     except Exception:
         logger.exception("Failed to send legal document text: kind=%s", kind)
         await callback.message.answer(
