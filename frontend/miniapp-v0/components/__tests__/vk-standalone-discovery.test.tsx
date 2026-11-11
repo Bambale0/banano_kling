@@ -157,7 +157,7 @@ test('VK checkout uses only configured native Lava offers; duplicate submit reus
   expect(screen.queryByRole('button', { name: 'Получить ссылку на оплату' })).not.toBeInTheDocument()
 })
 
-test('VK checkout timeout keeps unknown outcome explicit and never creates a second automatic invoice', async () => {
+test('VK checkout timeout preserves its payload and idempotency key across tab navigation', async () => {
   jest.mocked(fetchVkNativeCommerce).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, payments_enabled: true,
     payment_packages: [{ id: '250', price_rub: 250, credits: 25, lava_offer_id: 'offer', methods: ['lava_card'] }],
@@ -170,6 +170,13 @@ test('VK checkout timeout keeps unknown outcome explicit and never creates a sec
   fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Статус выставленного счёта неизвестен.')
   expect(createVkInvoice).toHaveBeenCalledTimes(1)
+  const firstAttempt = jest.mocked(createVkInvoice).mock.calls[0][0]
+  fireEvent.click(screen.getByRole('button', { name: 'Тренды' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByLabelText('Email для чека')).toHaveValue('user@example.com')
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect(jest.mocked(createVkInvoice).mock.calls[1][0]).toEqual(firstAttempt)
   expect(screen.queryByRole('link', { name: 'Перейти к оплате Lava' })).not.toBeInTheDocument()
 })
 

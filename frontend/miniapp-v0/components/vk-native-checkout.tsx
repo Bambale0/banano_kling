@@ -5,6 +5,12 @@ import { createVkInvoice, type VkNativeCommerce, type VkInvoiceResult, type VkIn
 
 type PaymentPackage = VkNativeCommerce['payment_packages'][number]
 
+export type VkCheckoutAttempt = {
+  request: VkInvoiceRequest
+  result: VkInvoiceResult | null
+  error: string
+}
+
 function safeCheckoutUrl(raw: unknown): string | null {
   if (typeof raw !== 'string' || raw.length > 2048) return null
   try {
@@ -14,15 +20,19 @@ function safeCheckoutUrl(raw: unknown): string | null {
   } catch { return null }
 }
 
-export function VkNativeCheckout({ packages }: { packages: PaymentPackage[] }) {
+export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
+  packages: PaymentPackage[]
+  attempt: VkCheckoutAttempt | null
+  onAttemptChange: (attempt: VkCheckoutAttempt | null) => void
+}) {
   const available = packages.filter(item => item.lava_offer_id && item.methods.some(m => m === 'lava_card' || m === 'lava_sbp'))
-  const [packageId, setPackageId] = useState(available[0]?.id || '')
-  const [method, setMethod] = useState<'CARD' | 'SBP'>('CARD')
-  const [email, setEmail] = useState('')
-  const [result, setResult] = useState<VkInvoiceResult | null>(null)
-  const [error, setError] = useState('')
+  const [packageId, setPackageId] = useState(attempt?.request.package_id || available[0]?.id || '')
+  const [method, setMethod] = useState<'CARD' | 'SBP'>(attempt?.request.payment_method || 'CARD')
+  const [email, setEmail] = useState(attempt?.request.customer_email || '')
+  const [result, setResult] = useState<VkInvoiceResult | null>(attempt?.result || null)
+  const [error, setError] = useState(attempt?.error || '')
   const [loading, setLoading] = useState(false)
-  const requestId = useRef('')
+  const requestId = useRef(attempt?.request.client_request_id || '')
 
   if (!available.length) return null
   const chosen = available.find(p => p.id === packageId) || available[0]
@@ -35,6 +45,7 @@ export function VkNativeCheckout({ packages }: { packages: PaymentPackage[] }) {
     requestId.current = ''
     setResult(null)
     setError('')
+    onAttemptChange(null)
   }
 
   const createInvoice = async () => {
@@ -62,10 +73,13 @@ export function VkNativeCheckout({ packages }: { packages: PaymentPackage[] }) {
     try {
       const response = await createVkInvoice(payload)
       setResult(response)
+      onAttemptChange({ request: payload, result: response, error: '' })
     } catch (cause) {
       // Retain requestId across a failed transport; user retry reuses the same
       // claim, never creates a second provider invoice for uncertain outcomes.
-      setError(cause instanceof Error ? cause.message : 'Не удалось проверить счёт.')
+      const message = cause instanceof Error ? cause.message : 'Не удалось проверить счёт.'
+      setError(message)
+      onAttemptChange({ request: payload, result: null, error: message })
     } finally {
       setLoading(false)
     }
