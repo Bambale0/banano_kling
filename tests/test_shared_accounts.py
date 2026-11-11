@@ -1194,6 +1194,13 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         )
         assert header_spoof.status == 400
         legacy.assert_not_awaited()
+        # Opaque signed VK bearer must never be accepted in a URL query:
+        # query strings leak via logs, referrers and browser history.
+        query_token = await client.post(
+            '/mini-app/api/bootstrap?init_data=vk_session:' + token, json={},
+        )
+        assert query_token.status == 400
+        legacy.assert_not_awaited()
 
         monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '0')
         fallback = await client.post('/mini-app/api/bootstrap', json={

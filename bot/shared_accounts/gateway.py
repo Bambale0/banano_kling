@@ -57,6 +57,17 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
         # the full VK adapter rollout is explicitly enabled.
         if os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1':
             return await handler(request)
+        # Never accept opaque VK session tokens in URL query strings.
+        # Such tokens may leak through request logs, referrers or browser
+        # history, even if the HMAC session itself is still valid.
+        if any(
+            value.startswith('vk_session:')
+            for key, value in request.query.items()
+            if key == 'init_data' and isinstance(value, str)
+        ):
+            return web.json_response({
+                'ok': False, 'error': 'VK session must not be sent in the URL',
+            }, status=400)
         if (request.method == 'OPTIONS'
             or not request.path.startswith(base)
             or request.path.startswith(base + 'account-preview/')
