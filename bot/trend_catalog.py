@@ -157,6 +157,41 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     return public
 
 
+async def public_trend_by_id(trend_id: int, *, tariff: str = "standard") -> dict[str, Any] | None:
+    """Open an approved, visible editorial trend from a signed deep link.
+
+    Use the exact public catalog serializer; never expose a hidden category,
+    private recipe, provider references or an unpublished prompt by ID.
+    """
+    if type(trend_id) is not int or trend_id < 1:
+        return None
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            """
+            SELECT p.*, '' AS showcase_badge, '' AS showcase_badge_until
+            FROM user_prompts p
+            WHERE p.id = ?
+              AND """ + _PUBLIC_TREND_WHERE + """
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM trend_category_items ti
+                      WHERE ti.prompt_id = p.id
+                  )
+                  OR EXISTS (
+                      SELECT 1 FROM trend_category_items ti
+                      JOIN trend_categories tc ON tc.id = ti.category_id
+                      WHERE ti.prompt_id = p.id AND tc.is_visible = 1
+                  )
+              )
+            LIMIT 1
+            """,
+            (trend_id,),
+        )
+        row = await cursor.fetchone()
+    return _card(row, tariff=tariff) if row is not None else None
+
+
 async def _attach_successful_repeat_counts(items: list[dict[str, Any]]) -> None:
     """Enrich an admin page once using the existing completed-task metric.
 

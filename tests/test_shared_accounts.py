@@ -33,6 +33,7 @@ async def account_database(request, monkeypatch, isolated_database):
     import psycopg
 
     from bot import postgres_aiosqlite
+    from bot.handlers import trend_success_compat
     from bot.postgres_pool import close_postgres_pool
 
     parsed = urlsplit(dsn)
@@ -44,6 +45,11 @@ async def account_database(request, monkeypatch, isolated_database):
     # instead of reusing the previous schema's process-wide readiness cache.
     monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_READY', False)
     monkeypatch.setattr(postgres_aiosqlite, '_HELPERS_LOCK', None)
+    # The process-wide trend success DDL cache belongs to a database schema.
+    # Every test creates a brand-new PG schema; reusing this readiness marker
+    # silently skips trend_generation_runs DDL on the second case.
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_READY', False)
+    monkeypatch.setattr(trend_success_compat, '_SCHEMA_LOCK', None)
     async with await psycopg.AsyncConnection.connect(dsn) as connection:
         await connection.execute('CREATE SCHEMA ' + schema)
         await connection.execute('SET search_path TO ' + schema)
@@ -894,3 +900,97 @@ async def test_vk_image_upload_enforces_storage_quota_and_disk_floor(monkeypatch
     with pytest.raises(ValueError, match='temporarily full'):
         await vk_image_refs.save_vk_image(2001, blob.getvalue())
     assert len(list((vk_image_refs.ROOT / '2001').iterdir())) == 1
+
+
+async def test_vk_only_direct_trend_link_requires_signature_and_hides_recipe(monkeypatch):
+    from bot import database
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    user = await database.get_or_create_user(97101111)
+    prompt = await database.create_prompt(
+        author_id=user.id, title='Deep link for VK',
+        description='Public test', prompt_text='Private owned prompt',
+        tags=['trend'], category='photo', model='banana_pro',
+        generation_settings={'kind': 'image', 'model': 'banana_pro',
+                             'ratio': '1:1', 'quality': '2K', 'count': 1},
+        is_public=True,
+    )
+    await database.approve_prompt(prompt['id'])
+    link_query = '?view=item&trend_id=' + str(prompt['id'])
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        no_token = await client.get(ROOT + '/trends' + link_query)
+        assert no_token.status == 401
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        item = await client.get(ROOT + '/trends' + link_query, headers=headers)
+        assert item.status == 200, await item.text()
+        payload = await item.json()
+        assert payload['item']['id'] == prompt['id']
+        assert payload['item']['title'] == 'Deep link for VK'
+        assert payload['item']['share_link'] == 'https://vk.com/app123#prompt_' + str(prompt['id'])
+        assert 'Private owned prompt' not in str(payload)
+        assert 'prompt_text' not in str(payload)
+        assert 'reference_urls' not in str(payload)
+        for invalid in ['0', '-1', 'abc', '1' * 100]:
+            result = await client.get(ROOT + '/trends?view=item&trend_id=' + invalid, headers=headers)
+            assert result.status == 400
+        missing = await client.get(ROOT + '/trends?view=item&trend_id=987654321', headers=headers)
+        assert missing.status == 404
+        tg = await login(client, 1001)
+        tg_headers = {'Authorization': 'Bearer ' + (await tg.json())['session_token']}
+        assert (await client.get(ROOT + '/trends' + link_query, headers=tg_headers)).status == 403
+
+
+async def test_vk_repeat_cannot_run_hidden_or_uncategorized_private_trend(monkeypatch, tmp_path):
+    from unittest.mock import AsyncMock
+
+    from bot import database, trend_catalog
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_WRITES_ENABLED', '1')
+    native = AsyncMock(return_value={'task_id': 99, 'cost': 2.5})
+    monkeypatch.setattr(api, 'submit_native_vk_image', native)
+    from bot.config import config
+    from bot.shared_accounts import vk_image_refs
+    monkeypatch.setattr(config, 'STATIC_BASE_URL', 'https://example.test')
+    monkeypatch.setattr(vk_image_refs, 'ROOT', tmp_path / 'vk-refs' / 'image')
+    image_folder = vk_image_refs.ROOT / '2001'
+    image_folder.mkdir(parents=True)
+    (image_folder / ('b' * 32 + '.jpg')).write_bytes(b'owned-test-reference')
+    owned_image = 'https://example.test/uploads/vk-refs/image/2001/' + 'b' * 32 + '.jpg'
+    author = await database.get_or_create_user(97101688)
+    prompt = await database.create_prompt(
+        author_id=author.id, title='Hidden admin photo trend',
+        description='Private hidden', prompt_text='Private source image',
+        tags=['trend'], category='photo', model='banana_pro',
+        generation_settings={'kind': 'image', 'model': 'banana_pro', 'ratio': '1:1',
+                             'quality': '2K', 'user_input': 'photo', 'count': 1},
+        is_public=True,
+    )
+    await database.approve_prompt(prompt['id'])
+    category = await trend_catalog.create_category('Do not show', '🔐')
+    await trend_catalog.set_trend_categories(prompt['id'], [category['id']])
+    active = next(item for item in await trend_catalog.list_catalog(is_admin=True)
+                  if item['id'] == category['id'])
+    await trend_catalog.update_category(category['id'], active['revision'], is_visible=False)
+
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        preview = await client.get(
+            ROOT + '/trends?view=item&trend_id=' + str(prompt['id']), headers=headers,
+        )
+        assert preview.status == 404
+        paid = await client.post(ROOT + '/vk-trend', headers=headers, json={
+            'trend_id': prompt['id'], 'reference_urls': [owned_image], 'user_values': {},
+            'client_request_id': 'hidden-trend-claim-12345', 'expected_cost': 2.5,
+        })
+        assert paid.status in {400, 404}
+        native.assert_not_awaited()

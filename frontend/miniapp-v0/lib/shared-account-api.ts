@@ -249,6 +249,7 @@ export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNative
 
 export interface VkPublicTrend {
   id: number
+  share_link?: string | null
   can_repeat_in_app?: boolean
   user_fields?: { key: string; label: string; type?: 'text' | 'number' | 'date'; field_type?: string; required?: boolean; max_length?: number }[]
   title: string
@@ -287,6 +288,23 @@ export async function fetchVkPublicDiscovery(
   return withPreviewSession(headers => request<VkPublicDiscovery>(
     'trends' + (view === 'feed' ? '?view=feed' : ''),
     { headers, signal },
+  ), signal)
+}
+
+export interface VkPublicTrendLink {
+  ok: true
+  item: VkPublicTrend
+  can_generate_in_app: boolean
+}
+
+export async function fetchVkPublicTrend(
+  trendId: number, signal?: AbortSignal,
+): Promise<VkPublicTrendLink> {
+  if (!Number.isSafeInteger(trendId) || trendId < 1) {
+    throw new Error('Некорректный тренд по ссылке.')
+  }
+  return withPreviewSession(headers => request<VkPublicTrendLink>(
+    'trends?view=item&trend_id=' + trendId, { headers, signal },
   ), signal)
 }
 

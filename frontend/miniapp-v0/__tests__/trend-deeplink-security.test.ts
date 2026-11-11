@@ -1,4 +1,4 @@
-import { parseMiniAppStartParam } from '../lib/start-params'
+import { parseMiniAppStartParam, startParamFromLocation } from '../lib/start-params'
 import type { PromptItem } from '../lib/types'
 import { isVideoTrendItem } from '../lib/trend-settings'
 
@@ -48,5 +48,23 @@ describe('trend referral navigation', () => {
     expect(parseMiniAppStartParam('prompt_42_ref_PARTNER')).toEqual({
       kind: 'prompt', promptId: 42, referralCodeForAttribution: 'PARTNER',
     })
+  })
+})
+
+
+describe('VK public trend link navigation', () => {
+  it('preserves the prompt ID and referral attribution beside signed VK launch params', () => {
+    const search = '?vk_app_id=123&vk_user_id=2001&vk_ts=1000&sign=signed'
+    const target = startParamFromLocation(search, '#prompt_42_ref_PARTNER')
+    expect(target).toBe('prompt_42_ref_PARTNER')
+    expect(parseMiniAppStartParam(target)).toEqual({
+      kind: 'prompt', promptId: 42, referralCodeForAttribution: 'PARTNER',
+    })
+  })
+
+  it('rejects malformed links and never treats VK actor IDs as a trend target', () => {
+    expect(startParamFromLocation('?vk_app_id=123&vk_user_id=2001&sign=signed', '')).toBe('')
+    expect(startParamFromLocation('?vk_app_id=123&vk_user_id=2001&sign=signed', '#prompt_-5')).toBe('')
+    expect(startParamFromLocation('?vk_app_id=123&vk_user_id=2001&sign=signed', '#prompt_not-a-number')).toBe('')
   })
 })

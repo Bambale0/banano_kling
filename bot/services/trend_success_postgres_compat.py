@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
 _INSTALLED = False
-_HELPERS_EXTENDED = False
+_HELPERS_EXTENDED_SCHEMAS: set[tuple[str, str]] = set()
+_HELPERS_EXTENSION_LOCK: asyncio.Lock | None = None
 
 
 def install_trend_success_postgres_compat() -> None:
@@ -27,31 +29,42 @@ def install_trend_success_postgres_compat() -> None:
     original_helpers = postgres_backend._ensure_postgres_helpers
 
     async def ensure_helpers_with_trend_success(conn) -> None:
-        global _HELPERS_EXTENDED
+        global _HELPERS_EXTENSION_LOCK
         await original_helpers(conn)
-        if _HELPERS_EXTENDED:
-            return
 
+        # Connections can target independent PostgreSQL schemas. A global
+        # boolean skips DDL and breaks all later catalog SELECT queries.
         async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS trend_generation_runs (
-                    task_id TEXT PRIMARY KEY,
-                    trend_id BIGINT NOT NULL,
-                    user_id BIGINT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            await cursor.execute('SELECT current_database(), current_schema()')
+            database_name, schema_name = await cursor.fetchone()
+        source = (str(database_name), str(schema_name))
+        if source in _HELPERS_EXTENDED_SCHEMAS:
+            return
+        if _HELPERS_EXTENSION_LOCK is None:
+            _HELPERS_EXTENSION_LOCK = asyncio.Lock()
+        async with _HELPERS_EXTENSION_LOCK:
+            if source in _HELPERS_EXTENDED_SCHEMAS:
+                return
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS trend_generation_runs (
+                        task_id TEXT PRIMARY KEY,
+                        trend_id BIGINT NOT NULL,
+                        user_id BIGINT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
                 )
-                """
-            )
-            await cursor.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_trend_generation_runs_trend
-                ON trend_generation_runs(trend_id, created_at)
-                """
-            )
-        await conn.commit()
-        _HELPERS_EXTENDED = True
-        logger.info("Postgres trend success metrics schema is ready")
+                await cursor.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_trend_generation_runs_trend
+                    ON trend_generation_runs(trend_id, created_at)
+                    """
+                )
+            await conn.commit()
+            _HELPERS_EXTENDED_SCHEMAS.add(source)
+            logger.info("Postgres trend success metrics schema is ready")
 
     postgres_backend._ensure_postgres_helpers = ensure_helpers_with_trend_success
     _INSTALLED = True

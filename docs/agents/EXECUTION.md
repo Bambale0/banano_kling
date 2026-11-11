@@ -3093,3 +3093,37 @@ Verification progress:
 - TDD: added a failing incomplete-native-state test (crash reproduced), then normalized runtime tasks through Array.isArray and made incomplete history explicitly unavailable rather than falsely empty. The catalog still renders and no automatic retry is triggered for malformed data.
 - Verification: 8/8 focused Jest tests, TypeScript and ESLint passed; full production Telegram export and exact e2e/shared-account-preview.mjs passed on both admin and nonadmin, with VK entry checks at width 430. An initial local attempt built VK export (instead of the Telegram export expected by this particular script) and failed at a missing Profile button; the corrected CI-equivalent command passes.
 - Scope: read-only UI robustness only; no provider, balance, auth, shared-wallet or VK secret changes.
+
+
+## 2026-11-11 VK direct trend links without Telegram
+
+User scenario: a public VK Mini App link with a #prompt_ID fragment
+opened the VK general catalog, not its target. Both platforms must use
+the same trend catalog and respect the same visibility policy.
+
+Production evidence: VK URL 200, native VK-login route HTTP 303 to
+https://vk.com/app54880352; published catalog 17 categories and
+445 trend placements. Shared Telegram start parameter parser already
+supports prompt_ID, but the VK-only UI was not consuming the hash.
+
+Changes, isolated fix/vk-trend-deeplinks-20261111:
+- A signed VK-only session GET account-preview/trends?view=item&trend_id=N
+  now returns a sanitized public trend card and a server-generated VK
+  permalink. No prompt, provider/private references, or Telegram ID.
+- The public catalog visibility rules now also gate vk-trend paid
+  execution. A RED test proved hidden category prompts could previously
+  execute with guessed IDs (200); after correction it fails before
+  reaching native VK billing.
+- VK UI handles direct hash navigation, hashchange, public preview,
+  eligible image repeat, video preview and a read-only copy/share URL.
+  It never automatically spends money when opening shared links.
+- Existing Telegram routes, balances, pricing and provider logic unchanged.
+
+Release gates: focused backend security and catalog tests, complete safe
+backend pytest, full frontend Jest, TypeScript, ESLint, build:vk,
+CI and production signed VK WebView checks. Direct feed/remix links and
+full eight-tab 1:1 VK parity still require the platform-neutral actor
+adapters for video, Motion, payments and social writes.
+
+No changes to native VK SQLite credits or migrations. Untrusted IDs,
+private references and browser-provided actor information fail closed.

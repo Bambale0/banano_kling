@@ -337,3 +337,27 @@ async def test_viewer_catalog_pages_omit_statistics_without_querying_counts(monk
         assert card["title"]
         assert card["prompt_text"] == ""
     query.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direct_public_trend_link_respects_catalog_visibility_and_privacy():
+    trend = await make_trend(441)
+    card = await trend_catalog.public_trend_by_id(trend["id"])
+    assert card and card["id"] == trend["id"]
+    assert card["prompt_text"] == ""
+    assert card["model"] is None
+    assert "Private original scene" not in str(card)
+
+    category = await trend_catalog.create_category("Hidden preview", "🙈")
+    await trend_catalog.set_trend_categories(trend["id"], [category["id"]])
+    live_category = next(
+        item for item in await trend_catalog.list_catalog(is_admin=True)
+        if item["id"] == category["id"]
+    )
+    hidden = await trend_catalog.update_category(category["id"], live_category["revision"], is_visible=False)
+    assert hidden["is_visible"] is False
+    assert await trend_catalog.public_trend_by_id(trend["id"]) is None
+    assert await trend_catalog.public_trend_by_id(-1) is None
+
+    await trend_catalog.update_category(category["id"], hidden["revision"], is_visible=True)
+    assert (await trend_catalog.public_trend_by_id(trend["id"]))["id"] == trend["id"]
