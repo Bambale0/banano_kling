@@ -308,6 +308,42 @@ export async function fetchVkPublicTrend(
   ), signal)
 }
 
+/** One public feed publication; NOT an editorial trend/prompt recipe.
+ * Original references and prompts are deliberately excluded from this API.
+ */
+export interface VkPublicFeedLink {
+  ok: true
+  item: {
+    id: number
+    generation_type: 'image' | 'video'
+    model: string
+    preview_url: string | null
+    preview_poster_url?: string | null
+    result_url: string | null
+    likes_count: number
+    shares_count: number
+    comments_count: number
+    aspect_ratio: string
+    duration?: number | null
+    feed_blurred: boolean
+    media_unavailable: boolean
+    share_link: string
+    /** Native VK feed remix is a separate authorized operation, not this read. */
+    can_repeat_in_app: false
+  }
+}
+
+export async function fetchVkPublicFeedItem(
+  feedGenId: number, signal?: AbortSignal,
+): Promise<VkPublicFeedLink> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId < 1) {
+    throw new Error('Некорректная публикация из ленты.')
+  }
+  return withPreviewSession(headers => request<VkPublicFeedLink>(
+    'trends?view=feed_item&gen_id=' + feedGenId, { headers, signal },
+  ), signal)
+}
+
 export interface VkPublicCategoryPage {
   ok: true
   category: { id: number | string; title: string; emoji: string }
