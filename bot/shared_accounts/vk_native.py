@@ -71,6 +71,58 @@ async def fetch_native_vk_state(vk_user_id: int) -> dict:
 
 
 
+async def fetch_native_vk_models(vk_user_id: int) -> dict:
+    """Read worker-supported native VK models; no Telegram price projection."""
+    if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
+        raise ValueError('Invalid verified VK identity')
+    secret = os.getenv('INTERNAL_API_SECRET','')
+    if not secret:
+        raise RuntimeError('VK internal authentication is not configured')
+    path = f'/internal/v1/miniapp/users/{vk_user_id}/models'
+    stamp = str(int(time.time()))
+    signature = hmac.new(secret.encode(),
+                         f'{stamp}\nGET\n{path}\n'.encode(),hashlib.sha256).hexdigest()
+    timeout = aiohttp.ClientTimeout(total=5, connect=2)
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as client,
+        client.get(_internal_origin()+path,allow_redirects=False,headers={
+            'X-Internal-Timestamp':stamp,'X-Internal-Signature':signature,
+        }) as result,
+    ):
+        if result.status in {403,404}:
+            raise PermissionError('VK account cannot access model catalog')
+        if result.status!=200:
+            raise RuntimeError('VK native catalog unavailable')
+        data=await result.json()
+    if not isinstance(data,dict) or data.get('ok') is not True:
+        raise RuntimeError('Invalid VK native catalog response')
+    photos=data.get('photo_models')
+    videos=data.get('video_models')
+    if not isinstance(photos,list) or len(photos)>30 or not isinstance(videos,list) or len(videos)>60:
+        raise RuntimeError('Invalid VK native model collection')
+    for item in photos:
+        if (not isinstance(item,dict) or type(item.get('id')) is not str
+            or not item['id'] or type(item.get('label')) is not str
+            or not isinstance(item.get('ratios'),list)
+            or not isinstance(item.get('resolutions'),list)
+            or type(item.get('max_references')) is not int
+            or not 0<=item['max_references']<=4):
+            raise RuntimeError('Invalid VK native photo model')
+    for item in videos:
+        if (not isinstance(item,dict) or type(item.get('id')) is not str
+            or type(item.get('label')) is not str
+            or not isinstance(item.get('ratios'),list)
+            or not isinstance(item.get('scenarios'),list)
+            or type(item.get('duration_min')) is not int
+            or type(item.get('duration_max')) is not int
+            or not 1<=item['duration_min']<=item['duration_max']<=60
+            or type(item.get('max_image_references')) is not int
+            or not 0<=item['max_image_references']<=4):
+            raise RuntimeError('Invalid VK native video model')
+    # Never forward additional provider fields, secrets or private account data.
+    return {'ok':True,'photo_models':photos,'video_models':videos}
+
+
 async def fetch_native_vk_commerce(vk_user_id: int) -> dict:
     """HMAC-only read of VK's authoritative purchases/partners; never TG wallet."""
     if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
