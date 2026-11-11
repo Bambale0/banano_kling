@@ -24,6 +24,19 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json', ...init.headers },
   })
+  if (path === 'vk-invoice' && response.status === 503) {
+    const error = await response.json().catch(() => ({}))
+    if (error?.error === 'invoice_reconciliation_required') {
+      throw new Error('Статус выставленного счёта неизвестен. Проверьте оплату перед новым заказом.')
+    }
+    throw new Error('Оплата ВКонтакте сейчас недоступна. Попробуйте позднее.')
+  }
+  if (path === 'vk-invoice' && response.status === 429) {
+    throw new Error('Слишком много запросов на оплату. Повторите позднее.')
+  }
+  if (path === 'vk-invoice' && response.status === 400) {
+    throw new Error('Проверьте сумму, способ оплаты и электронную почту.')
+  }
   if (response.status === 400 && path.startsWith('commerce')) {
     const result = await response.json().catch(() => ({}))
     throw new Error(result.error_code === 'commerce_invalid' ? result.error : 'Проверьте значения настроек.')
@@ -253,10 +266,36 @@ export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNative
   ), signal)
 }
 
+export interface VkInvoiceRequest {
+  package_id: string
+  payment_method: 'CARD' | 'SBP'
+  customer_email: string
+  client_request_id: string
+}
+
+export interface VkInvoiceResult {
+  ok: true
+  status: 'ready' | 'paid' | 'creating' | 'unknown'
+  amount_rub: number
+  credits: number
+  payment_url?: string
+}
+
+export async function createVkInvoice(payload: VkInvoiceRequest, signal?: AbortSignal): Promise<VkInvoiceResult> {
+  // No client-side VK actor ID or quoted price. Both are checked natively.
+  if (!/^[A-Za-z0-9_-]{16,80}$/.test(payload.client_request_id)) {
+    throw new Error('Не удалось подтвердить запрос оплаты.')
+  }
+  return withPreviewSession(headers => request<VkInvoiceResult>('vk-invoice', {
+    method: 'POST', headers, body: JSON.stringify(payload), signal,
+  }), signal)
+}
+
 export interface VkNativeCommerce {
   ok: true
   registered: boolean
   balance: number | null
+  payments_enabled?: boolean
   payment_packages: { id: string; price_rub: number; credits: number; lava_offer_id: string | null; methods: string[] }[]
   payments: { amount_rub: number; status: 'paid' | 'pending' | 'failed'; created_at: string }[]
   referrals: { first_level_count: number; second_level_count: number; earned_rub: number }

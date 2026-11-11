@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -208,6 +208,25 @@ test('wrong-platform invitation is not mistaken for missing admin permission', a
   )
 })
 
+
+test('native invoice transport never sends browser actor IDs or Telegram wallet fields', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(200, {
+      status: 'ready', amount_rub: 250, credits: 25, payment_url: 'https://lava.top/p/1',
+    }))
+    .mockResolvedValueOnce(reply(200))
+  const input = { package_id: '250', payment_method: 'CARD' as const,
+    customer_email: 'user@gmail.com', client_request_id: 'abc123def456xyz789' }
+  await expect(createVkInvoice(input)).resolves.toEqual(expect.objectContaining({ status: 'ready' }))
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-invoice')
+  const body = JSON.parse(String(fetch.mock.calls[1][1]?.body))
+  expect(body).toEqual(input)
+  expect(body).not.toHaveProperty('user_id')
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(
+    expect.objectContaining({ Authorization: 'Bearer ' + 'a'.repeat(43) }),
+  )
+})
 
 test('direct public VK trend lookup stays within signed platform API, without Telegram launch', async () => {
   const fetch = jest.mocked(global.fetch)

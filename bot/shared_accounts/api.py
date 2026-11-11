@@ -25,6 +25,7 @@ from .store import (
 from .task_view import serialize_native_vk_tasks
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
+    create_native_vk_invoice,
     fetch_native_vk_commerce,
     fetch_native_vk_state,
     submit_native_vk_image,
@@ -208,7 +209,25 @@ async def vk_native_commerce(request: web.Request) -> web.Response:
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
-    return response(await fetch_native_vk_commerce(actor.external_id))
+    payload = await fetch_native_vk_commerce(actor.external_id)
+    payload['payments_enabled'] = (
+        payload.get('payments_enabled') is True
+        and os.getenv('VK_MINIAPP_CHECKOUT_ENABLED') == '1'
+    )
+    return response(payload)
+
+
+async def vk_native_invoice(request: web.Request) -> web.Response:
+    """Verified VK bearer -> signed actor-scoped native checkout, never TG."""
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    if os.getenv('VK_MINIAPP_CHECKOUT_ENABLED') != '1':
+        return response({'ok': False, 'error': 'not_enabled'}, 404)
+    body = await _body(request)
+    required = {'package_id', 'payment_method', 'customer_email', 'client_request_id'}
+    if set(body) != required:
+        return response({'ok': False, 'error': 'invalid_payload'}, 400)
+    status, payload = await create_native_vk_invoice(actor.external_id, body)
+    return response(payload, status)
 
 
 async def _vk_writer_actor(request: web.Request) -> int:
@@ -636,6 +655,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
     app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
+    app.router.add_post(root + '/vk-invoice', _guard(vk_native_invoice))
     # This route authenticates the signed VK session before reading bytes.
     # The legacy add_post wrapper attempts JSON parsing first and drains a
     # multipart body. Register directly, as the existing owned-media APIs do.

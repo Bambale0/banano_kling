@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkNativeCheckout } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
   fetchVkPublicDiscovery,
@@ -394,6 +395,8 @@ export function VkStandaloneDiscovery() {
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
     </section> : null}
     {view === 'mine' ? <div className="space-y-3">
+      {commerce?.registered && commerce.payments_enabled === true &&
+        <VkNativeCheckout packages={commerce.payment_packages} />}
       {commerce?.registered && <section aria-label="Мои оплаты и партнёрство ВКонтакте"
         className="space-y-2 rounded-xl border border-border/70 bg-card p-3 text-sm">
         <h3 className="text-base font-semibold">Оплаты и партнёрская программа</h3>

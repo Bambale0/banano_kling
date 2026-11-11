@@ -266,6 +266,104 @@ async def test_vk_commerce_api_resolves_native_owner_and_refuses_telegram(monkey
         native.assert_awaited_once_with(2001)
 
 
+async def test_vk_invoice_creation_disabled_by_default_and_requires_vk_actor(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.delenv('VK_MINIAPP_CHECKOUT_ENABLED', raising=False)
+    native = AsyncMock(return_value=(200, {'ok': True, 'status': 'ready',
+                                         'payment_url': 'https://lava.top/p/1'}))
+    monkeypatch.setattr(api, 'create_native_vk_invoice', native, raising=False)
+    order = {'package_id': '250', 'payment_method': 'CARD',
+             'customer_email': 'user@example.com',
+             'client_request_id': 'abc123def456xyz789'}
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        vk_login = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        vk_headers = {'Authorization': 'Bearer ' + (await vk_login.json())['session_token']}
+        assert (await client.post(ROOT + '/vk-invoice', json=order)).status == 401
+        telegram = await login(client, 1001)
+        tg_headers = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
+        assert (await client.post(ROOT + '/vk-invoice', json=order, headers=tg_headers)).status == 403
+        assert (await client.post(ROOT + '/vk-invoice', json=order, headers=vk_headers)).status == 404
+        native.assert_not_awaited()
+
+
+async def test_vk_invoice_uses_verified_vk_actor_and_native_hmac_only(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_MINIAPP_CHECKOUT_ENABLED', '1')
+    native = AsyncMock(return_value=(200, {
+        'ok': True, 'status': 'ready', 'amount_rub': 250, 'credits': 25,
+        'payment_url': 'https://lava.top/p/1',
+    }))
+    monkeypatch.setattr(api, 'create_native_vk_invoice', native, raising=False)
+    order = {'package_id': '250', 'payment_method': 'CARD',
+             'customer_email': 'user@example.com',
+             'client_request_id': 'abc123def456xyz789'}
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        actual = await client.post(ROOT + '/vk-invoice?vk_user_id=99999',
+                                   json=order, headers=headers)
+        assert actual.status == 200
+        assert (await actual.json())['payment_url'] == 'https://lava.top/p/1'
+        native.assert_awaited_once_with(2001, order)
+        bad = await client.post(ROOT + '/vk-invoice', json={**order, 'vk_user_id':9999},
+                                headers=headers)
+        assert bad.status == 400
+        native.assert_awaited_once_with(2001, order)
+
+
+async def test_vk_invoice_loopback_signs_exact_body_and_keeps_provider_status(monkeypatch):
+    import hashlib
+    import hmac
+    import json
+
+    from bot.shared_accounts.vk_native import create_native_vk_invoice
+
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'native-checkout-probe')
+    app = web.Application()
+    native_path = '/internal/v1/miniapp/users/2001/commerce/invoices'
+    expected_payload = {'package_id': '250', 'payment_method': 'SBP',
+                        'customer_email': 'real@example.org',
+                        'client_request_id': 'abc123def456xyz789'}
+
+    async def native(request):
+        raw = await request.read()
+        stamp = request.headers['X-Internal-Timestamp']
+        check = hmac.new(
+            b'native-checkout-probe',
+            b'\n'.join([stamp.encode(), b'POST', request.path.encode(), raw]),
+            hashlib.sha256,
+        ).hexdigest()
+        assert hmac.compare_digest(request.headers['X-Internal-Signature'], check)
+        assert abs(int(stamp) - int(time.time())) < 30
+        assert json.loads(raw) == expected_payload
+        return web.json_response({'ok': True, 'status': 'ready', 'amount_rub':250,
+                                  'credits':25, 'payment_url':'https://lava.top/p/safe'})
+
+    app.router.add_post(native_path, native)
+    async with TestClient(TestServer(app)) as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', f'http://127.0.0.1:{client.server.port}')
+        status, result = await create_native_vk_invoice(2001, expected_payload)
+        assert status == 200 and result['payment_url'] == 'https://lava.top/p/safe'
+        with pytest.raises(ValueError):
+            await create_native_vk_invoice(0, expected_payload)
+    # Confirm hard failure never forwards a caller-selected VK ID.
+    assert 'vk_user_id' not in str(expected_payload)
+
+
 async def test_vk_commerce_hmac_loopback_and_proof_shape(monkeypatch):
     import hashlib
     import hmac

@@ -110,6 +110,85 @@ async def fetch_native_vk_commerce(vk_user_id: int) -> dict:
     return data
 
 
+async def create_native_vk_invoice(vk_user_id: int, payload: dict) -> tuple[int, dict]:
+    """One attempt to native VK checkout. NEVER retry unknown provider results."""
+    import json
+
+    if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
+        raise ValueError('Invalid verified VK identity')
+    if not isinstance(payload, dict):
+        raise TypeError('Invalid VK invoice request')
+    secret = os.getenv('INTERNAL_API_SECRET', '')
+    if not secret:
+        raise RuntimeError('VK internal authentication is not configured')
+    path = f'/internal/v1/miniapp/users/{vk_user_id}/commerce/invoices'
+    raw = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
+    if len(raw) > 4096:
+        raise ValueError('VK invoice request too large')
+    stamp = str(int(time.time()))
+    sig = hmac.new(
+        secret.encode(), b'\n'.join([stamp.encode(), b'POST', path.encode(), raw]),
+        hashlib.sha256,
+    ).hexdigest()
+    # A provider timeout is an UNKNOWN outcome. Never automatically retry.
+    timeout = aiohttp.ClientTimeout(total=25, connect=2)
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as client,
+        client.post(_internal_origin() + path, data=raw, allow_redirects=False,
+                    headers={
+                        'Content-Type': 'application/json',
+                        'X-Internal-Timestamp': stamp,
+                        'X-Internal-Signature': sig,
+                    }) as result,
+    ):
+        status = result.status
+        if status not in {200, 202, 400, 403, 404, 409, 429, 503}:
+            raise RuntimeError('VK native checkout unavailable')
+        data = await result.json()
+    if not isinstance(data, dict) or type(data.get('ok')) is not bool:
+        raise RuntimeError('Invalid VK native checkout response')
+    if status in {200, 202}:
+        if data['ok'] is not True or data.get('status') not in {'ready', 'paid', 'creating', 'unknown'}:
+            raise RuntimeError('Invalid VK checkout state')
+        amount = data.get('amount_rub')
+        credits = data.get('credits')
+        if type(amount) is not int or amount <= 0 or type(credits) is not int or credits <= 0:
+            raise RuntimeError('Invalid VK checkout quote')
+        result = {'ok': True, 'status': data['status'], 'amount_rub': amount, 'credits': credits}
+        if data['status'] == 'ready':
+            from urllib.parse import urlsplit
+
+            pay = data.get('payment_url')
+            if not isinstance(pay, str):
+                raise RuntimeError('Invalid VK payment URL')
+            target = urlsplit(pay)
+            allowed_hosts = tuple(
+                item.strip().lower().lstrip('.') for item in
+                os.getenv('VK_MINIAPP_PAYMENT_ALLOWED_HOSTS', 'lava.top,lava.ru').split(',')
+                if item.strip()
+            )
+            host = (target.hostname or '').lower().rstrip('.')
+            if (target.scheme != 'https' or not host or target.username or target.password
+                    or target.fragment or not any(host == domain or host.endswith('.' + domain)
+                                                   for domain in allowed_hosts)):
+                raise RuntimeError('Invalid VK payment URL')
+            result['payment_url'] = pay
+        return status, result
+    if data['ok'] is not False:
+        raise RuntimeError('Invalid VK checkout error state')
+    permitted_errors = {
+        'invalid_user', 'invalid_payload', 'invalid_content_type', 'invalid_json',
+        'invalid_request_key', 'invalid_package', 'invalid_payment_method_or_email',
+        'payment_method_unavailable', 'payment_provider_unavailable',
+        'vk_account_unavailable', 'idempotency_conflict', 'invoice_rate_limited',
+        'payment_limits_unconfigured', 'invoice_reconciliation_required',
+        'not_enabled',
+    }
+    error = data.get('error')
+    return status, {'ok': False, 'error': error if error in permitted_errors
+                    else 'native_checkout_unavailable'}
+
+
 async def submit_native_vk_image(vk_user_id: int, payload: dict) -> dict:
     """Delegate a single idempotent charge+task to native VK. Never pass TG ID."""
     import json
