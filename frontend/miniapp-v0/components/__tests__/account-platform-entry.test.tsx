@@ -66,6 +66,29 @@ test('expired signed VK launch offers fresh sign-in without mounting the app', a
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
+test('verified VK-only session can mount identical MiniAppShell when backend confirms full parity', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=valid')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: false, full_app_ready: true,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Общая студия')).toBeInTheDocument()
+  expect(screen.queryByText('Создавайте в ВКонтакте')).not.toBeInTheDocument()
+  expect(screen.queryByText('Связать аккаунты Neuromixx_bot')).not.toBeInTheDocument()
+})
+
+test('incomplete server capabilities cannot expose shared VK shell even when linked', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=valid')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1, vk_app_id: 123, telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: true, full_app_ready: false,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Создавайте в ВКонтакте')).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+})
+
 test('linked VK account mounts the same application', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
   jest.mocked(startAccountAppSession).mockResolvedValue({

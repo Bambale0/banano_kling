@@ -408,6 +408,8 @@ export interface AccountPreviewAccess {
   vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  /** Backend-advertised platform capability; independent of optional linking. */
+  full_app_ready?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 

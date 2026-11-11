@@ -118,6 +118,31 @@ def _bearer(request: web.Request) -> str:
     return header[7:]
 
 
+# This is server-owned readiness, not a Telegram linking preference.
+# A shared VK UI may mount only after every real VK-native domain adapter
+# can serve that actor using the authoritative native ledger.
+_FULL_VK_APP_OPERATIONS = frozenset({
+    'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+    'services', 'profile', 'payments', 'referrals', 'tasks',
+})
+
+
+def _full_vk_app_ready(request: web.Request, *, platform: str, linked_telegram: bool) -> bool:
+    if platform != 'vk':
+        return True
+    if linked_telegram:
+        # Backward compatible: existing linked-account studio remains usable.
+        return True
+    if os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1':
+        return False
+    adapter = request.app.get('vk_full_app_adapter')
+    return (
+        adapter is not None
+        and isinstance(getattr(adapter, 'ready_operations', None), (set, frozenset))
+        and _FULL_VK_APP_OPERATIONS.issubset(adapter.ready_operations)
+    )
+
+
 async def profile(request: web.Request) -> web.Response:
     policy = await load_policy()
     if not policy.enabled:
@@ -125,13 +150,17 @@ async def profile(request: web.Request) -> web.Response:
     account = await get_session(_bearer(request), policy.revision)
     if not policy.allows_public(account.identity):
         raise PermissionError('Account access unavailable')
+    linked_telegram = await linked_telegram_id(account.id) is not None
     return response({'ok': True, 'account': account.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
+        'full_app_ready': _full_vk_app_ready(
+            request, platform=account.identity.platform, linked_telegram=linked_telegram,
+        ),
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
         # A verified VK identity may return to the existing native community
         # bot without claiming access to a second or migrated money source.
         'vk_community_id': policy.vk_community_id if account.identity.platform == 'vk' else None,
-        'telegram_linked': await linked_telegram_id(account.id) is not None,
+        'telegram_linked': linked_telegram,
         'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})

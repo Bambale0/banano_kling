@@ -994,3 +994,39 @@ async def test_vk_repeat_cannot_run_hidden_or_uncategorized_private_trend(monkey
         })
         assert paid.status in {400, 404}
         native.assert_not_awaited()
+
+
+async def test_vk_shared_shell_readiness_is_not_the_telegram_link_state(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    required = frozenset({
+        'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+        'services', 'profile', 'payments', 'referrals', 'tasks',
+    })
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        auth = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert profile.status == 200
+        payload = await profile.json()
+        assert payload['preview']['telegram_linked'] is False
+        assert payload['preview']['full_app_ready'] is False
+        # Merely enabling a flag must not expose unrelated, unimplemented
+        # paid operations in the common shell.
+        client.app['vk_full_app_adapter'] = SimpleNamespace(ready_operations={
+            'bootstrap', 'photo', 'feed', 'trends',
+        })
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is False
+        client.app['vk_full_app_adapter'] = SimpleNamespace(ready_operations=required)
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is True
+        monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED')
+        profile = await client.get(ROOT + '/me', headers=auth)
+        assert (await profile.json())['preview']['full_app_ready'] is False

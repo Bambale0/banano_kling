@@ -50,7 +50,11 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       {message !== 'Подтверждаем вход…' && <VkLoginLink />}
     </main>
   }
-  if (access.telegram_linked) return children
+  // The full shell is platform-neutral; its backend readiness must come from
+  // the authenticated server, not from a Telegram-linked identity.
+  // Older backends with no readiness field retain their existing linked flow.
+  if (access.full_app_ready === true
+    || (access.full_app_ready === undefined && access.telegram_linked)) return children
 
   // A VK-only visitor already has a working native VK bot. Telegram linking
   // is optional; never spoof Telegram identity or imply shared wallet funds.
