@@ -94,24 +94,69 @@ def test_document_text_reads_utf8_and_rejects_empty(tmp_path: Path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_offer_callback_sends_plain_text_never_document(monkeypatch):
+async def test_actual_compat_offer_callback_sends_plain_text_not_pdf(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from bot.handlers import common
+    from bot.handlers import public_offer_compat as offer
 
-    monkeypatch.setattr(common.config, "PARTNER_OFFER_URL", "")
-    monkeypatch.setattr(common, "document_text", lambda kind: "Оферта: <не HTML>")
+    text_path = tmp_path / "offer.txt"
+    text_path.write_text("Оферта: <не HTML> 🎬", encoding="utf-8")
+    monkeypatch.setattr(offer, "PUBLIC_OFFER_TEXT_PATH", text_path)
+    monkeypatch.setattr(offer.config, "PARTNER_OFFER_URL", "")
     message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
-    callback = SimpleNamespace(message=message, answer=AsyncMock())
+    callback = SimpleNamespace(
+        data="more_public_offer", message=message, answer=AsyncMock()
+    )
 
-    await common.show_partner_offer(callback)
+    await offer.show_public_offer(callback)
 
     message.answer_document.assert_not_awaited()
     message.answer.assert_awaited_once()
     args, kwargs = message.answer.await_args
-    assert args[0] == "Оферта: <не HTML>"
+    assert args[0] == "Оферта: <не HTML> 🎬"
     assert kwargs["parse_mode"] is None
+    callback.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_actual_compat_offer_callback_links_https_when_configured(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import public_offer_compat as offer
+
+    monkeypatch.setattr(
+        offer.config, "PARTNER_OFFER_URL", "https://example.org/legal/offer"
+    )
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
+    callback = SimpleNamespace(
+        data="partner_offer", message=message, answer=AsyncMock()
+    )
+
+    await offer.show_public_offer(callback)
+
+    message.answer_document.assert_not_awaited()
+    markup = message.answer.await_args.kwargs["reply_markup"]
+    links = [
+        button.url for row in markup.inline_keyboard for button in row if button.url
+    ]
+    assert links == ["https://example.org/legal/offer"]
+
+
+def test_actual_offer_handler_precedes_legacy_router():
+    from bot.handlers import common_router, public_offer_compat_router
+
+    # A regression in router order would route legacy PDF handlers first.
+    routers = common_router.sub_routers
+    assert public_offer_compat_router in routers
+    assert routers.index(public_offer_compat_router) < next(
+        index for index, child in enumerate(routers)
+        if any(
+            handler.callback.__module__ == "bot.handlers.common"
+            for handler in child.callback_query.handlers
+        )
+    )
 
 
 @pytest.mark.asyncio
