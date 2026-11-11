@@ -248,6 +248,7 @@ class Config:
 
     # Partner programme
     PARTNER_OFFER_URL: str = os.getenv("PARTNER_OFFER_URL", "")
+    PRIVACY_POLICY_URL: str = os.getenv("PRIVACY_POLICY_URL", "")
     PARTNER_RULES_URL: str = os.getenv("PARTNER_RULES_URL", "")
     PARTNER_MIN_WITHDRAWAL_RUB: int = int(
         os.getenv("PARTNER_MIN_WITHDRAWAL_RUB", "1000")
