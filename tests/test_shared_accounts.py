@@ -1128,7 +1128,7 @@ async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypat
         assert (await profile.json())['preview']['full_app_ready'] is False
         client.app['vk_full_app_adapter'] = SimpleNamespace(
             ready_operations=frozenset({
-                'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+                'bootstrap', 'photo', 'video', 'trends', 'feed',
                 'services', 'profile', 'payments', 'referrals', 'tasks',
             }),
             handle=lambda request, *, actor: web.json_response({'ok': True}),

@@ -15,7 +15,15 @@ export function totalPackageCredits(pkg: PaymentPackage) {
   return Number(pkg.credits) + Math.max(0, Number(pkg.bonus_credits ?? 0))
 }
 
-export function preferredProviderForPackage(pkg: PaymentPackage): PaymentProvider {
+export function preferredProviderForPackage(pkg: PaymentPackage): PaymentProvider
+export function preferredProviderForPackage(
+  pkg: PaymentPackage, platform: 'telegram' | 'vk',
+): PaymentProvider | null
+export function preferredProviderForPackage(
+  pkg: PaymentPackage,
+  platform: 'telegram' | 'vk' = 'telegram',
+): PaymentProvider | null {
+  if (platform === 'vk') return pkg.lava_offer_id ? 'lava_card' : null
   if (pkg.robokassa_enabled) return 'robokassa'
   if (pkg.freekassa_enabled) return 'freekassa_card'
   if (pkg.lava_offer_id) return 'lava_card'

@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useEffect, type ComponentType } from 'react'
 import { useApp } from '@/lib/app-context'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { AnimatePresence, motion } from 'framer-motion'
 import { StudioTab } from './tabs/studio-tab'
 
@@ -32,8 +33,15 @@ const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) =
 const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
 
 export function TabContent() {
-  const { activeTab } = useApp()
-  const ActiveComponent = tabComponents[activeTab] || StudioTab
+  const { activeTab, setActiveTab } = useApp()
+  const isVk = currentAccountPlatform() === 'vk'
+  // Motion remains Telegram-only; stale VK selections safely open Video.
+  const effectiveTab = isVk && activeTab === 3 ? 2 : activeTab
+  const ActiveComponent = tabComponents[effectiveTab] || StudioTab
+
+  useEffect(() => {
+    if (isVk && activeTab === 3) setActiveTab(2)
+  }, [isVk, activeTab, setActiveTab])
 
   useEffect(() => {
     const prefetchTimer = window.setTimeout(() => {
@@ -46,7 +54,7 @@ export function TabContent() {
     <div className="relative">
       <AnimatePresence mode="wait">
         <motion.div
-          key={activeTab}
+          key={effectiveTab}
           initial={false}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
