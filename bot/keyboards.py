@@ -180,6 +180,7 @@ def get_more_menu_keyboard():
     builder = InlineKeyboardBuilder()
     builder.button(text="❓ Как пользоваться", callback_data="menu_help")
     builder.button(text="💬 Поддержка", callback_data="menu_support")
+    builder.button(text="📜 Публичная оферта", callback_data="more_public_offer")
     builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="💰 Пополнить", callback_data="menu_topup")
     builder.button(text="🏠 Главное меню", callback_data="back_main")
