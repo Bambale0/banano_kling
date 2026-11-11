@@ -59,6 +59,7 @@ test('direct VK link offers official VK sign-in instead of a dead end', () => {
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
   expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' }))
     .toHaveAttribute('href', '/mini-app/api/account-preview/vk-login')
+  expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' })).toHaveAttribute('target', '_top')
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
   expect(startAccountAppSession).not.toHaveBeenCalled()
 })
@@ -79,6 +80,7 @@ test('expired signed VK launch offers fresh sign-in without mounting the app', a
   expect(await screen.findByText('Проверка входа истекла')).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' }))
     .toHaveAttribute('href', '/mini-app/api/account-preview/vk-login')
+  expect(screen.getByRole('link', { name: 'Войти через ВКонтакте' })).toHaveAttribute('target', '_top')
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 

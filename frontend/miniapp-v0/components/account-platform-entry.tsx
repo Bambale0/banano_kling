@@ -16,6 +16,7 @@ function VkLoginLink() {
   return <a
     className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
     href="/mini-app/api/account-preview/vk-login"
+    target="_top"
     rel="noreferrer"
   >
     Войти через ВКонтакте

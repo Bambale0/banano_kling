@@ -48,6 +48,7 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
       await page.getByRole('heading', { name: 'Вход в NEUROMIX', exact: true }).waitFor()
       const vkLogin = page.getByRole('link', { name: 'Войти через ВКонтакте', exact: true })
       assert.equal(await vkLogin.getAttribute('href'), '/mini-app/api/account-preview/vk-login')
+      assert.equal(await vkLogin.getAttribute('target'), '_top')
       assert.equal(await page.evaluate(() => window.__vkBridgeMessages.some(message =>
         message?.type === 'vk-connect' && message?.handler === 'VKWebAppInit'
       )), true)
