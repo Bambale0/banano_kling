@@ -9,19 +9,20 @@ from aiohttp import web
 
 from bot.config import config
 
+from .actor import resolve_platform_actor
 from .auth import external_id, verify_telegram, verify_vk
 from .commercial import CommercialValidation
 from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
+from .gateway import full_vk_adapter
 from .links import LinkExpired, LinkService
 from .policy import VKDeliveryConfigurationError, load_policy, save_policy
 from .store import (
     create_session,
     get_session,
-    linked_platforms,
-    linked_telegram_id,
     revoke_session,
 )
+from .task_view import serialize_native_vk_tasks
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import fetch_native_vk_state, submit_native_vk_image
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
@@ -118,24 +119,37 @@ def _bearer(request: web.Request) -> str:
     return header[7:]
 
 
+# Readiness belongs to the server, not to the browser's platform flag.
+# Every domain operation must have a native VK actor/storage/payment adapter
+# before the shared Telegram UI can be safely used by a VK-only identity.
+def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: bool) -> bool:
+    if platform != 'vk':
+        return True
+    # Retain the established linked-account studio until native VK adapters
+    # are ready, without making Telegram linking a requirement for VK-only
+    # accounts once the full platform implementation is registered.
+    if telegram_linked:
+        return True
+    return full_vk_adapter(request.app) is not None
+
+
 async def profile(request: web.Request) -> web.Response:
     policy = await load_policy()
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
-    account = await get_session(_bearer(request), policy.revision)
-    if not policy.allows_public(account.identity):
-        raise PermissionError('Account access unavailable')
-    return response({'ok': True, 'account': account.payload(), 'preview': {
+    actor = await resolve_platform_actor(_bearer(request))
+    is_linked = actor.linked_telegram_id is not None
+    return response({'ok': True, 'account': actor.payload(), 'preview': {
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
+        'full_app_ready': _vk_full_app_ready(
+            request, platform=actor.platform, telegram_linked=is_linked,
+        ),
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
-        # A verified VK identity may return to the existing native community
-        # bot without claiming access to a second or migrated money source.
-        'vk_community_id': policy.vk_community_id if account.identity.platform == 'vk' else None,
-        'telegram_linked': await linked_telegram_id(account.id) is not None,
-        'linked_platforms': await linked_platforms(account.id),
+        'vk_community_id': policy.vk_community_id if actor.platform == 'vk' else None,
+        'telegram_linked': is_linked,
+        'linked_platforms': list(actor.linked_platforms),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})
-
 
 
 def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
@@ -164,27 +178,26 @@ def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
 
 
 async def vk_native_state(request: web.Request) -> web.Response:
-    """Own native VK balance/history even when Telegram is never linked."""
+    """Verified VK session owns its native wallet, regardless of Telegram."""
     policy = await load_policy()
     if not policy.enabled:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
-    account = await get_session(_bearer(request), policy.revision)
-    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
-        raise PermissionError('Verified VK session required')
-    data = await fetch_native_vk_state(account.identity.external_id)
-    return response({'ok': True, **data})
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    data = await fetch_native_vk_state(actor.external_id)
+    # The same history-card DTO used by the common Telegram Mini App.
+    # Keep the legacy native rows for backward compatibility until every
+    # detail/repeat route accepts platform-namespaced task identifiers.
+    common_tasks = serialize_native_vk_tasks(data['tasks'], strict=False)
+    return response({'ok': True, **data, 'recent_tasks': common_tasks})
 
 
 async def _vk_writer_actor(request: web.Request) -> int:
-    policy = await load_policy()
-    if not policy.enabled:
-        raise PermissionError('Preview unavailable')
-    account = await get_session(_bearer(request), policy.revision)
-    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
-        raise PermissionError('Verified VK session required')
-    if 'telegram' in await linked_platforms(account.id):
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    # Compatibility until the full common VK shell routes ALL financial
+    # operations to the VK-native wallet. Never silently mix VK/TG funds.
+    if 'telegram' in actor.linked_platforms:
         raise PermissionError('Linked accounts must use the common studio')
-    return account.identity.external_id
+    return actor.external_id
 
 
 async def vk_image_upload(request: web.Request) -> web.Response:
