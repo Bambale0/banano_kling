@@ -133,7 +133,7 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             return web.json_response({'ok': False, 'error': 'Account unavailable'}, status=503)
 
         adapter = full_vk_adapter(request.app)
-        if adapter is None and actor.linked_telegram_id is not None:
+        if adapter is None and actor.linked_telegram_id is not None and not native_tasks_enabled:
             # Existing linked sessions use the previous Telegram studio until
             # every platform-aware adapter is ready, not a mixture of wallets.
             return await handler(request)
