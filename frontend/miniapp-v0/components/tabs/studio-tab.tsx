@@ -2,6 +2,7 @@
 
 import { BRAND_NAME } from '@/lib/brand'
 import { useApp } from '@/lib/app-context'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { QuickActionGrid } from '../quick-action-grid'
 import { TaskHistoryList } from '../task-history-list'
 import { GenjutsuButton } from '../genjutsu-entry'
@@ -25,7 +26,7 @@ export function StudioTab() {
         <QuickActionGrid
           onPhotoClick={() => setActiveTab(1)}
           onVideoClick={() => setActiveTab(2)}
-          onMotionClick={() => setActiveTab(3)}
+          onMotionClick={() => setActiveTab(currentAccountPlatform() === 'vk' ? 2 : 3)}
           onBalanceClick={() => openBalance()}
           onAssistantClick={() => openWorkspace('assistant')}
         />

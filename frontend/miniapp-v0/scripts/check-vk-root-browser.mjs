@@ -137,9 +137,10 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
         throw error
       }
       assert.ok(logins.length >= 2)
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Motion', 'Лента', 'Сервисы', 'Профиль']) {
+      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Лента', 'Сервисы', 'Профиль']) {
         assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
       }
+      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0, 'Motion remains Telegram-only')
       assert.equal(await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).count(), 0)
       assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
       assert.ok(appCredentials.length >= 1)

@@ -3155,3 +3155,17 @@ private references and browser-provided actor information fail closed.
 - New signed VK-only `account-preview/vk-video` quote/generation bridge targets the authoritative VK SQLite ledger over exact-body HMAC, paired with deployed native service at `609eeeed`.
 - `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains OFF. No prices, payment settings, balances or providers are changed.
 - This is a narrow infrastructure slice, NOT complete #451 parity. Reconciliation of uncertain video provider submissions, media delivery, refund correctness, full video form and real VK WebView financial acceptance remain release gates.
+
+## 2026-11-11 — VK scope update: Motion remains Telegram-only
+
+- Product decision: remove Motion Control from the required VK Mini App parity scope. Telegram keeps its original eight-tab interface and Motion operation unchanged. VK must retain one shared `MiniAppShell` and `TabContent` with seven visible tabs; all remaining native VK domain adapters are still required.
+- Backend `VK_FULL_APP_OPERATIONS` now excludes only `motion`; ten owner-scoped adapter domains remain mandatory, with exact server-side session/callable/flag readiness and no synthetic Telegram actor. The feature flag remains OFF in production; this change cannot enable an incomplete VK studio.
+- Frontend platform-aware TabNav omits only Motion for signed VK launches and VK static builds. If a stale saved selection targets Motion (tab id 3), TabContent immediately selects Video (id 2) and never mounts Motion on VK. Telegram shows all eight original tabs.
+- TDD: RED observed on ten-domain adapter readiness and VK navigation/old selection, then GREEN after minimal changes. Validation: targeted backend readiness test 1 passed; focused shared-account tests 69 passed, 65 optional isolated-PG cases skipped; full frontend Jest 99 suites / 766 tests passed; TypeScript, targeted ESLint, Ruff, Python compilation, VK production static build succeeded.
+- No provider request, payment, credit transfer, schema migration, legacy Telegram route, or production flag change. Remaining blocks: real complete native VK adapters for other ten domains, finance/reconciliation and signed VK WebView E2E. Do not report all-feature VK production readiness until those pass.
+
+### CI browser regression correction (same scope change)
+
+- GitHub check `CI — Tanya Mini App`, job `Check VK root entry and administrator surface` failed at `scripts/check-vk-root-browser.mjs:131` because it asserted eight VK navigation buttons including Motion. The independent `Mini App Browser E2E` failed at `e2e/shared-account-preview.mjs:410` for the identical obsolete requirement.
+- Both E2E contracts now require seven VK tabs and explicitly assert Motion is absent. Telegram's eight-tab rendering remains separately regression-tested. Neither check was skipped or weakened for required VK functionality.
+- Reproduced then verified with actual Chromium: `node --test scripts/check-vk-root-browser.mjs` passed both 430px and 1280px signed VK entry scenarios. `node e2e/shared-account-preview.mjs` passed all ten shared/TG/admin/VK scenarios after an ordinary production Mini App export. Both VK and TG static builds, Jest 766/766, TypeScript and backend tests were verified.

@@ -2,7 +2,7 @@
 
 ## Product contract
 
-VK Mini App **must use the same 8-tab MiniAppShell and TabContent** as
+VK Mini App **must use the same MiniAppShell and TabContent with 7 visible VK tabs** (Motion remains Telegram-only) as
 Telegram, with genuinely supported operations and no required Telegram account.
 Do not gate core VK functionality on linked_platforms or fabricate a Telegram
 user ID. Keep native VK SQLite money and paid generation tasks authoritative
@@ -35,10 +35,10 @@ optional and never silently copies credits.
 | Domain | Existing source | VK-only completion requirement |
 |---|---|---|
 | Actor/session | shared_accounts signed VK session | PlatformActor identity throughout all APIs; no Telegram surrogate |
-| Shared layout | MiniAppShell, TabContent 8 tabs | Same screens with each operation functional |
+| Shared layout | MiniAppShell, TabContent | Seven VK tabs, sharing all eligible TG screens, excluding Motion |
 | Photo | native VK photos | full model/reference/ratio/quality parity, quote, paid task, delivery |
-| Video | VK native video worker | all supported TG model/quality/ref/motion options, quote, retries, reconciliation |
-| Motion | TG provider/miniapp routes | VK-owned assets, quote, worker execution, native history |
+| Video | VK native video worker | all supported TG model/quality/reference options excluding Motion, quote, retries, reconciliation |
+| Motion | Telegram only | Not in VK release scope; hidden in VK navigation and readiness contract |
 | Feed/trends | shared catalog & private TG generations | VK-owned uploads, private repeats and publishing with ACL |
 | Services | TG prompt, voice, music, AI assistants | platform-neutral processing, payment and delivery |
 | Profile/tasks | native VK SQLite state + TG PG profile | VK-owned editable profile, tasks, media, status, saved references |
@@ -70,6 +70,6 @@ Telegram/VK does not establish common ownership.
 ## Current status
 
 Partial photo generation is production-enabled. The product is NOT 1:1 yet:
-video/Motion/services/payments/publishing and the full 8-tab VK-only shell are
+video/services/payments/publishing and the full seven-tab VK-only shell are
 outstanding. Do not claim completion merely because a backend HMAC endpoint
 exists or UI components can be rendered.
