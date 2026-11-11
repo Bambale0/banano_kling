@@ -20,7 +20,7 @@ from .errors import AuthenticationError
 logger = logging.getLogger(__name__)
 
 VK_FULL_APP_OPERATIONS = frozenset({
-    'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+    'bootstrap', 'photo', 'video', 'trends', 'feed',
     'services', 'profile', 'payments', 'referrals', 'tasks',
 })
 MAX_GATEWAY_JSON_BYTES = 128 * 1024

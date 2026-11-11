@@ -1,6 +1,7 @@
 'use client'
 
 import { useApp } from '@/lib/app-context'
+import { currentAccountPlatform } from '@/lib/account-platform'
 import { cn } from '@/lib/utils'
 import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, Flame, UserRound } from 'lucide-react'
 
@@ -17,13 +18,16 @@ const tabs = [
 
 export function TabNav() {
   const { activeTab, setActiveTab } = useApp()
+  const visibleTabs = currentAccountPlatform() === 'vk'
+    ? tabs.filter((tab) => tab.id !== 3)
+    : tabs
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 px-0 sm:px-3 lg:px-4">
       <div className="mx-auto w-full max-w-[900px]">
         <div className="glass-strong border-t border-border/50 safe-bottom sm:rounded-2xl sm:border">
           <div className="flex items-stretch justify-around px-2 py-1 lg:px-3 lg:py-1.5">
-            {tabs.map((tab) => {
+            {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id
               const Icon = tab.icon
 
