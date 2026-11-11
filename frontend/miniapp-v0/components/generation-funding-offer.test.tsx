@@ -123,6 +123,12 @@ it('VK funding recommends only a configured Lava bundle rather than an unavailab
 
 it('VK never offers an unsupported quick-checkout package when no Lava method exists', () => {
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false, credits: 0 }, paymentPackages: [
+      { id: 'robokassa-only', name: 'Старый метод', credits: 50, price_rub: 500, robokassa_enabled: true },
+    ] },
+    openBalance,
+  })
   render(<GenerationFundingOffer cost={50} credits={0} />)
   expect(screen.queryByRole('button', { name: /Купить/ })).not.toBeInTheDocument()
   expect(screen.getByText(/Одного доступного пакета недостаточно/)).toBeInTheDocument()
