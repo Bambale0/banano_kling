@@ -354,7 +354,8 @@ it('shows only Lava payment methods in the VK application', () => {
 
   render(<BalanceSheet />)
 
-  expect(screen.queryByRole('button', { name: 'Карта' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/Robokassa/i)).not.toBeInTheDocument()
+  expect(screen.queryByText('Резерв · KASSA')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Stars/ })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Карта' })).toBeInTheDocument()
