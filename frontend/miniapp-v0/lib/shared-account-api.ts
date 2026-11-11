@@ -48,6 +48,9 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     ? 'Это приглашение предназначено другому аккаунту или платформе.'
     : 'Требуется доступ администратора.')
   if (response.status === 402) throw new Error(path.startsWith('vk-') ? 'Недостаточно бананов на VK-балансе.' : 'Недостаточно доступных тестовых средств.')
+  if (response.status === 404 && path.startsWith('trends?view=feed_item&gen_id=')) {
+    throw new Error('Публикация не найдена.')
+  }
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
