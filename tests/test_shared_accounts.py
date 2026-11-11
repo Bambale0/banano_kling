@@ -1527,6 +1527,13 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         legacy.assert_not_awaited()
 
         monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '0')
+        # Even with the full adapter disabled, a bearer in a URL must not
+        # reach the legacy handler (logs, proxies and browser history leak it).
+        off_query = await client.post(
+            '/mini-app/api/bootstrap?init_data=vk_session:' + token, json={},
+        )
+        assert off_query.status == 400
+        legacy.assert_not_awaited()
         fallback = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + token,
         })

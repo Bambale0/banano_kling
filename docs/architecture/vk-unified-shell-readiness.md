@@ -174,3 +174,7 @@ reference ownership, feed/trend publishing/repeating, checkout and
 referrals with audited VK wallet, and a signed VK WebView acceptance
 on the same code SHA. Never expose a supposedly ready common shell
 before these domains are implemented.
+
+## VK URL bearer hardening (2026-11-12)
+
+A `vk_session:` bearer in the `init_data` query parameter of a shared Mini App API URL is rejected with HTTP 400 even when the full parity gateway is disabled. This prevents the feature-flag pass-through from sending bearer-bearing URLs to the legacy handler. Ordinary Telegram traffic remains unchanged. This does not change VK readiness or enable paid operations.

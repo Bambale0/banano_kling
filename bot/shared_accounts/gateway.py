@@ -56,6 +56,17 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
 
     @web.middleware
     async def middleware(request: web.Request, handler):
+        # Never allow a VK bearer in the URL, including while parity is off.
+        # This must precede the feature-flag no-op: reverse proxies, logs and
+        # browser history can otherwise persist a valid signed session.
+        if request.path.startswith(base) and any(
+            value.startswith('vk_session:')
+            for key, value in request.query.items()
+            if key == 'init_data' and isinstance(value, str)
+        ):
+            return web.json_response({
+                'ok': False, 'error': 'VK session must not be sent in the URL',
+            }, status=400)
         # Existing TG routes remain untouched until an explicit native VK
         # domain flag is enabled. Partial task-history never unlocks the full
         # VK shell; it only adds an owner-scoped adapter to the SAME routes.
@@ -66,17 +77,6 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
         )
         if not full_enabled and not native_tasks_enabled:
             return await handler(request)
-        # Never accept opaque VK session tokens in URL query strings.
-        # Such tokens may leak through request logs, referrers or browser
-        # history, even if the HMAC session itself is still valid.
-        if any(
-            value.startswith('vk_session:')
-            for key, value in request.query.items()
-            if key == 'init_data' and isinstance(value, str)
-        ):
-            return web.json_response({
-                'ok': False, 'error': 'VK session must not be sent in the URL',
-            }, status=400)
         if (request.method == 'OPTIONS'
             or not request.path.startswith(base)
             or request.path.startswith(base + 'account-preview/')):
