@@ -11,7 +11,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.config import config
 from bot.keyboards import get_back_keyboard, get_partner_consent_keyboard
-from bot.legal_documents import https_document_url, telegram_text_parts
+from bot.legal_documents import https_document_url, send_legal_parts, telegram_text_parts
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -40,12 +40,7 @@ async def _send_offer_text(
     chunks = telegram_text_parts(PUBLIC_OFFER_TEXT_PATH.read_text(encoding="utf-8"))
     if not chunks:
         raise ValueError("Bundled public offer is empty")
-    for index, chunk in enumerate(chunks):
-        await callback.message.answer(
-            chunk,
-            reply_markup=reply_markup if index == len(chunks) - 1 else None,
-            parse_mode=None,
-        )
+    await send_legal_parts(callback.message, chunks, reply_markup)
 
 
 @router.callback_query(F.data.in_(PUBLIC_OFFER_CALLBACKS))
@@ -67,6 +62,9 @@ async def show_public_offer(callback: types.CallbackQuery):
     if config.PARTNER_OFFER_URL and offer_url is None:
         logger.warning("Ignoring invalid public offer URL; falling back to local text")
 
+    # Telegram callback queries expire quickly; acknowledge before streaming
+    # the long offer. Delivery continues in chat after the spinner is cleared.
+    await callback.answer()
     try:
         if offer_url:
             url_keyboard = InlineKeyboardMarkup(
@@ -84,17 +82,14 @@ async def show_public_offer(callback: types.CallbackQuery):
             await _send_offer_text(callback, reply_markup)
     except (OSError, ValueError):
         logger.exception("The public offer is missing or invalid")
-        await callback.answer(
-            "Не удалось открыть оферту. Обратитесь в поддержку.",
-            show_alert=True,
+        await callback.message.answer(
+            "Не удалось открыть оферту. Обратитесь в поддержку."
         )
         return
     except Exception:
         logger.exception("Failed to deliver public offer as text or link")
-        await callback.answer(
-            "Не удалось полностью показать оферту. Попробуйте снова.",
-            show_alert=True,
+        await callback.message.answer(
+            "Не удалось полностью показать оферту. Попробуйте снова."
         )
         return
 
-    await callback.answer()
