@@ -1,5 +1,6 @@
 import { clearPlatformSessionToken, getApiBasePath, getInitData, setPlatformSessionToken } from './api'
 import { accountLaunch, currentAccountPlatform, type AccountPlatform } from './account-platform'
+import type { Task } from './types'
 
 export interface AccountPreviewSettings {
   enabled: boolean
@@ -48,6 +49,9 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
     ? 'Это приглашение предназначено другому аккаунту или платформе.'
     : 'Требуется доступ администратора.')
   if (response.status === 402) throw new Error(path.startsWith('vk-') ? 'Недостаточно бананов на VK-балансе.' : 'Недостаточно доступных тестовых средств.')
+  if (response.status === 404 && path.startsWith('trends?view=feed_item&gen_id=')) {
+    throw new Error('Публикация не найдена.')
+  }
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -237,6 +241,8 @@ export interface VkNativeState {
   balance: number | null
   is_blocked: boolean
   tasks: VkNativeTask[]
+  /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
+  recent_tasks?: Task[]
 }
 
 export async function fetchVkNativeState(signal?: AbortSignal): Promise<VkNativeState> {
@@ -444,6 +450,8 @@ export interface AccountPreviewAccess {
   vk_community_id?: number | null
   telegram_bot_username: string
   telegram_linked: boolean
+  /** Server-advertised readiness for every shared-shell operation. Not an identity link. */
+  full_app_ready?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 

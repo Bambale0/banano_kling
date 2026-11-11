@@ -1,12 +1,13 @@
 import '@testing-library/jest-dom'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
   fetchVkPublicTrend: jest.fn(),
+  fetchVkPublicFeedItem: jest.fn(),
   fetchVkNativeState: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
@@ -232,4 +233,49 @@ test('invalid or unavailable shared trend has a clear error and can return to ca
   expect(await screen.findByRole('alert')).toHaveTextContent('Тренд не найден')
   fireEvent.click(screen.getByRole('button', { name: 'Вернуться к трендам' }))
   expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+})
+
+test.each([
+  ['feed', 'Публикация из ленты'],
+  ['remix', 'Повтор публикации из ленты'],
+] as const)('signed VK-only %s deep link opens a feed publication, never a trend', async (kind, label) => {
+  window.history.replaceState({}, '', '/?vk_app_id=54880352&vk_user_id=2001&sign=signed#' + kind + '_370766_ref_27QT0YCB')
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: false, items: [],
+  })
+  jest.mocked(fetchVkPublicFeedItem).mockResolvedValue({
+    ok: true, item: {
+      id: 370766, generation_type: 'video', model: 'seedance_2_5',
+      preview_url: 'https://example.test/public-preview.mp4',
+      preview_poster_url: 'https://example.test/public-poster.jpg',
+      result_url: 'https://example.test/public-video.mp4', likes_count: 12,
+      comments_count: 2, shares_count: 3, duration: 8, aspect_ratio: '9:16',
+      feed_blurred: false, media_unavailable: false,
+      share_link: 'https://vk.com/app54880352#feed_370766',
+      can_repeat_in_app: false,
+    },
+  })
+  render(<VkStandaloneDiscovery />)
+  const detail = await screen.findByRole('region', { name: label })
+  expect(detail).toHaveTextContent('Seedance')
+  expect(detail.querySelector('video')).toHaveAttribute('src', 'https://example.test/public-video.mp4')
+  expect(fetchVkPublicFeedItem).toHaveBeenCalledWith(370766, expect.anything())
+  expect(fetchVkPublicTrend).not.toHaveBeenCalled()
+  expect(detail).not.toHaveTextContent('Тренд по ссылке')
+  expect(within(detail).queryByRole('button', { name: /Повторить|Оплатить|Создать за/ })).not.toBeInTheDocument()
+  if (kind === 'remix') {
+    expect(detail).toHaveTextContent('Повтор этой публикации в VK Mini App пока не подключён')
+  }
+  expect(screen.queryByText('HIDDEN_AUTHOR_PROMPT')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Вернуться к ленте' }))
+  expect(window.location.hash).toBe('')
+})
+
+test('missing VK feed publication reports its own error instead of opening a numbered trend', async () => {
+  window.history.replaceState({}, '', '/#feed_370766_ref_27QT0YCB')
+  jest.mocked(fetchVkPublicFeedItem).mockRejectedValue(new Error('Публикация не найдена'))
+  render(<VkStandaloneDiscovery />)
+  const detail = await screen.findByRole('region', { name: 'Публикация из ленты' })
+  expect(await within(detail).findByRole('alert')).toHaveTextContent('Публикация не найдена')
+  expect(fetchVkPublicTrend).not.toHaveBeenCalled()
 })

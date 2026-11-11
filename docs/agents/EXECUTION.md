@@ -3138,3 +3138,20 @@ adapters for video, Motion, payments and social writes.
 
 No changes to native VK SQLite credits or migrations. Untrusted IDs,
 private references and browser-provided actor information fail closed.
+
+## 2026-11-11 — VK platform actor and same-route gateway integration (#451)
+
+- Baseline: `tanyapi@63d6faff`; changes from draft #454 re-integrated into a fresh isolated worktree because the original PR had conflicts after #453/#455. No production checkout or runtime configuration was edited.
+- Goal: signed, revocable VK-only `PlatformActor` independent of Telegram, same `MiniAppShell` and `/mini-app/api` routing when all native domains actually exist; preserve the distinct `prompt_ID`, `feed_ID`, `remix_ID` namespaces and existing VK-native SQLite ledger.
+- Merge conflicts: preserved `prompt_link(... vk_app_id=...)` and all four existing trends/feed regression tests; appended ten distinct actor/gateway/native-task tests from the architectural branch. No change to prices, provider payloads, wallet balance, user data, migrations or secrets.
+- New code: `bot/shared_accounts/{actor,gateway,native_tasks,task_view}.py`; authenticated actor in preview; task serializer; optional gateway in `bot/miniapp.py`, and server-controlled `full_app_ready` UI capability.
+- Risk mitigation: `VK_FULL_APP_PARITY_ENABLED` remains OFF by default. Incomplete adapter manifest or missing handle cannot mount the full VK shell or route VK calls through legacy Telegram billing. Separate `VK_NATIVE_TASKS_ENABLED` is OFF until `tanyavk` owner-scoped HMAC routes from draft #74 are independently released and proven. Existing linked/TG flows unchanged by default.
+- Verification on merge worktree: 66 passed and 62 skipped (`tests/test_shared_accounts.py` and `tests/test_vk_native_task_history.py`; skipped cases require explicit isolated PG DSN), 14/14 account-platform frontend Jest, TS `tsc --noEmit`, targeted ESLint, Python compileall, diff checks. External provider and payment smoke not performed: no production flag or wallet change is allowed in this slice.
+- Follow-up release gates: complete native adapters across 11 operation domains; native VK video #73, backend #452, native task #74 integration, durable provider reconciliation, payment/partner ledger idempotency, independent VK signed WebView E2E, and exact-SHA production smoke. Do not close #451 or claim full parity until those gates pass.
+
+## 2026-11-11 — native VK video signed BFF integration (feature OFF)
+
+- Baseline `tanyapi@e9587eb4` contains independent actor, shared API gateway and native task-history adapter from PR #458. Reintegrated draft #452 without losing editorial trends and feed publication tests.
+- New signed VK-only `account-preview/vk-video` quote/generation bridge targets the authoritative VK SQLite ledger over exact-body HMAC, paired with deployed native service at `609eeeed`.
+- `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains OFF. No prices, payment settings, balances or providers are changed.
+- This is a narrow infrastructure slice, NOT complete #451 parity. Reconciliation of uncertain video provider submissions, media delivery, refund correctness, full video form and real VK WebView financial acceptance remain release gates.
