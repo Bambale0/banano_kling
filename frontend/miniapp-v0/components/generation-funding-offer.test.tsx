@@ -7,10 +7,10 @@ jest.mock('@/lib/app-context', () => ({ useOptionalApp: jest.fn() }))
 
 const openBalance = jest.fn()
 const packages = [
-  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
-  { id: 'start', name: 'Старт', credits: 25, price_rub: 250, robokassa_enabled: true },
-  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, robokassa_enabled: true },
-  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true },
+  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, lava_offer_id: 'configured-offer' },
+  { id: 'start', name: 'Старт', credits: 25, price_rub: 250, lava_offer_id: 'configured-offer' },
+  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, lava_offer_id: 'configured-offer' },
+  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, lava_offer_id: 'configured-offer' },
 ]
 
 beforeEach(() => {
