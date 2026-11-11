@@ -99,3 +99,37 @@ def test_migration_reuploads_remote_object_with_equal_size_but_no_checksum(monke
     planned = migration.migrate_one(source, root=tmp_path / "uploads", dry_run=True, verify_only=False)
 
     assert planned.status == "planned"
+
+
+def test_migration_scheduler_caps_prefetched_files(monkeypatch, tmp_path):
+    import threading
+    import time
+
+    root = tmp_path / "uploads"
+    root.mkdir()
+    completed = threading.Event()
+    consumed = 0
+
+    def streaming_paths():
+        nonlocal consumed
+        for index in range(40):
+            consumed += 1
+            if consumed > 8 and not completed.is_set():
+                raise AssertionError("too many scheduled before first result")
+            yield root / f"item-{index}.png"
+
+    def run_one(path, *, root, dry_run, verify_only):
+        time.sleep(0.005)
+        completed.set()
+        return migration.MigrationResult(path.name, 1, "planned")
+
+    monkeypatch.setattr(migration, "migrate_one", run_one)
+    results = list(migration.iter_migration_results(
+        streaming_paths(),
+        root=root,
+        workers=2,
+        dry_run=True,
+        verify_only=False,
+    ))
+    assert len(results) == 40
+    assert consumed == 40

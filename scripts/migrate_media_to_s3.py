@@ -10,9 +10,13 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import sys
+from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
+from itertools import islice
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -35,20 +39,29 @@ class MigrationResult:
     detail: str = ""
 
 
-def iter_source_files(root: Path, prefixes: tuple[str, ...] = ()):
-    normalized_prefixes = tuple(value.strip().strip("/") for value in prefixes if value.strip().strip("/"))
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.is_symlink():
-            continue
-        if path.name.endswith((".part", ".tmp", ".s3-cache")) or ".tmp." in path.name:
-            continue
-        relative = path.relative_to(root).as_posix()
-        if normalized_prefixes and not any(
-            relative == prefix or relative.startswith(prefix + "/")
-            for prefix in normalized_prefixes
-        ):
-            continue
-        yield path
+def iter_source_files(root: Path, prefixes: tuple[str, ...] = ()) -> Iterator[Path]:
+    """Walk uploads deterministically without collecting the full media catalog."""
+    normalized_prefixes = tuple(
+        value.strip().strip("/") for value in prefixes if value.strip().strip("/")
+    )
+    for dirname, dirs, filenames in os.walk(root, followlinks=False):
+        # Do not descend into symlinks, including those pointing outside uploads.
+        dirs[:] = sorted(
+            name for name in dirs if not (Path(dirname) / name).is_symlink()
+        )
+        for name in sorted(filenames):
+            path = Path(dirname) / name
+            if not path.is_file() or path.is_symlink():
+                continue
+            if name.endswith((".part", ".tmp", ".s3-cache")) or ".tmp." in name:
+                continue
+            relative = path.relative_to(root).as_posix()
+            if normalized_prefixes and not any(
+                relative == prefix or relative.startswith(prefix + "/")
+                for prefix in normalized_prefixes
+            ):
+                continue
+            yield path
 
 
 def _cache_control(relative_path: str) -> str:
@@ -98,6 +111,42 @@ def migrate_one(
     return MigrationResult(relative, size, "uploaded")
 
 
+
+def iter_migration_results(
+    paths: Iterable[Path],
+    *,
+    root: Path,
+    workers: int,
+    dry_run: bool,
+    verify_only: bool,
+) -> Iterator[MigrationResult]:
+    """Bound scheduled futures to 4x workers, rather than all 350k+ files."""
+    queue = iter(paths)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        while batch := list(islice(queue, max(1, workers * 4))):
+            futures = {
+                executor.submit(
+                    migrate_one,
+                    path,
+                    root=root,
+                    dry_run=dry_run,
+                    verify_only=verify_only,
+                ): path
+                for path in batch
+            }
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    yield future.result()
+                except Exception as exc:  # noqa: BLE001 - per-file migration boundary
+                    yield MigrationResult(
+                        path.relative_to(root).as_posix(),
+                        path.stat().st_size if path.exists() else 0,
+                        "failed",
+                        type(exc).__name__,
+                    )
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Copy and verify NEUROMIX references/media in configured S3 storage"
@@ -127,48 +176,39 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Upload root is not a directory: {root}", file=sys.stderr)
         return 2
     workers = max(1, min(int(args.workers), 16))
-    files = list(iter_source_files(root, tuple(args.prefix)))
+    files = iter_source_files(root, tuple(args.prefix))
     if args.limit > 0:
-        files = files[: args.limit]
+        files = islice(files, args.limit)
 
-    results: list[MigrationResult] = []
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {
-            executor.submit(
-                migrate_one,
-                path,
-                root=root,
-                dry_run=bool(args.dry_run),
-                verify_only=bool(args.verify_only),
-            ): path
-            for path in files
-        }
-        for future in as_completed(futures):
-            path = futures[future]
-            try:
-                result = future.result()
-            except Exception as exc:  # noqa: BLE001 - per-file migration boundary
-                result = MigrationResult(
-                    path.relative_to(root).as_posix(),
-                    path.stat().st_size,
-                    "failed",
-                    type(exc).__name__,
-                )
-            results.append(result)
-            print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
-
-    if args.manifest:
-        manifest = Path(args.manifest)
+    manifest = Path(args.manifest) if args.manifest else None
+    if manifest:
         manifest.parent.mkdir(parents=True, exist_ok=True)
-        with manifest.open("a", encoding="utf-8") as output:
-            for result in sorted(results, key=lambda item: item.relative_path):
-                output.write(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True) + "\n")
 
+    # A manifest is append-only and line-buffered: completed objects remain
+    # auditable even if the migration is interrupted mid-bucket.
     summary: dict[str, int] = {}
-    for result in results:
-        summary[result.status] = summary.get(result.status, 0) + 1
-    print(json.dumps({"summary": summary, "total": len(results)}, sort_keys=True))
-    return 1 if any(result.status in {"failed", "missing"} for result in results) else 0
+    total = 0
+    output_context = (
+        manifest.open("a", encoding="utf-8", buffering=1)
+        if manifest
+        else nullcontext(None)
+    )
+    with output_context as output:
+        for result in iter_migration_results(
+            files,
+            root=root,
+            workers=workers,
+            dry_run=bool(args.dry_run),
+            verify_only=bool(args.verify_only),
+        ):
+            record = json.dumps(asdict(result), ensure_ascii=False, sort_keys=True)
+            print(record)
+            if output is not None:
+                output.write(record + "\n")
+            summary[result.status] = summary.get(result.status, 0) + 1
+            total += 1
+    print(json.dumps({"summary": summary, "total": total}, sort_keys=True))
+    return 1 if any(status in summary for status in ("failed", "missing")) else 0
 
 
 if __name__ == "__main__":
