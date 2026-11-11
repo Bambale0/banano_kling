@@ -232,7 +232,7 @@ def _resolve_local_upload_path(source: str) -> str | None:
         if materialized:
             _upload_dir_variants.cache_clear()
         return materialized
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort provider input resolver
         return None
 
 
@@ -437,7 +437,7 @@ def reference_sources_to_contact_sheet_url(
             content_type="image/jpeg",
             cache_control="private, max-age=0",
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - provider/storage may reject media
         return None
 
 
