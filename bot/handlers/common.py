@@ -74,7 +74,12 @@ from bot.keyboards import (
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
 )
-from bot.legal_documents import document_text, https_document_url, send_legal_parts, telegram_text_parts
+from bot.legal_documents import (
+    document_text,
+    https_document_url,
+    send_legal_parts,
+    telegram_text_parts,
+)
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
 )
