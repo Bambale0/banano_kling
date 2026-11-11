@@ -57,15 +57,58 @@ def _active_schema_source() -> tuple[str, str]:
 async def ensure_trend_generation_run_schema() -> None:
     global _SCHEMA_READY, _SCHEMA_READY_SOURCE
     source = _active_schema_source()
-    if _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
+    if not db_backend.is_postgres() and _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
         return
     async with _schema_lock():
         source = _active_schema_source()
-        if _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
+        if not db_backend.is_postgres() and _SCHEMA_READY and _SCHEMA_READY_SOURCE == source:
             return
-        # SQLite executes DDL here. PostgreSQL creates this through the
-        # real psycopg bootstrap cursor; compatibility execute skips DDL.
+
         async with db_backend.connect() as db:
+            if db_backend.is_postgres():
+                # The sqlite-compatibility adapter deliberately ignores CREATE
+                # TABLE statements. Pool/test bootstrap is not a guarantee:
+                # a new schema may have been created after the process-local
+                # helper was marked ready. Check the current physical
+                # connection and perform DDL using its real psycopg cursor.
+                async with db._conn.cursor() as cursor:
+                    await cursor.execute(
+                        "SELECT to_regclass('trend_generation_runs')"
+                    )
+                    relation = await cursor.fetchone()
+                    if relation is None or relation[0] is None:
+                        # Serialize concurrent first requests. The advisory
+                        # lock is transaction-scoped and schema-specific.
+                        await cursor.execute(
+                            "SELECT pg_advisory_xact_lock("
+                            "hashtext(current_schema() || '.trend_generation_runs'))"
+                        )
+                        await cursor.execute(
+                            "SELECT to_regclass('trend_generation_runs')"
+                        )
+                        relation = await cursor.fetchone()
+                        if relation is None or relation[0] is None:
+                            await cursor.execute(
+                                """
+                                CREATE TABLE IF NOT EXISTS trend_generation_runs (
+                                    task_id TEXT PRIMARY KEY,
+                                    trend_id BIGINT NOT NULL,
+                                    user_id BIGINT,
+                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                                )
+                                """
+                            )
+                            await cursor.execute(
+                                """
+                                CREATE INDEX IF NOT EXISTS idx_trend_generation_runs_trend
+                                ON trend_generation_runs(trend_id, created_at)
+                                """
+                            )
+                await db.commit()
+                # Do not cache schema readiness for PostgreSQL: test fixtures
+                # can DROP and recreate the same schema/DSN mid-process.
+                return
+
             await db.execute(
                 """
                 CREATE TABLE IF NOT EXISTS trend_generation_runs (
