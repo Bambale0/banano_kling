@@ -994,3 +994,95 @@ async def test_vk_repeat_cannot_run_hidden_or_uncategorized_private_trend(monkey
         })
         assert paid.status in {400, 404}
         native.assert_not_awaited()
+
+
+async def test_vk_only_feed_link_uses_publication_not_trend_and_never_leaks_recipe(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot import database
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    private_card = {
+        'id': 370766, 'task_id': 'private-task-id', 'gen_type': 'video',
+        'model': 'seedance_2_5', 'preview_url': 'https://assets.example/preview.mp4',
+        'preview_poster_url': 'https://assets.example/poster.jpg',
+        'result_url': 'https://assets.example/video.mp4',
+        'result_urls': ['https://assets.example/video.mp4'],
+        'likes_count': 9, 'shares_count': 3, 'comments_count': 1,
+        'aspect_ratio': '9:16', 'duration': 8,
+        'prompt': 'HIDDEN_AUTHORED_PROMPT_DO_NOT_LEAK',
+        'reference_videos': ['https://assets.example/PRIVATE_INPUT.mp4'],
+        'reference_images': ['https://assets.example/PRIVATE_INPUT.jpg'],
+        'prompt_hidden': True, 'references_hidden': True,
+        'feed_references_visible': False, 'prompt_actions_allowed': False,
+        'author_referral_code': 'PRIVATE_REFERRAL_CODE',
+        'author': 'Public author', 'feed_blurred': False,
+        'publication_scope': 'feed', 'is_adult_content': False,
+        'internal_api_key': 'PRIVATE_INTERNAL_KEY',
+    }
+    fetch = AsyncMock(return_value=private_card)
+    monkeypatch.setattr(database, 'get_feed_generation_card', fetch)
+    link = '?view=feed_item&gen_id=370766'
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        assert (await client.get(ROOT + '/trends' + link)).status == 401
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        item = await client.get(ROOT + '/trends' + link, headers=headers)
+        assert item.status == 200, await item.text()
+        data = await item.json()
+        assert data['item']['id'] == 370766
+        assert data['item']['generation_type'] == 'video'
+        assert data['item']['model'] == 'seedance_2_5'
+        assert data['item']['share_link'] == 'https://vk.com/app123#feed_370766'
+        assert data['item']['can_repeat_in_app'] is False
+        for secret in ('HIDDEN_AUTHORED_PROMPT', 'PRIVATE_INPUT', 'PRIVATE_REFERRAL_CODE', 'PRIVATE_INTERNAL_KEY'):
+            assert secret not in str(data)
+        assert 'prompt' not in data['item']
+        assert 'reference_images' not in data['item']
+        assert 'reference_videos' not in data['item']
+        fetch.assert_awaited_with(370766, viewer_user_id=None, include_unavailable=True)
+        for bad in ('0', '-9', 'abc', '1' * 200):
+            assert (await client.get(ROOT + '/trends?view=feed_item&gen_id=' + bad, headers=headers)).status == 400
+        fetch.return_value = None
+        assert (await client.get(ROOT + '/trends' + link, headers=headers)).status == 404
+        tg = await login(client, 1001)
+        tg_headers = {'Authorization': 'Bearer ' + (await tg.json())['session_token']}
+        assert (await client.get(ROOT + '/trends' + link, headers=tg_headers)).status == 403
+
+
+async def test_vk_feed_and_trend_link_ids_are_independent_domains(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot import database, trend_catalog
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    feed = AsyncMock(return_value={
+        'id': 11, 'gen_type': 'image', 'model': 'banana_pro',
+        'preview_url': None, 'result_url': 'https://assets.example/image.jpg',
+        'likes_count': 0, 'prompt': 'SECRET', 'prompt_hidden': True,
+    })
+    trend = AsyncMock(return_value={
+        'id': 11, 'title': 'Curated trend', 'description': 'Trend description',
+        'generation_settings': {'kind': 'image', 'model': 'banana_pro'},
+        'preview_url': None, 'preview_poster_url': None,
+    })
+    monkeypatch.setattr(database, 'get_feed_generation_card', feed)
+    monkeypatch.setattr(trend_catalog, 'public_trend_by_id', trend)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        headers = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        feed_result = await client.get(ROOT + '/trends?view=feed_item&gen_id=11', headers=headers)
+        trend_result = await client.get(ROOT + '/trends?view=item&trend_id=11', headers=headers)
+        assert feed_result.status == 200
+        assert trend_result.status == 200
+        assert (await feed_result.json())['item']['share_link'].endswith('#feed_11')
+        assert (await trend_result.json())['item']['share_link'].endswith('#prompt_11')
+        feed.assert_awaited_once()
+        trend.assert_awaited_once()

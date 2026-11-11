@@ -286,6 +286,38 @@ async def vk_native_trend(request: web.Request) -> web.Response:
     return response({'ok': True, **result})
 
 
+def _vk_public_feed_card(card: dict, *, vk_app_id: int) -> dict:
+    """Public media and share navigation only, never the original task recipe.
+
+    Feed publication IDs live in a separate namespace from editorial prompt
+    IDs. Source prompt/reference content can only be used server-side by a
+    fully authenticated, authorized platform-specific remix operation.
+    """
+    from bot.miniapp_links import feed_link
+
+    if str(card.get('gen_type')) not in {'image', 'video'}:
+        raise ValueError('Unsupported feed media')
+    return {
+        'id': int(card['id']),
+        'generation_type': str(card['gen_type']),
+        'model': str(card.get('model') or ''),
+        'preview_url': card.get('preview_url'),
+        'preview_poster_url': card.get('preview_poster_url'),
+        'result_url': card.get('result_url'),
+        'likes_count': int(card.get('likes_count') or 0),
+        'shares_count': int(card.get('shares_count') or 0),
+        'comments_count': int(card.get('comments_count') or 0),
+        'aspect_ratio': str(card.get('aspect_ratio') or ''),
+        'duration': card.get('duration'),
+        'feed_blurred': bool(card.get('feed_blurred')),
+        'media_unavailable': bool(card.get('media_unavailable')),
+        'share_link': feed_link(None, int(card['id']), platform='vk', vk_app_id=vk_app_id),
+        # Never interpret visible content or public status as authorization
+        # for a paid remix. That is a separate actor/ledger/ref contract.
+        'can_repeat_in_app': False,
+    }
+
+
 async def vk_public_discovery(request: web.Request) -> web.Response:
     # Browsing is separate from paid repeats: never invent a Telegram actor.
     policy = await load_policy()
@@ -295,6 +327,26 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
     if not policy.allows_public(account.identity) or account.identity.platform != 'vk':
         raise PermissionError('VK session required')
     view = request.query.get('view', 'trends')
+    if view == 'feed_item':
+        from bot import database
+
+        raw_id = request.query.get('gen_id', '')
+        if not raw_id.isascii() or not raw_id.isdecimal() or not 0 < len(raw_id) <= 16:
+            raise ValueError('Invalid public feed identifier')
+        gen_id = int(raw_id)
+        if gen_id <= 0:
+            raise ValueError('Invalid public feed identifier')
+        # Do not resolve profile/private feed cards: this route is a publicly
+        # shared feed link and is intentionally viewer-neutral.
+        card = await database.get_feed_generation_card(
+            gen_id, viewer_user_id=None, include_unavailable=True,
+        )
+        if not card:
+            return response({'ok': False, 'error': 'Публикация не найдена'}, 404)
+        return response({
+            'ok': True,
+            'item': _vk_public_feed_card(card, vk_app_id=policy.vk_app_id),
+        })
     if view == 'item':
         from bot import trend_catalog
 

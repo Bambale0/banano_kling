@@ -1,4 +1,4 @@
-import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 
 jest.mock('../api', () => ({
@@ -222,4 +222,43 @@ test('direct public VK trend lookup stays within signed platform API, without Te
   expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(expect.arrayContaining([expect.stringContaining('t.me')]))
   expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
   await expect(fetchVkPublicTrend(-4)).rejects.toThrow('Некорректный тренд')
+})
+
+
+test('VK feed publication lookup is distinct from an editorial trend recipe', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'a'.repeat(43), account: { id: 'vk-actor' } }))
+    .mockResolvedValueOnce(reply(200, {
+      item: { id: 370766, generation_type: 'video', model: 'seedance_2_5',
+        preview_url: 'https://assets.example/preview.mp4', result_url: 'https://assets.example/result.mp4',
+        share_link: 'https://vk.com/app123#feed_370766', can_repeat_in_app: false },
+    }))
+    .mockResolvedValueOnce(reply(200))
+  const data = await fetchVkPublicFeedItem(370766)
+  expect(data.item.generation_type).toBe('video')
+  expect(data.item.share_link).toContain('#feed_370766')
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/trends?view=feed_item&gen_id=370766')
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(
+    expect.objectContaining({ Authorization: 'Bearer ' + 'a'.repeat(43) }),
+  )
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+  expect(fetch.mock.calls.map(([url]) => String(url))).not.toEqual(
+    expect.arrayContaining([expect.stringContaining('view=item&trend_id=')]),
+  )
+  await expect(fetchVkPublicFeedItem(0)).rejects.toThrow('Некорректная публикация')
+})
+
+test('VK feed and trend start parameters remain disjoint even when IDs match', async () => {
+  const { parseMiniAppStartParam, startParamFromLocation } = await import('../start-params')
+  expect(parseMiniAppStartParam('feed_370766_ref_27QT0YCB')).toEqual({
+    kind: 'feed', genId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(parseMiniAppStartParam('remix_370766_ref_27QT0YCB')).toEqual({
+    kind: 'remix', genId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(parseMiniAppStartParam('prompt_370766_ref_27QT0YCB')).toEqual({
+    kind: 'prompt', promptId: 370766, referralCodeForAttribution: '27QT0YCB',
+  })
+  expect(startParamFromLocation('?vk_app_id=54880352&vk_user_id=1&sign=secret',
+    '#feed_370766_ref_27QT0YCB')).toBe('feed_370766_ref_27QT0YCB')
 })
