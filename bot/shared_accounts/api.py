@@ -25,6 +25,7 @@ from .store import (
 from .task_view import serialize_native_vk_tasks
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
+    fetch_native_vk_commerce,
     fetch_native_vk_state,
     submit_native_vk_image,
     submit_native_vk_video,
@@ -87,10 +88,16 @@ async def vk_login(request: web.Request) -> web.Response:
         return response({'ok': False, 'error': 'VK Mini App is unavailable'}, 404)
     # Fixed trusted origin, app ID from server-owned policy only. No next
     # parameter, caller-supplied app ID or auth credentials in the redirect.
+    # The VK app may be installed in a community. Returning to a bare
+    # app<ID> after an expired launch drops that context and can reopen the
+    # developer's personal app instead of the NEUROMIX bot workspace.
+    launch_url = f'https://vk.com/app{policy.vk_app_id}'
+    if policy.vk_community_id is not None:
+        launch_url += f'_-{policy.vk_community_id}'
     return web.Response(
         status=303,
         headers={
-            'Location': f'https://vk.com/app{policy.vk_app_id}',
+            'Location': launch_url,
             'Cache-Control': 'no-store',
             'Referrer-Policy': 'no-referrer',
         },
@@ -193,6 +200,15 @@ async def vk_native_state(request: web.Request) -> web.Response:
     # detail/repeat route accepts platform-namespaced task identifiers.
     common_tasks = serialize_native_vk_tasks(data['tasks'], strict=False)
     return response({'ok': True, **data, 'recent_tasks': common_tasks})
+
+
+async def vk_native_commerce(request: web.Request) -> web.Response:
+    """Verified VK session reads ONLY its actual VK payment/partner ledger."""
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    return response(await fetch_native_vk_commerce(actor.external_id))
 
 
 async def _vk_writer_actor(request: web.Request) -> int:
@@ -619,6 +635,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
+    app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
     # This route authenticates the signed VK session before reading bytes.
     # The legacy add_post wrapper attempts JSON parsing first and drains a
     # multipart body. Register directly, as the existing owned-media APIs do.

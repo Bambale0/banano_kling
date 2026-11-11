@@ -65,6 +65,19 @@ const telegramBootstrapScript = `
   } catch (e) {}
 
   if (vkLaunch) {
+    // Runs before Next.js chunks and React. Never send raw signed VK launch
+    // params, identity or tokens in this early diagnostic request.
+    try {
+      var body = JSON.stringify({ event: 'vk-html-ready', href: window.location.pathname || '/' });
+      var endpoint = '/mini-app/api/client-log';
+      var sent = false;
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function' && typeof Blob !== 'undefined') {
+        sent = navigator.sendBeacon(endpoint, new Blob([body], { type: 'application/json' }));
+      }
+      if (!sent && typeof fetch === 'function') {
+        fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
+      }
+    } catch (e) {}
     postVkInit();
     return;
   }

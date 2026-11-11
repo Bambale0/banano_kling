@@ -102,6 +102,20 @@ async def test_vk_public_login_link_redirects_to_configured_app_without_trusting
         assert not r.cookies
 
 
+async def test_vk_login_preserves_verified_bot_community_context():
+    # The previous redirect lost the -community suffix. A signed VK app
+    # launched from bot keyboard must not return in personal-developer mode.
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
+        result = await client.get(
+            ROOT + '/vk-login?vk_community_id=777&vk_app_id=999&next=https://evil.example/',
+            allow_redirects=False,
+        )
+        assert result.status == 303
+        assert result.headers['Location'] == 'https://vk.com/app123_-239915802'
+        assert result.headers['Referrer-Policy'] == 'no-referrer'
+
+
 async def test_vk_public_login_link_never_uses_an_unconfigured_app():
     async with preview_client() as client:
         await enable(client)
@@ -219,6 +233,70 @@ async def test_vk_native_state_uses_only_signed_actor_identity_without_telegram(
         other = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
         assert (await client.get(ROOT + '/vk-native-state', headers=other)).status == 403
         native.assert_awaited_once_with(2001)
+
+
+async def test_vk_commerce_api_resolves_native_owner_and_refuses_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    native = AsyncMock(return_value={
+        'ok': True, 'registered': True, 'balance': 31.5,
+        'payment_packages': [], 'payments': [],
+        'referrals': {'first_level_count': 1, 'second_level_count': 0, 'earned_rub': 7.0},
+    })
+    monkeypatch.setattr(api, 'fetch_native_vk_commerce', native, raising=False)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert signed.status == 200
+        bearer = {'Authorization': 'Bearer ' + (await signed.json())['session_token']}
+        result = await client.get(ROOT + '/vk-commerce?vk_user_id=999999', headers=bearer)
+        assert result.status == 200, await result.text()
+        assert result.headers['Cache-Control'] == 'no-store'
+        assert (await result.json())['balance'] == 31.5
+        native.assert_awaited_once_with(2001)
+        assert (await client.get(ROOT + '/vk-commerce')).status == 401
+        telegram = await login(client, 1001)
+        other = {'Authorization': 'Bearer ' + (await telegram.json())['session_token']}
+        assert (await client.get(ROOT + '/vk-commerce', headers=other)).status == 403
+        native.assert_awaited_once_with(2001)
+
+
+async def test_vk_commerce_hmac_loopback_and_proof_shape(monkeypatch):
+    import hashlib
+    import hmac
+
+    from bot.shared_accounts.vk_native import fetch_native_vk_commerce
+
+    monkeypatch.setenv('INTERNAL_API_SECRET', 'test-native-read')
+    origin_path = '/internal/v1/miniapp/users/2001/commerce'
+    fake = web.Application()
+
+    async def native(request):
+        ts = request.headers.get('X-Internal-Timestamp', '')
+        expected = hmac.new(b'test-native-read', f'{ts}\nGET\n{request.path}\n'.encode(), hashlib.sha256).hexdigest()
+        assert hmac.compare_digest(request.headers.get('X-Internal-Signature', ''), expected)
+        assert abs(int(ts) - int(time.time())) < 30
+        return web.json_response({
+            'ok': True, 'registered': True, 'balance': 20.0,
+            'payment_packages': [{'id': '250', 'price_rub': 250, 'credits': 25,
+                                  'lava_offer_id': 'test-public-offer', 'methods': ['lava_card']}],
+            'payments': [{'amount_rub': 250, 'status': 'paid', 'created_at': '2026-11-11'}],
+            'referrals': {'first_level_count': 1, 'second_level_count': 0, 'earned_rub': 70.0},
+        })
+
+    fake.router.add_get(origin_path, native)
+    async with TestClient(TestServer(fake)) as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', f'http://127.0.0.1:{client.server.port}')
+        value = await fetch_native_vk_commerce(2001)
+        assert value['balance'] == 20.0
+        assert value['referrals']['earned_rub'] == 70.0
+        with pytest.raises(ValueError):
+            await fetch_native_vk_commerce(0)
 
 
 async def test_vk_native_state_signed_internal_rpc_uses_fixed_loopback_origin(monkeypatch):
@@ -1114,7 +1192,7 @@ async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypat
         assert (await profile.json())['preview']['full_app_ready'] is False
         client.app['vk_full_app_adapter'] = SimpleNamespace(
             ready_operations=frozenset({
-                'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+                'bootstrap', 'photo', 'video', 'trends', 'feed',
                 'services', 'profile', 'payments', 'referrals', 'tasks',
             }),
             handle=lambda request, *, actor: web.json_response({'ok': True}),

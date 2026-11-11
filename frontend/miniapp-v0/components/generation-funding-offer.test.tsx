@@ -99,3 +99,31 @@ it('still opens all packages when no single package covers a repeat shortage', a
     packageId: undefined, requiredCredits: 50, reason: 'video-repeat',
   }))
 })
+
+
+afterEach(() => {
+  window.history.replaceState({}, '', '/')
+  delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
+})
+
+it('VK funding recommends only a configured Lava bundle rather than an unavailable cheaper option', () => {
+  window.history.replaceState({}, '', '/?vk_app_id=54880352&vk_user_id=2001')
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false, credits: 0 }, paymentPackages: [
+      { id: 'unsupported', name: 'Недоступен', credits: 50, price_rub: 500, robokassa_enabled: true },
+      { id: 'lava', name: 'Lava', credits: 100, price_rub: 1000, lava_offer_id: 'configured-offer' },
+    ] },
+    openBalance,
+  })
+  render(<GenerationFundingOffer cost={30} credits={0} />)
+  expect(screen.queryByRole('button', { name: /Купить 50🍌/ })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /Купить 100🍌 за 1000 ₽/ }))
+  expect(openBalance).toHaveBeenCalledWith({ packageId: 'lava', requiredCredits: 30 })
+})
+
+it('VK never offers an unsupported quick-checkout package when no Lava method exists', () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  render(<GenerationFundingOffer cost={50} credits={0} />)
+  expect(screen.queryByRole('button', { name: /Купить/ })).not.toBeInTheDocument()
+  expect(screen.getByText(/Одного доступного пакета недостаточно/)).toBeInTheDocument()
+})

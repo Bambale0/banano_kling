@@ -252,6 +252,11 @@ fi
 vk_stage="$(mktemp -d "${VK_RELEASE_ROOT}/.${vk_release_name}.staging.XXXXXX")"
 log "Publishing VK export to ${vk_release_dir}"
 rsync -a --chmod=D755,F644 "$build_work/vk/" "$vk_stage/"
+# Existing VK WebViews may still hold HTML from a previous build. Preserve its
+# hashed JS/CSS dependencies at the same public URLs BEFORE atomic switch.
+# Retain files only (no HTML/user data), and abort on immutable path collisions.
+bash "${PROJECT_DIR}/scripts/retain_vk_immutable_assets.sh" \
+  "${VK_WEB_ROOT}/current/_next/static" "${vk_stage}/_next/static"
 vk_revision_file="$(mktemp "$vk_stage/.revision-XXXXXX")"
 printf '%s\n' "$EXPECTED_SHA" > "$vk_revision_file"
 chmod 0644 "$vk_revision_file"

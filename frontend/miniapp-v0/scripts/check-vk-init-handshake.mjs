@@ -80,3 +80,21 @@ test('Telegram launch keeps its existing ready handshake and does not initialize
   }), true)
 })
 
+
+
+test('VK pre-hydration telemetry reports only stage and pathname, never signed query', async () => {
+  const sends = []
+  const signedQuery = '?vk_app_id=54880352&vk_user_id=381643597&vk_ts=1794400000&sign=' + 's'.repeat(43)
+  const window = {
+    location: { hash: '', search: signedQuery, pathname: '/', origin: 'https://vk.neuromixbot.com' },
+    parent: { postMessage() {} },
+    sessionStorage: { removeItem() {} },
+    addEventListener() {},
+    setTimeout() {},
+  }
+  const navigator = { sendBeacon: (url, blob) => { sends.push({ url, blob }); return true } }
+  vm.runInNewContext(compiledEarlyBootstrap(true), { URLSearchParams, Blob, navigator, window })
+  assert.equal(sends.length, 1)
+  assert.equal(sends[0].url, '/mini-app/api/client-log')
+  assert.deepEqual(JSON.parse(await sends[0].blob.text()), { event: 'vk-html-ready', href: '/' })
+})

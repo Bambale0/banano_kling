@@ -2,10 +2,34 @@ import { getInitData, getRuntimeBotUsername, getStartParamFallback } from './api
 
 export type AccountPlatform = 'telegram' | 'vk'
 
+/** Preserve VK's original signed launch parameters in memory only. VK
+ * WebViews may replace the URL before React starts. Neither this snapshot
+ * nor the browser actor is trusted: the server still verifies VK HMAC/TTL.
+ */
+export function vkLaunchData(): string {
+  if (typeof window === 'undefined') return ''
+  const current = window.location.search.replace(/^\?/, '')
+  const currentParams = new URLSearchParams(current)
+  const early = String(window.__BANANO_INITIAL_LAUNCH__?.search || '').replace(/^\?/, '')
+  const earlyParams = new URLSearchParams(early)
+  const hasSignedShape = (params: URLSearchParams) =>
+    ['vk_app_id', 'vk_user_id', 'vk_ts', 'sign'].every(key => Boolean(params.get(key)))
+
+  if (hasSignedShape(currentParams)) return current
+  if (hasSignedShape(earlyParams)) return early
+  // Keep existing error behaviour for incomplete VK queries without a
+  // trusted initial snapshot. The server never treats these as authentic.
+  if (currentParams.has('vk_app_id') || currentParams.has('vk_user_id')) return current
+  return ''
+}
+
+export function hasVkLaunchData(): boolean {
+  return Boolean(vkLaunchData())
+}
+
 export function currentAccountPlatform(): AccountPlatform {
   if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk' : 'telegram'
-  const params = new URLSearchParams(window.location.search)
-  return process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' || params.has('vk_app_id') || params.has('vk_user_id')
+  return process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' || hasVkLaunchData()
     ? 'vk'
     : 'telegram'
 }
@@ -15,7 +39,7 @@ export function platformMiniAppUrl(startParam: string, telegramBotUsername = '')
   if (!param) return ''
   if (currentAccountPlatform() === 'vk') {
     if (typeof window === 'undefined') return ''
-    const appId = Number(new URLSearchParams(window.location.search).get('vk_app_id') || 0)
+    const appId = Number(new URLSearchParams(vkLaunchData()).get('vk_app_id') || 0)
     return Number.isSafeInteger(appId) && appId > 0
       ? `https://vk.com/app${appId}#${encodeURIComponent(param)}`
       : ''
@@ -31,9 +55,8 @@ export function accountLaunch(): { platform: AccountPlatform; launch_data: strin
   if (typeof window === 'undefined') throw new Error('Откройте приложение из ТГ или ВК.')
   // Explicit VK launch wins over a previous Telegram session in this browser.
   // The server verifies the entire signed query and its freshness.
-  const search = window.location.search.slice(1)
-  const params = new URLSearchParams(search)
-  if (params.has('vk_app_id') || params.has('vk_user_id')) return { platform: 'vk', launch_data: search }
+  const search = vkLaunchData()
+  if (search) return { platform: 'vk', launch_data: search }
   if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk') throw new Error('Откройте приложение из ВКонтакте.')
   const launch = getInitData()
   if (!launch) throw new Error('Откройте приложение из ТГ или ВК для подтверждения входа.')

@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
@@ -9,6 +9,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicTrend: jest.fn(),
   fetchVkPublicFeedItem: jest.fn(),
   fetchVkNativeState: jest.fn(),
+  fetchVkNativeCommerce: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
   uploadVkImage: jest.fn(),
@@ -29,6 +30,13 @@ beforeEach(() => {
     tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
       status: 'completed', cost: 2.5, result_url: 'https://example.test/result.jpg',
       created_at: '2026-11-09 12:00:00' }],
+  })
+  jest.mocked(fetchVkNativeCommerce).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5,
+    payment_packages: [{ id: '1000', price_rub: 1000, credits: 100,
+      lava_offer_id: 'offer-test', methods: ['lava_card', 'lava_sbp'] }],
+    payments: [{ amount_rub: 1000, status: 'paid', created_at: '2026-11-11' }],
+    referrals: { first_level_count: 2, second_level_count: 1, earned_rub: 95 },
   })
   jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
     ok: true,
@@ -94,6 +102,29 @@ test('VK-only sees native VK balance and its results without Telegram ID', async
   expect(screen.queryByText('Telegram ID')).not.toBeInTheDocument()
 })
 
+
+test('VK account shows its native payments and referral statistics without a Telegram wallet', async () => {
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText(/VK-баланс: 12.5/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByText(/Рефералов первого уровня: 2/)).toBeInTheDocument()
+  expect(screen.getByText(/Второго уровня: 1/)).toBeInTheDocument()
+  expect(screen.getByText(/Партнёрский доход: 95 ₽/)).toBeInTheDocument()
+  expect(screen.getByText(/1000 ₽ · Зачислено/)).toBeInTheDocument()
+  expect(fetchVkNativeCommerce).toHaveBeenCalled()
+  expect(screen.queryByText('Telegram-кошелёк')).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Купить|Оплатить сейчас/ })).not.toBeInTheDocument()
+})
+
+test('VK commerce unavailable does not blank the trend catalog, balance, or history', async () => {
+  jest.mocked(fetchVkNativeCommerce).mockRejectedValue(new Error('VK payment ledger temporarily unavailable'))
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('VK payment ledger temporarily unavailable')
+  expect(screen.getByRole('link', { name: 'Открыть результат #7' })).toBeInTheDocument()
+  expect(screen.getByText(/VK-баланс: 12.5/)).toBeInTheDocument()
+})
 
 test('incomplete native state does not blank trends or the work history', async () => {
   jest.mocked(fetchVkNativeState).mockResolvedValue({
