@@ -12,7 +12,9 @@ _DOCUMENT_NAMES = {
     "privacy": "privacy_policy.md",
 }
 _DOCUMENT_ROOT = pathlib.Path(__file__).resolve().parent.parent / "static"
-_OFFER_PDF_PATH = pathlib.Path(__file__).resolve().parent.parent / "legal" / "public-offer.pdf"
+_OFFER_PDF_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent / "legal" / "public-offer.pdf"
+)
 
 
 def document_text(kind: str) -> str:
