@@ -102,6 +102,20 @@ async def test_vk_public_login_link_redirects_to_configured_app_without_trusting
         assert not r.cookies
 
 
+async def test_vk_login_preserves_verified_bot_community_context():
+    # The previous redirect lost the -community suffix. A signed VK app
+    # launched from bot keyboard must not return in personal-developer mode.
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123, vk_community_id=239915802)
+        result = await client.get(
+            ROOT + '/vk-login?vk_community_id=777&vk_app_id=999&next=https://evil.example/',
+            allow_redirects=False,
+        )
+        assert result.status == 303
+        assert result.headers['Location'] == 'https://vk.com/app123_-239915802'
+        assert result.headers['Referrer-Policy'] == 'no-referrer'
+
+
 async def test_vk_public_login_link_never_uses_an_unconfigured_app():
     async with preview_client() as client:
         await enable(client)

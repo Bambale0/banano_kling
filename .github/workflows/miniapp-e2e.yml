@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   browser-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: frontend/miniapp-v0
@@ -43,13 +43,10 @@ jobs:
       - name: Build production Mini App
         run: npm run build
 
-      - name: Use Ubuntu archive for browser dependencies
+      - name: Prepare signed Ubuntu apt mirror
         run: |
-          set -Eeuo pipefail
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
-            [ -f "$source" ] || continue
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
-          done
+          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
+          bash ../../scripts/ci/prepare-ubuntu-apt.sh
 
       - name: Install Chromium and WebKit runtimes
         timeout-minutes: 10

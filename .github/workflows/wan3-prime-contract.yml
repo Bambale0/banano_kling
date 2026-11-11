@@ -40,7 +40,12 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt pytest pytest-asyncio
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Install validated FFmpeg media tools
+        run: |
+          bash scripts/ci/test-prepare-ubuntu-apt.sh
+          bash scripts/ci/prepare-ubuntu-apt.sh
+          sudo timeout 95 apt-get -o Acquire::Retries=1 install -y ffmpeg
+          ffprobe -version | head -1
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
   postgres:
@@ -90,6 +95,10 @@ jobs:
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
       - run: npm ci
       - run: npm run build
+      - name: Prepare signed Ubuntu apt mirror
+        run: |
+          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
+          bash ../../scripts/ci/prepare-ubuntu-apt.sh
       - run: npx playwright install --with-deps chromium
       - run: node e2e/wan3-prime.mjs
       - uses: actions/upload-artifact@v4

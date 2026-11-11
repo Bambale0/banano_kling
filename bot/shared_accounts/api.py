@@ -87,10 +87,16 @@ async def vk_login(request: web.Request) -> web.Response:
         return response({'ok': False, 'error': 'VK Mini App is unavailable'}, 404)
     # Fixed trusted origin, app ID from server-owned policy only. No next
     # parameter, caller-supplied app ID or auth credentials in the redirect.
+    # The VK app may be installed in a community. Returning to a bare
+    # app<ID> after an expired launch drops that context and can reopen the
+    # developer's personal app instead of the NEUROMIX bot workspace.
+    launch_url = f'https://vk.com/app{policy.vk_app_id}'
+    if policy.vk_community_id is not None:
+        launch_url += f'_-{policy.vk_community_id}'
     return web.Response(
         status=303,
         headers={
-            'Location': f'https://vk.com/app{policy.vk_app_id}',
+            'Location': launch_url,
             'Cache-Control': 'no-store',
             'Referrer-Policy': 'no-referrer',
         },
