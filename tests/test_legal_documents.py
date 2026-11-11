@@ -206,3 +206,26 @@ async def test_unpublished_policy_fails_closed_without_fake_document(monkeypatch
     message.answer.assert_not_awaited()
     message.answer_document.assert_not_awaited()
     assert callback.answer.await_args.kwargs["show_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_opening_legal_documents_preserves_checkout_message():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import common
+
+    message = SimpleNamespace(answer=AsyncMock(), edit_text=AsyncMock())
+    callback = SimpleNamespace(message=message, answer=AsyncMock())
+
+    await common.show_legal_documents(callback)
+
+    message.edit_text.assert_not_awaited()
+    message.answer.assert_awaited_once()
+    assert "Юридические документы" in message.answer.await_args.args[0]
+    assert "partner_offer" in _callbacks(
+        message.answer.await_args.kwargs["reply_markup"]
+    )
+    assert "privacy_policy" in _callbacks(
+        message.answer.await_args.kwargs["reply_markup"]
+    )
