@@ -1,6 +1,5 @@
 import pathlib
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PDF_SIZE = 1_306_459
 TEXT_SIZE = 67_744
