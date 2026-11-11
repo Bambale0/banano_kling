@@ -98,6 +98,10 @@ from bot.services.subscription_service import (
 )
 from bot.services.memory_dump_service import build_memory_dump, ensure_memory_tracing
 from bot.notification_service import ensure_notification_campaign_worker
+from bot.services.neironych_balance_monitor import (
+    ensure_neironych_balance_monitor,
+    stop_neironych_balance_monitor,
+)
 from bot.support_service import ensure_support_outbox_worker
 from bot.utils.user_facing_errors import make_user_friendly_generation_error, sanitize_provider_log_payload
 from bot.services.yookassa_service import yookassa_service
@@ -2928,9 +2932,10 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         from bot.referral_notifications import ensure_referral_notification_worker
 
         ensure_referral_notification_worker(bot)
+        ensure_neironych_balance_monitor(bot)
         ensure_feed_cache_warmup()
         logger.info(
-            "Scheduled cleanup task for static/uploads/logs, payment reconciliation, memory dumps, DB backups, support outbox, and notification campaigns"
+            "Scheduled background workers, including Neironych balance alerts"
         )
     except Exception:
         logger.exception("Failed to schedule background tasks")
@@ -2941,6 +2946,7 @@ async def on_shutdown(bot: Bot):
     from bot.referral_notifications import stop_referral_notification_worker
 
     await stop_referral_notification_worker()
+    await stop_neironych_balance_monitor()
     if not config.WEBHOOK_HOST:
         from bot.services.wan3_prime_lifecycle import wan3_prime_lifecycle
 

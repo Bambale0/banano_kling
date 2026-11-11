@@ -78,11 +78,22 @@ async def _ensure_publication_scope_schema() -> None:
             "ALTER TABLE generation_tasks ADD COLUMN feed_repeat_reference_selection TEXT",
         )
         for statement in migrations:
-            try:
-                await db.execute(statement)
-            except db_backend.OperationalError:
-                # The compatibility layer is loaded on every start. Existing columns are expected.
-                logger.debug("Publication scope column already exists: %s", statement)
+            if db_backend.is_postgres():
+                # The PostgreSQL compatibility adapter intentionally skips
+                # top-level ALTER TABLE SQL. Execute it inside a DO block so
+                # fresh PG databases really receive the publication columns.
+                # Keep duplicate_column idempotent for old production schemas.
+                await db.execute(
+                    "DO $$ BEGIN " + statement
+                    + "; EXCEPTION WHEN duplicate_column THEN NULL; END $$;"
+                )
+            else:
+                try:
+                    await db.execute(statement)
+                except db_backend.OperationalError:
+                    # The compatibility layer is loaded on every start.
+                    # Existing SQLite columns are expected.
+                    logger.debug("Publication scope column already exists: %s", statement)
 
         await db.execute(
             """
@@ -708,7 +719,7 @@ async def choose_publication_scope(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("feedpub_"))
 async def publish_to_public_feed(callback: types.CallbackQuery):
     task_id = (callback.data or "").replace("feedpub_", "", 1)
-    user, task = await _task_and_user(callback, task_id)
+    _user, task = await _task_and_user(callback, task_id)
     if not task:
         await callback.answer("Генерация не найдена", show_alert=True)
         return
@@ -724,7 +735,7 @@ async def publish_to_public_feed(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("profilepub_"))
 async def publish_only_to_profile(callback: types.CallbackQuery):
     task_id = (callback.data or "").replace("profilepub_", "", 1)
-    user, task = await _task_and_user(callback, task_id)
+    _user, task = await _task_and_user(callback, task_id)
     if not task:
         await callback.answer("Генерация не найдена", show_alert=True)
         return

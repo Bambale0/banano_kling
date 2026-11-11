@@ -22,6 +22,9 @@ from .store import (
     linked_telegram_id,
     revoke_session,
 )
+from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
+from .vk_native import fetch_native_vk_state, submit_native_vk_image
+from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -68,6 +71,27 @@ async def settings(request: web.Request) -> web.Response:
     return response({'ok': True, 'settings': policy.payload()})
 
 
+async def vk_login(request: web.Request) -> web.Response:
+    """Enter the VK-owned login flow; never accept an actor ID from the URL.
+
+    VK will prompt for sign-in when needed and then supply fresh launch params.
+    The actual Mini App session still requires signature and timestamp checks.
+    """
+    policy = await load_policy()
+    if not policy.enabled or not policy.vk_app_id:
+        return response({'ok': False, 'error': 'VK Mini App is unavailable'}, 404)
+    # Fixed trusted origin, app ID from server-owned policy only. No next
+    # parameter, caller-supplied app ID or auth credentials in the redirect.
+    return web.Response(
+        status=303,
+        headers={
+            'Location': f'https://vk.com/app{policy.vk_app_id}',
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer',
+        },
+    )
+
+
 async def session(request: web.Request) -> web.Response:
     policy = await load_policy()
     if not policy.enabled:
@@ -111,6 +135,296 @@ async def profile(request: web.Request) -> web.Response:
         'linked_platforms': await linked_platforms(account.id),
         'link_ttl_seconds': policy.link_ttl_seconds,
     }})
+
+
+
+def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None) -> dict:
+    from bot.miniapp_links import prompt_link
+    from bot.trend_visibility import public_trend_settings
+
+    settings = card.get('generation_settings') or {}
+    safe = public_trend_settings(card)
+    return {
+        'id': int(card['id']),
+        'share_link': (
+            prompt_link(None, card['id'], platform='vk', vk_app_id=vk_app_id)
+            if vk_app_id else None
+        ),
+        'title': str(card.get('title') or ''),
+        'description': str(card.get('description') or ''),
+        'preview_url': card.get('preview_url'),
+        'preview_poster_url': card.get('preview_poster_url'),
+        'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
+        'can_repeat_in_app': (
+            os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+            and card.get('vk_native_image_repeat_supported') is True
+        ),
+        'user_fields': safe.get('user_fields', []),
+    }
+
+
+async def vk_native_state(request: web.Request) -> web.Response:
+    """Own native VK balance/history even when Telegram is never linked."""
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
+        raise PermissionError('Verified VK session required')
+    data = await fetch_native_vk_state(account.identity.external_id)
+    return response({'ok': True, **data})
+
+
+async def _vk_writer_actor(request: web.Request) -> int:
+    policy = await load_policy()
+    if not policy.enabled:
+        raise PermissionError('Preview unavailable')
+    account = await get_session(_bearer(request), policy.revision)
+    if account.identity.platform != 'vk' or not policy.allows_public(account.identity):
+        raise PermissionError('Verified VK session required')
+    if 'telegram' in await linked_platforms(account.id):
+        raise PermissionError('Linked accounts must use the common studio')
+    return account.identity.external_id
+
+
+async def vk_image_upload(request: web.Request) -> web.Response:
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK upload unavailable'}, 404)
+    if request.content_length and request.content_length > MAX_UPLOAD_BYTES + 64 * 1024:
+        return response({'ok': False, 'error': 'VK image is too large'}, 413)
+    if request.content_type != 'multipart/form-data':
+        raise ValueError('Expected an image upload')
+    reader = await request.multipart()
+    part = await reader.next()
+    if part is None or part.name != 'image':
+        raise ValueError('Expected an image')
+    pieces = []
+    size = 0
+    while True:
+        chunk = await part.read_chunk(64 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            return response({'ok': False, 'error': 'VK image is too large'}, 413)
+        pieces.append(chunk)
+    if await reader.next() is not None:
+        raise ValueError('Expected one image')
+    image_url = await save_vk_image(actor_id, b''.join(pieces))
+    return response({'ok': True, 'url': image_url})
+
+
+async def vk_native_image(request: web.Request) -> web.Response:
+    """VK authenticated account, native VK wallet; no Telegram ID or funds."""
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK image generation unavailable'}, 404)
+    payload = await _body(request)
+    if set(payload) - {'model', 'prompt', 'aspect', 'resolution', 'client_request_id', 'quote_only', 'reference_photos', 'expected_cost'}:
+        raise ValueError('Invalid VK image request')
+    payload['reference_photos'] = verified_image_urls(actor_id, payload.get('reference_photos', []))
+    result = await submit_native_vk_image(actor_id, payload)
+    return response({'ok': True, **result})
+
+
+async def vk_native_trend(request: web.Request) -> web.Response:
+    """Run only approved image trends using a server-owned hidden recipe.
+
+    Reference-dependent or video trends remain fail-closed until their
+    platform-specific asset ownership and pricing contracts are implemented.
+    """
+    actor_id = await _vk_writer_actor(request)
+    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK repeat unavailable'}, 404)
+    body = await _body(request)
+    if set(body) - {'trend_id', 'user_values', 'reference_urls', 'client_request_id', 'quote_only', 'expected_cost'}:
+        raise ValueError('Invalid trend request')
+    from bot import trend_api, trend_catalog
+    from bot.database import get_prompt_by_id
+    try:
+        parsed = trend_api.parse_trend_run_request(body)
+        # A guessed trend ID must not bypass the same editorial visibility
+        # rules as public VK deep links. Hidden-category/unlisted recipes
+        # must never be executable, even when approved in the database.
+        if not await trend_catalog.public_trend_by_id(parsed.trend_id):
+            raise ValueError('Trend unavailable')
+        prompt = await get_prompt_by_id(parsed.trend_id, approved_public_only=True)
+        if not prompt:
+            raise ValueError('Trend unavailable')
+        if not supports_native_vk_image_trend(prompt):
+            raise ValueError('Trend is not supported by VK generation')
+        trusted = trend_api.trusted_trend_run(
+            prompt, parsed.reference_urls, parsed.user_values,
+        )
+    except trend_api.TrendRunValidationError as exc:
+        raise ValueError('Invalid or unavailable trend') from exc
+    if (trusted.kind != 'image'
+        or trusted.template_image_urls or trusted.provider_video_urls
+        or trusted.provider_audio_urls
+        or trusted.reference_contract
+        or int(trusted.settings.get('count') or 1) != 1):
+        raise ValueError('Trend requires a different generation workflow')
+    model = NATIVE_IMAGE_MODELS.get(trusted.model)
+    quality = str(trusted.settings.get('quality') or '2K')
+    if not model or quality not in {'2K', '4K'}:
+        raise ValueError('Trend is not supported by VK generation')
+    key = parsed.client_request_id
+    if body.get('quote_only') is not True and (not key or len(key) < 16 or len(key) > 80):
+        raise ValueError('Missing idempotent request key')
+    references = verified_image_urls(actor_id, list(parsed.reference_urls))
+    payload = {'model': model, 'prompt': trusted.prompt, 'aspect': trusted.ratio,
+               'resolution': quality, 'reference_photos': references}
+    if key:
+        payload['client_request_id'] = key
+    if body.get('quote_only') is True:
+        payload['quote_only'] = True
+    else:
+        payload['expected_cost'] = body.get('expected_cost')
+    result = await submit_native_vk_image(actor_id, payload)
+    # Never send the secret prompt or effective provider inputs to VK browser.
+    return response({'ok': True, **result})
+
+
+def _vk_public_feed_card(card: dict, *, vk_app_id: int) -> dict:
+    """Public media and share navigation only, never the original task recipe.
+
+    Feed publication IDs live in a separate namespace from editorial prompt
+    IDs. Source prompt/reference content can only be used server-side by a
+    fully authenticated, authorized platform-specific remix operation.
+    """
+    from bot.miniapp_links import feed_link
+
+    if str(card.get('gen_type')) not in {'image', 'video'}:
+        raise ValueError('Unsupported feed media')
+    return {
+        'id': int(card['id']),
+        'generation_type': str(card['gen_type']),
+        'model': str(card.get('model') or ''),
+        'preview_url': card.get('preview_url'),
+        'preview_poster_url': card.get('preview_poster_url'),
+        'result_url': card.get('result_url'),
+        'likes_count': int(card.get('likes_count') or 0),
+        'shares_count': int(card.get('shares_count') or 0),
+        'comments_count': int(card.get('comments_count') or 0),
+        'aspect_ratio': str(card.get('aspect_ratio') or ''),
+        'duration': card.get('duration'),
+        'feed_blurred': bool(card.get('feed_blurred')),
+        'media_unavailable': bool(card.get('media_unavailable')),
+        'share_link': feed_link(None, int(card['id']), platform='vk', vk_app_id=vk_app_id),
+        # Never interpret visible content or public status as authorization
+        # for a paid remix. That is a separate actor/ledger/ref contract.
+        'can_repeat_in_app': False,
+    }
+
+
+async def vk_public_discovery(request: web.Request) -> web.Response:
+    # Browsing is separate from paid repeats: never invent a Telegram actor.
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    account = await get_session(_bearer(request), policy.revision)
+    if not policy.allows_public(account.identity) or account.identity.platform != 'vk':
+        raise PermissionError('VK session required')
+    view = request.query.get('view', 'trends')
+    if view == 'feed_item':
+        from bot import database
+
+        raw_id = request.query.get('gen_id', '')
+        if not raw_id.isascii() or not raw_id.isdecimal() or not 0 < len(raw_id) <= 16:
+            raise ValueError('Invalid public feed identifier')
+        gen_id = int(raw_id)
+        if gen_id <= 0:
+            raise ValueError('Invalid public feed identifier')
+        # Do not resolve profile/private feed cards: this route is a publicly
+        # shared feed link and is intentionally viewer-neutral.
+        card = await database.get_feed_generation_card(
+            gen_id, viewer_user_id=None, include_unavailable=True,
+        )
+        if not card:
+            return response({'ok': False, 'error': 'Публикация не найдена'}, 404)
+        return response({
+            'ok': True,
+            'item': _vk_public_feed_card(card, vk_app_id=policy.vk_app_id),
+        })
+    if view == 'item':
+        from bot import trend_catalog
+
+        raw_id = request.query.get('trend_id', '')
+        if not raw_id.isascii() or not raw_id.isdecimal() or not 0 < len(raw_id) <= 16:
+            raise ValueError('Invalid trend identifier')
+        trend_id = int(raw_id)
+        if trend_id <= 0:
+            raise ValueError('Invalid trend identifier')
+        item = await trend_catalog.public_trend_by_id(trend_id)
+        if item is None:
+            return response({'ok': False, 'error': 'Тренд не найден'}, 404)
+        return response({
+            'ok': True,
+            'item': _vk_public_trend_card(item, vk_app_id=policy.vk_app_id),
+            'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',
+        })
+    if view == 'trends':
+        from bot import trend_catalog
+        categories = await trend_catalog.list_catalog(
+            is_admin=False, per_category=6, tariff='standard',
+        )
+        result = [
+            {
+                'id': item['id'],
+                'title': item['title'],
+                'emoji': item['emoji'],
+                'total': item['total'],
+                'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in item['items']],
+            }
+            for item in categories
+        ]
+        return response({'ok': True, 'categories': result, 'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'})
+    if view == 'category':
+        from bot import trend_catalog
+        category_id = request.query.get('category_id', '')
+        if category_id != 'unassigned':
+            if not category_id.isascii() or not category_id.isdecimal():
+                raise ValueError('Invalid category')
+            category_id = int(category_id)
+        page_raw = request.query.get('page', '1')
+        if not page_raw.isascii() or not page_raw.isdecimal():
+            raise ValueError('Invalid page')
+        page = int(page_raw)
+        if page < 1 or page > 1000:
+            raise ValueError('Invalid page')
+        category = await trend_catalog.category_page(
+            category_id, is_admin=False, page=page, limit=24, tariff='standard',
+        )
+        meta = category['category']
+        return response({
+            'ok': True,
+            'category': {'id': meta['id'], 'title': meta['title'], 'emoji': meta['emoji']},
+            'items': [_vk_public_trend_card(card, vk_app_id=policy.vk_app_id) for card in category['items']],
+            'has_more': bool(category['has_more']),
+            'page': page,
+            'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1',
+        })
+    if view == 'feed':
+        from bot import database
+        source = request.query.get('source', 'recent')
+        if source not in {'recent', 'top', 'top_day'}:
+            raise ValueError('Invalid feed source')
+        cards = await database.get_feed_generations(
+            limit=18, source=source, viewer_user_id=None, include_unavailable=False,
+        )
+        items = [
+            {
+                'id': int(card['id']),
+                'generation_type': str(card['gen_type']),
+                'preview_url': card.get('preview_url'),
+                'result_url': card.get('result_url'),
+                'likes_count': int(card.get('likes_count') or 0),
+            }
+            for card in cards if card.get('gen_type') in {'image', 'video'}
+        ]
+        return response({'ok': True, 'items': items, 'can_generate_in_app': os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'})
+    raise ValueError('Unknown discovery view')
 
 
 async def logout(request: web.Request) -> web.Response:
@@ -223,9 +537,18 @@ def _guard(handler):
             return await handler(request)
         except AuthenticationError as exc:
             logger.info('shared_account_authentication_rejected path=%s reason=%s', request.path, str(exc))
-            return response({'ok': False, 'error': str(exc)}, 401)
+            denied = response({'ok': False, 'error': str(exc)}, 401)
+            # An unauthenticated multipart upload has not been consumed.
+            # Never reuse its keep-alive connection: the unread boundary can
+            # corrupt parsing of the next authorized request on that socket.
+            if request.path.endswith('/vk-image-upload'):
+                denied.force_close()
+            return denied
         except PermissionError as exc:
-            return response({'ok': False, 'error': str(exc)}, 403)
+            denied = response({'ok': False, 'error': str(exc)}, 403)
+            if request.path.endswith('/vk-image-upload'):
+                denied.force_close()
+            return denied
         except PreviewConflict as exc:
             return response({'ok': False, 'error': str(exc)}, 409)
         except LinkExpired:
@@ -254,8 +577,17 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_route('POST', root + '/vk-deliveries/{task_id}', _guard(vk_delivery))
     app.router.add_get(root + '/settings', _guard(settings))
     app.router.add_put(root + '/settings', _guard(settings))
+    app.router.add_get(root + '/vk-login', _guard(vk_login))
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
+    app.router.add_get(root + '/trends', _guard(vk_public_discovery))
+    app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
+    # This route authenticates the signed VK session before reading bytes.
+    # The legacy add_post wrapper attempts JSON parsing first and drains a
+    # multipart body. Register directly, as the existing owned-media APIs do.
+    app.router.add_route('POST', root + '/vk-image-upload', _guard(vk_image_upload))
+    app.router.add_post(root + '/vk-image', _guard(vk_native_image))
+    app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))

@@ -18,16 +18,14 @@ test('late administrator settings cannot reset an invitation already created thr
   jest.mocked(fetchAccountPreviewAccess).mockResolvedValue({ revision: 1, vk_app_id: 123, telegram_bot_username: 'test_bot', telegram_linked: true, linked_platforms: ['telegram'] })
   jest.mocked(createAccountLink).mockResolvedValue({ id: 'pending-invite', state: 'pending', revision: 0, expires_at_epoch: 9999999999, source_confirmed: true, token: 'a'.repeat(43) })
 
-  const popup = {
-    opener: window, closed: false, document: { title: '' },
-    location: { replace: jest.fn() }, close: jest.fn(),
-  }
-  const open = jest.spyOn(window, 'open').mockReturnValue(popup as unknown as Window)
+  const open = jest.spyOn(window, 'open')
   try {
     render(<SharedAccountPreview isAdmin />)
     fireEvent.click(await screen.findByRole('button', { name: 'Привязать ВКонтакте' }))
     const expectedUrl = 'https://vk.com/app123#link_' + 'a'.repeat(43)
-    await waitFor(() => expect(popup.location.replace).toHaveBeenCalledWith(expectedUrl))
+    const link = await screen.findByRole('link', { name: 'Открыть ВКонтакте ещё раз' })
+    expect(link).toHaveAttribute('href', expectedUrl)
+    expect(open).not.toHaveBeenCalled()
     expect(screen.getByRole('region', { name: 'Ожидание привязки' })).toBeInTheDocument()
 
     await act(async () => { resolveSettings(policy) })
