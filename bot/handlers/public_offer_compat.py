@@ -11,7 +11,11 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.config import config
 from bot.keyboards import get_back_keyboard, get_partner_consent_keyboard
-from bot.legal_documents import https_document_url, send_legal_parts, telegram_text_parts
+from bot.legal_documents import (
+    https_document_url,
+    send_legal_parts,
+    telegram_text_parts,
+)
 
 logger = logging.getLogger(__name__)
 router = Router()
