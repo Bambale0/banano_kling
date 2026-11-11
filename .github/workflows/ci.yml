@@ -151,19 +151,13 @@ jobs:
           python -m pip check
 
       - name: Install media validation tools
-        timeout-minutes: 5
+        timeout-minutes: 6
         run: |
           set -Eeuo pipefail
           if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
-              [ -f "$source" ] || continue
-              sudo sed -i \
-                -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-                -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-                -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "$source"
-            done
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y ffmpeg
+            bash scripts/ci/test-prepare-ubuntu-apt.sh
+            bash scripts/ci/prepare-ubuntu-apt.sh
+            sudo timeout 95 apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y ffmpeg
           fi
           ffmpeg -version | sed -n '1p'
           ffprobe -version | sed -n '1p'
@@ -243,13 +237,10 @@ jobs:
         id: build
         run: npm run build
 
-      - name: Use Ubuntu archive for browser dependencies
+      - name: Prepare signed Ubuntu apt mirror
         run: |
-          set -Eeuo pipefail
-          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
-            [ -f "$source" ] || continue
-            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$source"
-          done
+          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
+          bash ../../scripts/ci/prepare-ubuntu-apt.sh
 
       - name: Install Chromium and WebKit runtimes
         id: chromium

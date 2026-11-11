@@ -96,7 +96,13 @@ jobs:
       - name: Build VK Mini App at domain root
         run: npm run build:vk
 
+      - name: Prepare signed Ubuntu apt mirror
+        run: |
+          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
+          bash ../../scripts/ci/prepare-ubuntu-apt.sh
+
       - name: Install Chromium for VK root smoke
+        timeout-minutes: 10
         run: npx playwright install --with-deps chromium
 
       - name: Check VK root entry and administrator surface
