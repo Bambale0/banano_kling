@@ -151,7 +151,7 @@ jobs:
           python -m pip check
 
       - name: Install media validation tools
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           set -Eeuo pipefail
           if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
@@ -162,9 +162,39 @@ jobs:
                 -e 's|http://archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
                 -e 's|http://security.ubuntu.com/ubuntu|https://security.ubuntu.com/ubuntu|g' "$source"
             done
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-            sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y ffmpeg
+
+            # Fail fast on Ubuntu mirror DNS outages, then use a pinned CI-only
+            # distribution with both executables. Never weaken the media tests.
+            if timeout 85s sudo apt-get -o Acquire::Retries=0 \
+              -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update \
+              && timeout 120s sudo apt-get -o Acquire::Retries=0 \
+              -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y ffmpeg; then
+              echo "FFmpeg and FFprobe installed from Ubuntu packages"
+            else
+              echo "::warning::Ubuntu mirror unavailable; using pinned CI-only FFmpeg fallback"
+              python -m pip install --quiet --no-input 'static-ffmpeg==3.0'
+              python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from static_ffmpeg import run
+
+          ffmpeg, ffprobe = run.get_or_fetch_platform_executables_else_raise()
+          bin_dir = Path(os.environ["RUNNER_TEMP"]) / "ci-static-ffmpeg"
+          bin_dir.mkdir(parents=True, exist_ok=True)
+          for name, source in (("ffmpeg", ffmpeg), ("ffprobe", ffprobe)):
+              link = bin_dir / name
+              if link.is_symlink() or link.exists():
+                  link.unlink()
+              link.symlink_to(Path(source).resolve())
+          with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as paths:
+              paths.write(str(bin_dir) + "\\n")
+          PY
+              export PATH="$RUNNER_TEMP/ci-static-ffmpeg:$PATH"
+            fi
           fi
+          command -v ffmpeg
+          command -v ffprobe
           ffmpeg -version | sed -n '1p'
           ffprobe -version | sed -n '1p'
 
