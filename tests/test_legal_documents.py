@@ -229,3 +229,78 @@ async def test_opening_legal_documents_preserves_checkout_message():
     assert "privacy_policy" in _callbacks(
         message.answer.await_args.kwargs["reply_markup"]
     )
+
+
+@pytest.mark.asyncio
+async def test_multi_part_legal_text_is_paced_with_markup_only_on_last(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    fake_sleep = AsyncMock()
+    monkeypatch.setattr(legal_documents.asyncio, "sleep", fake_sleep)
+    message = SimpleNamespace(answer=AsyncMock())
+    markup = object()
+    await legal_documents.send_legal_parts(message, ["часть 1", "часть 2", "конец"], markup)
+
+    assert message.answer.await_count == 3
+    fake_sleep.assert_any_await(1.1)
+    assert fake_sleep.await_count == 2
+    assert message.answer.await_args_list[0].kwargs["reply_markup"] is None
+    assert message.answer.await_args_list[1].kwargs["reply_markup"] is None
+    assert message.answer.await_args_list[2].kwargs["reply_markup"] is markup
+    assert all(c.kwargs["parse_mode"] is None for c in message.answer.await_args_list)
+
+
+@pytest.mark.asyncio
+async def test_telegram_retry_after_retries_same_part_once(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    class FakeRetryAfter(Exception):
+        retry_after = 0.5
+
+    calls = []
+
+    async def answer(text, **kwargs):
+        calls.append((text, kwargs))
+        if len(calls) == 1:
+            raise FakeRetryAfter()
+
+    fake_sleep = AsyncMock()
+    monkeypatch.setattr(legal_documents, "TelegramRetryAfter", FakeRetryAfter)
+    monkeypatch.setattr(legal_documents.asyncio, "sleep", fake_sleep)
+
+    await legal_documents.send_legal_parts(
+        SimpleNamespace(answer=answer), ["полный документ"], None
+    )
+    assert len(calls) == 2
+    assert calls[0][0] == calls[1][0] == "полный документ"
+    fake_sleep.assert_awaited_once_with(0.7)
+
+
+@pytest.mark.asyncio
+async def test_offer_callback_acknowledges_before_long_delivery(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.handlers import public_offer_compat as offer
+
+    source = tmp_path / "offer.txt"
+    source.write_text("Условия \u26a1", encoding="utf-8")
+    monkeypatch.setattr(offer, "PUBLIC_OFFER_TEXT_PATH", source)
+    monkeypatch.setattr(offer.config, "PARTNER_OFFER_URL", "")
+    order = []
+
+    async def on_ack(*args, **kwargs):
+        order.append("ack")
+
+    async def on_send(*args, **kwargs):
+        order.append("send")
+
+    callback = SimpleNamespace(
+        data="more_public_offer",
+        message=SimpleNamespace(answer=AsyncMock(side_effect=on_send)),
+        answer=AsyncMock(side_effect=on_ack),
+    )
+    await offer.show_public_offer(callback)
+    assert order == ["ack", "send"]
