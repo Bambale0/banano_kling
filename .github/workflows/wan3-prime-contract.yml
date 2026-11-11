@@ -40,6 +40,18 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt pytest pytest-asyncio
+      - name: Use reachable signed Ubuntu package mirror
+        run: |
+          set -Eeuo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$source" ] || continue
+            sudo sed -i \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' "$source"
+          done
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
@@ -90,6 +102,18 @@ jobs:
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
       - run: npm ci
       - run: npm run build
+      - name: Use reachable signed Ubuntu package mirror
+        run: |
+          set -Eeuo pipefail
+          for source in /etc/apt/apt-mirrors.txt /etc/apt/sources.list /etc/apt/sources.list.d/*.sources /etc/apt/sources.list.d/*.list; do
+            [ -f "$source" ] || continue
+            sudo sed -i \
+              -e 's|http://azure.archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|https://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' \
+              -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.edge.kernel.org/ubuntu|g' "$source"
+          done
       - run: npx playwright install --with-deps chromium
       - run: node e2e/wan3-prime.mjs
       - uses: actions/upload-artifact@v4
