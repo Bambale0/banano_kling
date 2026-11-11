@@ -3,7 +3,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
 import { VkStandaloneDiscovery } from '@/components/vk-standalone-discovery'
-import { incomingAccountLink } from '@/lib/account-platform'
+import { hasVkLaunchData, incomingAccountLink } from '@/lib/account-platform'
+import { reportVkLaunchStage } from '@/lib/vk-launch-telemetry'
 import {
   startAccountAppSession,
   stopAccountAppSession,
@@ -29,12 +30,15 @@ function VkAccountGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const controller = new AbortController()
     let sessionStarted = false
+    reportVkLaunchStage('vk-session-start')
     startAccountAppSession(controller.signal).then(result => {
       if (controller.signal.aborted) { void stopAccountAppSession(); return }
       sessionStarted = true
+      reportVkLaunchStage('vk-session-ok')
       setAccess(result)
     }).catch(error => {
       if (!controller.signal.aborted) {
+        reportVkLaunchStage('vk-session-failed')
         setMessage(error instanceof Error ? error.message : 'Не удалось подтвердить вход.')
       }
     })
@@ -101,8 +105,8 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
   const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | null>(null)
   const [telegramInvitation, setTelegramInvitation] = useState(false)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const vkSigned = params.has('vk_app_id') || params.has('vk_user_id')
+    const vkSigned = hasVkLaunchData()
+    if (vkSigned) reportVkLaunchStage('vk-react-mounted')
     setPlatform(vkSigned ? 'vk'
       : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required' : 'telegram')
     if (!vkSigned && process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') {

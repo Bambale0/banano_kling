@@ -16,7 +16,16 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
     const file = resolve(root, '.' + (pathname.endsWith('/') ? pathname + 'index.html' : pathname))
     if (!file.startsWith(root + sep) || !existsSync(file)) { res.writeHead(404).end(); return }
     res.setHeader('Content-Type', types[extname(file)] || 'application/octet-stream')
-    res.end(readFileSync(file))
+    const data = readFileSync(file)
+    if (pathname === '/' && new URL(req.url, 'http://localhost').searchParams.has('test_strip_vk_query')) {
+      // Only the test server simulates VK rewriting the URL after the early
+      // snapshot but before the React bundle hydrates. No production rewrite.
+      const html = data.toString().replace('</script>', '</script><script id="test-strip-vk-query">history.replaceState({},"","/?ref=bot_keyboard")</script>')
+      assert.notEqual(html, data.toString())
+      res.end(html)
+    } else {
+      res.end(data)
+    }
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
   let browser
@@ -136,6 +145,15 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
       assert.ok(appCredentials.every(value => value === 'vk_session:' + 's'.repeat(43)))
       assert.ok(!requests.some(url => /telegram-web-app/.test(url)))
       assert.deepEqual(failedAssets, [])
+      assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
+      const loginCountBeforeStrip = logins.length
+      await page.goto(origin + '/?vk_app_id=123&vk_user_id=3001&vk_ts=1794400000&sign=browser-test&test_strip_vk_query=1', { waitUntil: 'networkidle' })
+      await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
+      assert.equal(await page.evaluate(() => window.location.search), '?ref=bot_keyboard')
+      assert.equal(logins.length, loginCountBeforeStrip + 1)
+      assert.equal(logins.at(-1).platform, 'vk')
+      assert.ok(logins.at(-1).launch_data.includes('vk_user_id=3001'))
+      assert.ok(logins.at(-1).launch_data.includes('sign=browser-test'))
       assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
       await context.close()
       console.log(`VK root ${width}px: VK-only native bot and linked ordinary user passed`)

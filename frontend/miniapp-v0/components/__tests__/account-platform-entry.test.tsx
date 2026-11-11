@@ -13,7 +13,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicCategory: jest.fn(),
   fetchVkNativeState: jest.fn(),
 }))
-jest.mock('@/lib/account-platform', () => ({ incomingAccountLink: jest.fn(() => '') }))
+jest.mock('@/lib/account-platform', () => ({ ...jest.requireActual('@/lib/account-platform'), incomingAccountLink: jest.fn(() => '') }))
 jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: ({ telegramBotUsername, onCommitted }: { telegramBotUsername: string; onCommitted?: () => void }) =>
   <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
@@ -26,6 +26,7 @@ beforeEach(() => {
 
 afterEach(() => {
   window.history.replaceState({}, '', '/')
+  delete window.__BANANO_INITIAL_LAUNCH__
   delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
   jest.resetAllMocks()
 })
@@ -36,6 +37,21 @@ test('VK server first paint is readable without JavaScript instead of blank', ()
   expect(markup).toContain('Открываем приложение ВКонтакте')
   expect(markup).toContain('/mini-app/api/account-preview/vk-login')
   expect(markup).not.toContain('Общая студия')
+})
+
+test('signed VK HTML launch can hydrate and authenticate after URL is replaced by the VK host', async () => {
+  process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  window.__BANANO_INITIAL_LAUNCH__ = {
+    search: '?vk_app_id=54880352&vk_user_id=2001&vk_ts=1794400000&sign=' + 'a'.repeat(43), hash: '',
+  }
+  window.history.replaceState({}, '', '/?ref=bot_keyboard')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1, vk_app_id: 54880352, full_app_ready: false, telegram_linked: false,
+    telegram_bot_username: 'Neuromixx_bot',
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Создавайте в ВКонтакте')).toBeInTheDocument()
+  expect(startAccountAppSession).toHaveBeenCalledTimes(1)
 })
 
 test('direct VK link offers official VK sign-in instead of a dead end', () => {
