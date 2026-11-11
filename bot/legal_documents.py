@@ -13,8 +13,8 @@ _DOCUMENT_ROOT = pathlib.Path(__file__).resolve().parent.parent / "static"
 def document_text(kind: str) -> str:
     """Return an approved local legal text; never expose an empty document."""
     filename = _DOCUMENT_NAMES[kind]
-    text = (_DOCUMENT_ROOT / filename).read_text(encoding="utf-8").strip()
-    if not text:
+    text = (_DOCUMENT_ROOT / filename).read_text(encoding="utf-8")
+    if not text.strip():
         raise ValueError(f"Empty legal document: {kind}")
     return text
 
@@ -47,8 +47,8 @@ def telegram_text_parts(text: str, *, max_utf16_units: int = 3800) -> list[str]:
     """
     if max_utf16_units < 2:
         raise ValueError("max_utf16_units must be at least 2")
-    source = str(text or "").strip()
-    if not source:
+    source = str(text or "")
+    if not source.strip():
         return []
     parts: list[str] = []
     chars: list[str] = []
