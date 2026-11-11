@@ -62,6 +62,34 @@ This is a foundation, not 1:1 parity: legacy /mini-app/api endpoints still
 require Telegram IDs, and the VK-only full-shell readiness remains false until
 all real adapters are implemented and validated.
 
+## Same-route VK API gateway
+
+The shared Mini App endpoint prefix remains /mini-app/api on both clients.
+When VK_FULL_APP_PARITY_ENABLED is absent or OFF, the middleware is a strict
+pass-through and does not even read legacy Telegram JSON bodies. With the
+flag ON, a verified vk_session token is resolved into PlatformActor, and
+the request is passed to the single registered native VK adapter's
+handle(request, actor=actor) coroutine. There is no synthetic Telegram ID.
+
+The gateway requires the same full readiness manifest as the UI profile
+contract. Any incomplete adapter is rejected for VK-only identities rather
+than forwarding a VK owner to legacy Telegram billing. Legacy linked VK
+sessions retain their old handler until the full adapter is registered;
+Telegram callers are always passed through untouched.
+
+Identity or role override fields are rejected at the gateway for signed
+VK JSON requests, including when the signed launch token is supplied in a
+header. Media multipart requests must carry signed init data in the
+X-Telegram-Init-Data header once the native adapter is enabled: the gateway
+does not consume upload streams in order to discover a form field. The
+native adapter must independently validate role, reference ownership,
+provider/model constraints, cost and idempotency.
+
+**Current status:** no complete VK adapter has been registered in
+production, and the flag remains OFF. This gateway alone does not implement
+photo/video/Motion/social/commerce parity or switch VK users to the
+common shell; it creates the safe routing boundary needed to do so.
+
 ## Release gates
 
 - All eight tab operations route to the verified VK actor under one UI and
@@ -81,30 +109,30 @@ VK backend's historical wallet untouched. Never migrate a wallet as a
 side-effect of sign-in or UI navigation.
 
 
-## Verified platform actor foundation (2026-11-11)
+## Unified native VK task-history projection (2026-11-11)
 
-The signed session now resolves to immutable `PlatformActor`
-(`platform`, `external_id`, `shared_account_id`,
-`linked_platforms`, `linked_telegram_id`). This is the one trustworthy
-owner boundary for future native adapters.
+A verified VK actor's existing HMAC native-state call now includes
+`recent_tasks` in the **same task-card DTO** as the Telegram Mini App.
+The original `tasks` and `balance` fields are preserved unchanged.
+VK task IDs are explicitly namespaced as `vk:<numeric_id>`, never passed
+to legacy Telegram task endpoints by numeric ID. This is a read-only
+projection, not a financial migration or new history store.
 
-- `vk:2001` and `telegram:2001` are different external identities even
-  if their numeric IDs are identical. Their owner keys and initial shared
-  account UUIDs do not collide.
-- A signed VK-only session creates no `users` row and never fabricates a
-  Telegram ID. Revocation and wrong-platform access deny as before.
-- After optional link, the current launch platform remains authoritative
-  for the wallet and notification adapter. Identity linking can succeed
-  without a legacy `users` row; `linked_telegram_id` then remains None.
-  This is not a reason to force users through Telegram onboarding.
-- `profile` and `vk_native_state` now share the same session resolver.
-  The original policy-disabled HTTP 404 response remains unchanged.
-- Native photo writes for **linked** accounts retain the existing deny
-  path until actual wallet-owner routing is implemented; avoiding silent
-  cross-wallet charges is more important than opening a premature button.
-- Server-side `full_app_ready` still requires a real registered adapter for
-  all domains and is OFF by default. This is not yet a 1:1 release.
+The projection covers real native VK task types observed in the production
+database: photo, video, reference-video; Motion Control is mapped to video
+when present. Pending/submitting/processing map to the shared pending state,
+completed/failed to the same shared terminal states. Native cost and media
+URLs are preserved. Missing prompt/aspect values are left empty, **not
+invented**. Unsupported/future task rows are omitted only from the
+compatibility projection, never from the authoritative native `tasks`
+array; a single such row cannot hide a user's balance or old native history.
+All mutation and task detail/repeat adapters remain unavailable until
+explicitly ported.
 
-Test evidence: 52 shared-account tests passed and 52 PostgreSQL cases
-were skipped locally; Ruff and compileall passed. The complete
-PostgreSQL matrix and common shell end-to-end tests remain release gates.
+**Verification:** 73 targeted shared-account/link tests passed; 75 optional
+PostgreSQL variants skipped locally, 14 frontend shell tests passed, TypeScript,
+ESLint, targeted Ruff and Python compilation passed. VK static build passed.
+Full GitHub PostgreSQL and end-to-end validations are independent release gates.
+
+**Not yet shipped:** the shared eight-tab VK-only UI still cannot safely use
+the TG legacy API endpoints. `VK_FULL_APP_PARITY_ENABLED` is not enabled.

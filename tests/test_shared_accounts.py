@@ -920,10 +920,13 @@ async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypat
         })
         profile = await client.get(ROOT + '/me', headers=auth)
         assert (await profile.json())['preview']['full_app_ready'] is False
-        client.app['vk_full_app_adapter'] = SimpleNamespace(ready_operations=frozenset({
-            'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
-            'services', 'profile', 'payments', 'referrals', 'tasks',
-        }))
+        client.app['vk_full_app_adapter'] = SimpleNamespace(
+            ready_operations=frozenset({
+                'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
+                'services', 'profile', 'payments', 'referrals', 'tasks',
+            }),
+            handle=lambda request, *, actor: web.json_response({'ok': True}),
+        )
         profile = await client.get(ROOT + '/me', headers=auth)
         assert (await profile.json())['preview']['full_app_ready'] is True
         monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED')
@@ -1018,3 +1021,197 @@ async def test_platform_actor_keeps_verified_wallet_platform_after_optional_link
         assert actor.wallet_platform == 'vk'
         assert actor.owner_key == 'vk:2001'
         assert actor.shared_account_id == (await vk_session.json())['account']['id']
+
+
+async def test_native_vk_tasks_are_serialized_for_shared_ui_without_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    native_state = {
+        'registered': True, 'balance': 43.75, 'is_blocked': False,
+        'tasks': [
+            {'task_id': 27, 'task_type': 'photo', 'model': 'nano_banana_pro',
+             'status': 'completed', 'cost': 2.5, 'result_url': 'https://example.test/image.jpg',
+             'created_at': '2026-11-11 10:00:00'},
+            {'task_id': 25, 'task_type': 'video', 'model': 'v3_std',
+             'status': 'processing', 'cost': 11.0, 'result_url': None,
+             'created_at': '2026-11-11 09:00:00'},
+        ],
+    }
+    fetch = AsyncMock(return_value=native_state)
+    monkeypatch.setattr(api, 'fetch_native_vk_state', fetch)
+    async with preview_client() as client:
+        await enable(client, vk_app_id=123)
+        response = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        bearer = {'Authorization': 'Bearer ' + (await response.json())['session_token']}
+        native = await client.get(ROOT + '/vk-native-state', headers=bearer)
+        assert native.status == 200, await native.text()
+        payload = await native.json()
+        assert payload['balance'] == 43.75
+        assert payload['tasks'] == native_state['tasks']
+        assert payload['recent_tasks'] == [
+            {'task_id': 'vk:27', 'type': 'image', 'model': 'nano_banana_pro',
+             'model_label': 'nano_banana_pro', 'aspect_ratio': '',
+             'status': 'completed', 'cost': 2.5, 'result_url': 'https://example.test/image.jpg',
+             'created_at': '2026-11-11 10:00:00', 'prompt_preview': ''},
+            {'task_id': 'vk:25', 'type': 'video', 'model': 'v3_std',
+             'model_label': 'v3_std', 'aspect_ratio': '',
+             'status': 'pending', 'cost': 11.0, 'result_url': None,
+             'created_at': '2026-11-11 09:00:00', 'prompt_preview': ''},
+        ]
+        fetch.assert_awaited_once_with(2001)
+        tg = await login(client, 2001)
+        tg_bearer = {'Authorization': 'Bearer ' + (await tg.json())['session_token']}
+        assert (await client.get(ROOT + '/vk-native-state', headers=tg_bearer)).status == 403
+        fetch.assert_awaited_once()
+
+
+def test_native_task_serializer_rejects_unsafe_or_wrongly_typed_rows():
+    from bot.shared_accounts.task_view import serialize_native_vk_tasks
+
+    for invalid in (
+        [{'task_id': '20', 'task_type': 'photo', 'status': 'completed', 'cost': 2.5}],
+        [{'task_id': 20, 'task_type': 'photo', 'status': 'done', 'cost': 2.5}],
+        [{'task_id': 20, 'task_type': 'photo', 'status': 'completed', 'cost': -10}],
+        [{'task_id': 20, 'task_type': 'photo', 'status': 'completed', 'cost': float('nan')}],
+        [{'task_id': 20, 'task_type': 'payment', 'status': 'completed', 'cost': 2.5}],
+    ):
+        with pytest.raises(ValueError):
+            serialize_native_vk_tasks(invalid)
+    with pytest.raises(ValueError):
+        serialize_native_vk_tasks('not a list')
+    # Native VK also stores video-reference and Motion Control tasks. These
+    # are video cards in the shared Mini App, never hidden from VK history.
+    valid = [{'task_id': 77, 'task_type': 'ref_video', 'model': 'kling',
+              'status': 'completed', 'cost': 8.0,
+              'created_at': '2026-11-11 14:02:00', 'result_url': None},
+             {'task_id': 78, 'task_type': 'motion_control', 'model': 'motion',
+              'status': 'processing', 'cost': 10.0,
+              'created_at': '2026-11-11 14:03:00', 'result_url': None},
+             {'task_id': 79, 'task_type': 'unknown_future', 'model': 'other',
+              'status': 'completed', 'cost': 0,
+              'created_at': '2026-11-11 14:03:00', 'result_url': None}]
+    projection = serialize_native_vk_tasks(valid, strict=False)
+    assert [row['task_id'] for row in projection] == ['vk:77', 'vk:78']
+    assert all(row['type'] == 'video' for row in projection)
+
+
+
+@pytest.mark.asyncio
+async def test_platform_gateway_routes_signed_vk_to_shared_app_without_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts.gateway import (
+        VK_FULL_APP_OPERATIONS,
+        vk_miniapp_gateway,
+    )
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    legacy = AsyncMock(return_value=web.json_response({'source': 'telegram-legacy'}))
+    native = AsyncMock(return_value=web.json_response({'source': 'vk-native'}))
+    class Adapter:
+        ready_operations = VK_FULL_APP_OPERATIONS
+        handle = native
+
+    app = web.Application(middlewares=[vk_miniapp_gateway('/mini-app')])
+    app['vk_full_app_adapter'] = Adapter()
+    setup_shared_account_routes(app, '/mini-app')
+    app.router.add_post('/mini-app/api/bootstrap', legacy)
+    async with TestClient(TestServer(app)) as client:
+        await enable(client, vk_app_id=123)
+        login = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        assert login.status == 200
+        token = (await login.json())['session_token']
+        payload = {'init_data': 'vk_session:' + token}
+        native_response = await client.post('/mini-app/api/bootstrap', json=payload)
+        assert native_response.status == 200
+        assert (await native_response.json())['source'] == 'vk-native'
+        native.assert_awaited_once()
+        _, kwargs = native.await_args
+        assert kwargs['actor'].platform == 'vk'
+        assert kwargs['actor'].external_id == 2001
+        assert kwargs['actor'].linked_telegram_id is None
+        assert kwargs['actor'].wallet_platform == 'vk'
+        legacy.assert_not_awaited()
+
+        telegram_response = await client.post('/mini-app/api/bootstrap', json={
+            'init_data': telegram_launch(1001),
+        })
+        assert telegram_response.status == 200
+        assert (await telegram_response.json())['source'] == 'telegram-legacy'
+        legacy.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts.gateway import vk_miniapp_gateway
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    legacy = AsyncMock(return_value=web.json_response({'legacy': True}))
+    app = web.Application(middlewares=[vk_miniapp_gateway('/mini-app')])
+    setup_shared_account_routes(app, '/mini-app')
+    app.router.add_post('/mini-app/api/bootstrap', legacy)
+    async with TestClient(TestServer(app)) as client:
+        await enable(client, vk_app_id=123)
+        signed = await client.post(ROOT + '/session', json={
+            'platform': 'vk', 'launch_data': vk_launch(2001),
+        })
+        token = (await signed.json())['session_token']
+        # Enabling the flag without a complete ready adapter must fail closed.
+        result = await client.post('/mini-app/api/bootstrap', json={'init_data':'vk_session:'+token})
+        assert result.status == 503
+        legacy.assert_not_awaited()
+        invalid = await client.post('/mini-app/api/bootstrap', json={
+            'init_data': 'vk_session:' + 'a' * 43,
+        })
+        assert invalid.status == 401
+        spoof = await client.post('/mini-app/api/bootstrap', json={
+            'init_data': 'vk_session:' + token,
+            'telegram_id': 2001,
+        })
+        assert spoof.status == 400
+        legacy.assert_not_awaited()
+        for identity_field in ('user_id', 'vk_user_id', 'owner_key'):
+            denied = await client.post('/mini-app/api/bootstrap', json={
+                'init_data': 'vk_session:' + token,
+                identity_field: 2001,
+            })
+            assert denied.status == 400
+        legacy.assert_not_awaited()
+        header_spoof = await client.post(
+            '/mini-app/api/bootstrap', json={'vk_user_id': 9999},
+            headers={'X-Telegram-Init-Data': 'vk_session:' + token},
+        )
+        assert header_spoof.status == 400
+        legacy.assert_not_awaited()
+
+        monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '0')
+        fallback = await client.post('/mini-app/api/bootstrap', json={
+            'init_data': 'vk_session:' + token,
+        })
+        assert fallback.status == 200
+        legacy.assert_awaited_once()
+
+def test_actual_miniapp_setup_installs_single_shared_vk_gateway():
+    from bot import miniapp
+
+    app = web.Application()
+    miniapp.setup_miniapp_routes(app)
+    middleware_names = [
+        getattr(callback, "__qualname__", "")
+        for callback in app.middlewares
+    ]
+    assert sum("vk_miniapp_gateway.<locals>.middleware" in name
+               for name in middleware_names) == 1
+    assert any("cors" in name for name in middleware_names)
+    assert any("json_errors" in name for name in middleware_names)

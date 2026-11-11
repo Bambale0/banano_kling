@@ -14,6 +14,7 @@ from .auth import external_id, verify_telegram, verify_vk
 from .commercial import CommercialValidation
 from .commercial_store import CommercialStore
 from .errors import AuthenticationError, PreviewConflict
+from .gateway import full_vk_adapter
 from .links import LinkExpired, LinkService
 from .policy import VKDeliveryConfigurationError, load_policy, save_policy
 from .store import (
@@ -21,6 +22,7 @@ from .store import (
     get_session,
     revoke_session,
 )
+from .task_view import serialize_native_vk_tasks
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import fetch_native_vk_state, submit_native_vk_image
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
@@ -120,12 +122,6 @@ def _bearer(request: web.Request) -> str:
 # Readiness belongs to the server, not to the browser's platform flag.
 # Every domain operation must have a native VK actor/storage/payment adapter
 # before the shared Telegram UI can be safely used by a VK-only identity.
-_VK_FULL_APP_OPERATIONS = frozenset({
-    'bootstrap', 'photo', 'video', 'motion', 'trends', 'feed',
-    'services', 'profile', 'payments', 'referrals', 'tasks',
-})
-
-
 def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: bool) -> bool:
     if platform != 'vk':
         return True
@@ -134,14 +130,7 @@ def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: 
     # accounts once the full platform implementation is registered.
     if telegram_linked:
         return True
-    if os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1':
-        return False
-    adapter = request.app.get('vk_full_app_adapter')
-    return (
-        adapter is not None
-        and type(getattr(adapter, 'ready_operations', None)) is frozenset
-        and _VK_FULL_APP_OPERATIONS.issubset(adapter.ready_operations)
-    )
+    return full_vk_adapter(request.app) is not None
 
 
 async def profile(request: web.Request) -> web.Response:
@@ -189,7 +178,11 @@ async def vk_native_state(request: web.Request) -> web.Response:
         return response({'ok': False, 'error': 'Preview unavailable'}, 404)
     actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
     data = await fetch_native_vk_state(actor.external_id)
-    return response({'ok': True, **data})
+    # The same history-card DTO used by the common Telegram Mini App.
+    # Keep the legacy native rows for backward compatibility until every
+    # detail/repeat route accepts platform-namespaced task identifiers.
+    common_tasks = serialize_native_vk_tasks(data['tasks'], strict=False)
+    return response({'ok': True, **data, 'recent_tasks': common_tasks})
 
 
 async def _vk_writer_actor(request: web.Request) -> int:

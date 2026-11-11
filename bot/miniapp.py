@@ -6581,6 +6581,12 @@ def setup_miniapp_routes(app: web.Application):
     app.middlewares.insert(0, _miniapp_cors_middleware)
     app.middlewares.append(_miniapp_api_json_errors)
 
+    # Optional platform-native dispatch uses the exact SAME Mini App routes.
+    # Remains an inert pass-through unless every VK adapter is registered and
+    # VK_FULL_APP_PARITY_ENABLED is enabled. Telegram remains unchanged.
+    from bot.shared_accounts.gateway import vk_miniapp_gateway
+    app.middlewares.append(vk_miniapp_gateway(miniapp_root))
+
     # miniapp_static_mount_v1
     from pathlib import Path as _MiniAppPath
 
