@@ -1,7 +1,10 @@
 """Public legal document helpers shared by Telegram handlers."""
 
+import asyncio
 import pathlib
 import urllib.parse
+
+from aiogram.exceptions import TelegramRetryAfter
 
 _DOCUMENT_NAMES = {
     "offer": "ofert.md",
@@ -64,3 +67,37 @@ def telegram_text_parts(text: str, *, max_utf16_units: int = 3800) -> list[str]:
     if chars:
         parts.append("".join(chars))
     return parts
+
+
+async def send_legal_parts(
+    message,
+    parts: list[str],
+    reply_markup,
+    *,
+    pause_seconds: float = 1.1,
+    max_flood_retries: int = 2,
+) -> None:
+    """Deliver all parts in order without flooding a Telegram private chat.
+
+    Telegram permits only a limited per-chat message rate. A full ~68 KB offer
+    is a multi-message operation; keep the first answer immediate and pace
+    later parts. Retry only explicit Telegram rate limits (not ambiguous
+    network errors, which could already have delivered a part).
+    """
+    if not parts:
+        raise ValueError("Legal document has no content")
+    for index, part in enumerate(parts):
+        if index:
+            await asyncio.sleep(pause_seconds)
+        for attempt in range(max_flood_retries + 1):
+            try:
+                await message.answer(
+                    part,
+                    reply_markup=reply_markup if index == len(parts) - 1 else None,
+                    parse_mode=None,
+                )
+                break
+            except TelegramRetryAfter as exc:
+                if attempt == max_flood_retries:
+                    raise
+                await asyncio.sleep(max(float(exc.retry_after), 0.1) + 0.2)
