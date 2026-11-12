@@ -3177,3 +3177,11 @@ private references and browser-provided actor information fail closed.
 - VK funding offer now filters to packages with a real `lava_offer_id` before recommending a quick checkout; if none exists, no unsupported quick purchase CTA is rendered. The shared UI remains unchanged on Telegram, and all package values remain from authenticated bootstrap/configuration. No fake merchant offer, wallet credit, runtime business settings or payment API write is introduced.
 - RED: 2 new VK-focused frontend tests failed on original branch. GREEN: 32 targeted Jest tests, TypeScript and scoped ESLint passed. Full Jest and production VK build are separate release gates.
 - Real money, successful Lava invoice creation, webhook replay and reward accounting were **not** simulated by this UI fix. Those must pass before #451 full acceptance; do not conflate a safe provider-selection UI with the full native VK payment implementation.
+# VK native shared-shell bootstrap — 2026-11-12
+
+- Baseline: `tanyapi@04fa78b586bcb35bbe9c6d0c20b168be2389b49d`; native dependency `tanyavk@0536bb51356ef02a97277efbfd2b64e41fa1514a` is deployed and exposes dynamically priced model capabilities.
+- User-visible target: the existing `MiniAppShell` can eventually bootstrap a VK-only actor from the real native wallet, task history, model prices, and payment packages without synthesizing a Telegram identity.
+- Current slice: `VkNativeBootstrapService` validates matching wallet snapshots, maps native priced capabilities to the existing frontend DTO, and composes bootstrap + owned task routes in an explicitly incomplete `VkNativeAppAdapter`.
+- Fail-closed decision: readiness is exactly `bootstrap,tasks`; registration alone cannot satisfy the ten-domain `full_vk_adapter` gate or expose the shared shell. Payment/write/full-parity flags remain OFF.
+- Test evidence: RED on missing service; shared-account/bootstrap suite `73 passed, 70 skipped`; focused initial run `2 passed`; scoped Ruff, compileall, and diff check passed.
+- Next: sync pending wallet relay/checkout merges, then implement photo/video write dispatch, public/private trends/feed, services, profile/referrals/payments, and signed WebView financial acceptance before advertising all readiness domains.

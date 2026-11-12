@@ -6585,9 +6585,15 @@ def setup_miniapp_routes(app: web.Application):
     # Remains an inert pass-through unless every VK adapter is registered and
     # VK_FULL_APP_PARITY_ENABLED is enabled. Telegram remains unchanged.
     from bot.shared_accounts.gateway import vk_miniapp_gateway
+    from bot.shared_accounts.native_bootstrap import VkNativeAppAdapter
     from bot.shared_accounts.native_tasks import VkNativeTasksAdapter
 
     app['vk_native_tasks_adapter'] = VkNativeTasksAdapter()
+    # Registered early for integration testing, but intentionally incomplete:
+    # full_vk_adapter() refuses it until all ten required domains are present.
+    app['vk_full_app_adapter'] = VkNativeAppAdapter(
+        tasks=app['vk_native_tasks_adapter'],
+    )
     app.middlewares.append(vk_miniapp_gateway(miniapp_root))
 
     # miniapp_static_mount_v1
