@@ -33,8 +33,16 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
   const [error, setError] = useState(attempt?.error || '')
   const [loading, setLoading] = useState(false)
   const requestId = useRef(attempt?.request.client_request_id || '')
+  // A provider may have accepted the first request despite a timeout.
+  // Until the invoice is reconciled, never allow a different payload with a
+  // fresh idempotency key from this checkout instance.
+  const termsLocked = loading || attempt !== null
 
   if (!available.length) return null
+  if (attempt && !available.some(item => item.id === attempt.request.package_id
+    && item.methods.includes(attempt.request.payment_method === 'CARD' ? 'lava_card' : 'lava_sbp'))) {
+    return <p role="alert">Условия прежнего счёта изменились. Проверьте его статус перед новым пополнением.</p>
+  }
   const chosen = available.find(p => p.id === packageId) || available[0]
   const methods = chosen.methods.filter(value => value === 'lava_card' || value === 'lava_sbp')
   const normalizedMethod = method === 'SBP' && methods.includes('lava_sbp') ? 'SBP'
@@ -51,11 +59,11 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
   const createInvoice = async () => {
     if (loading || result?.status === 'ready' || result?.status === 'paid') return
     const normalizedEmail = email.trim().toLowerCase()
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
+    if (!attempt && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalizedEmail)) {
       setError('Укажите действительный email для чека.')
       return
     }
-    if (!requestId.current) {
+    if (!attempt && !requestId.current) {
       // Never use predictable Math.random for financial idempotency tokens.
       if (!globalThis.crypto?.getRandomValues) {
         setError('Защищённое соединение недоступно. Откройте приложение повторно.')
@@ -64,7 +72,8 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
       const bytes = crypto.getRandomValues(new Uint8Array(24))
       requestId.current = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
     }
-    const payload: VkInvoiceRequest = {
+    // Retries must carry the byte-for-byte original financial intent.
+    const payload: VkInvoiceRequest = attempt?.request || {
       package_id: chosen.id, payment_method: normalizedMethod,
       customer_email: normalizedEmail, client_request_id: requestId.current,
     }
@@ -89,13 +98,13 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
     onSubmit={event => { event.preventDefault(); void createInvoice() }}>
     <h3 className="font-semibold">Пополнить баланс ВКонтакте</h3>
     <label className="block text-sm" htmlFor="vk-package">Пакет пополнения</label>
-    <select id="vk-package" aria-label="Пакет пополнения" value={chosen.id} disabled={loading}
+    <select id="vk-package" aria-label="Пакет пополнения" value={chosen.id} disabled={termsLocked}
       onChange={event => { setPackageId(event.target.value); resetRequest() }}
       className="w-full rounded-lg border border-border bg-background p-2">
       {available.map(item => <option key={item.id} value={item.id}>{item.price_rub} ₽ · {item.credits} 🍌</option>)}
     </select>
     <label className="block text-sm" htmlFor="vk-method">Способ оплаты</label>
-    <select id="vk-method" aria-label="Способ оплаты" value={normalizedMethod} disabled={loading}
+    <select id="vk-method" aria-label="Способ оплаты" value={normalizedMethod} disabled={termsLocked}
       onChange={event => { setMethod(event.target.value as 'CARD' | 'SBP'); resetRequest() }}
       className="w-full rounded-lg border border-border bg-background p-2">
       {methods.includes('lava_card') && <option value="CARD">Карта</option>}
@@ -103,7 +112,7 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
     </select>
     <label className="block text-sm" htmlFor="vk-email">Email для чека</label>
     <input id="vk-email" aria-label="Email для чека" type="email" required autoComplete="email" value={email}
-      disabled={loading} onChange={event => { setEmail(event.target.value); resetRequest() }}
+      disabled={termsLocked} onChange={event => { setEmail(event.target.value); resetRequest() }}
       className="w-full rounded-lg border border-border bg-background p-2" />
     {!result || result.status === 'unknown' || result.status === 'creating'
       ? <button type="submit" disabled={loading}
