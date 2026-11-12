@@ -174,7 +174,22 @@ def cached_trend_preview_assets(preview_url: str | None) -> dict[str, str | None
     result = {"preview_url": preview_url, "preview_poster_url": None}
     if not preview_url:
         return result
-    source_name = resolve_local_upload_path(preview_url)
+    # Catalog reads are synchronous: S3 downloads here block the request event
+    # loop and can stall unrelated Telegram handlers. Use local derivatives only.
+    from bot.services.media_input_utils import (
+        _local_upload_candidate,
+        _resolve_existing_upload_variant,
+    )
+    from bot.services.media_storage import local_upload_path
+
+    candidate = _local_upload_candidate(preview_url)
+    if not candidate:
+        return result
+    try:
+        relative = Path(candidate).relative_to(Path("static/uploads")).as_posix()
+        source_name = _resolve_existing_upload_variant(str(local_upload_path(relative)))
+    except ValueError:
+        return result
     if not source_name:
         return result
     source = Path(source_name)
@@ -182,8 +197,6 @@ def cached_trend_preview_assets(preview_url: str | None) -> dict[str, str | None
         return result
     mp4 = _preview_output_path(source, preview_url)
     poster = _poster_output_path(source, preview_url)
-    mp4 = _materialize_derived(mp4)
-    poster = _materialize_derived(poster)
     if mp4.is_file() and mp4.stat().st_size > 0:
         result["preview_url"] = _preview_public_url(mp4)
     if poster.is_file() and poster.stat().st_size > 0:
@@ -198,7 +211,7 @@ async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str 
     if not preview_url:
         return result
 
-    local_path = resolve_local_upload_path(preview_url)
+    local_path = await asyncio.to_thread(resolve_local_upload_path, preview_url)
     if not local_path:
         return result
 
