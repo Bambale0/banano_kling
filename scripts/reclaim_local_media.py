@@ -15,8 +15,8 @@ import stat
 import sys
 import time
 from contextlib import nullcontext
-from itertools import islice
 from dataclasses import asdict, dataclass
+from itertools import islice
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -63,9 +63,8 @@ def reclaim_one(
     # Re-read local metadata after the remote check to avoid deleting a file
     # replaced concurrently with a different payload.
     current = path.lstat()
-    identity = lambda st: (  # noqa: E731 - compare immutable stat snapshots
-        st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
-    )
+    def identity(st):
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
     if (
         not stat.S_ISREG(current.st_mode)
         or identity(current) != identity(initial)
