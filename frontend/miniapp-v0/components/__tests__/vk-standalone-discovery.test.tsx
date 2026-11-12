@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
@@ -10,6 +10,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicFeedItem: jest.fn(),
   fetchVkNativeState: jest.fn(),
   fetchVkNativeCommerce: jest.fn(),
+  fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
   uploadVkImage: jest.fn(),
@@ -30,6 +31,14 @@ beforeEach(() => {
     tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
       status: 'completed', cost: 2.5, result_url: 'https://example.test/result.jpg',
       created_at: '2026-11-09 12:00:00' }],
+  })
+  jest.mocked(fetchVkModelCatalog).mockResolvedValue({
+    ok:true,
+    photo_models:[{
+      id:'nano_banana_pro',label:'Nano Banana Pro',
+      ratios:['1:1','16:9','9:16'],resolutions:['2K','4K'],max_references:4,
+    }],
+    video_models:[],
   })
   jest.mocked(fetchVkNativeCommerce).mockResolvedValue({
     ok: true, registered: true, balance: 12.5,
@@ -236,6 +245,7 @@ test('VK-only can quote and create an image using native VK wallet', async () =>
     .mockResolvedValueOnce({ ok: true, task_id: 74, cost: 2.5 })
   render(<VkStandaloneDiscovery />)
   fireEvent.click(await screen.findByRole('button', { name: 'Создать фото' }))
+  await screen.findByRole('option', { name: 'Nano Banana Pro' })
   fireEvent.change(screen.getByLabelText('Промпт'), { target: { value: 'A castle on the moon' } })
   fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Создать за 2.5 🍌' }))

@@ -26,6 +26,7 @@ from .task_view import serialize_native_vk_tasks
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     fetch_native_vk_commerce,
+    fetch_native_vk_models,
     fetch_native_vk_state,
     submit_native_vk_image,
     submit_native_vk_video,
@@ -201,6 +202,15 @@ async def vk_native_state(request: web.Request) -> web.Response:
     # detail/repeat route accepts platform-namespaced task identifiers.
     common_tasks = serialize_native_vk_tasks(data['tasks'], strict=False)
     return response({'ok': True, **data, 'recent_tasks': common_tasks})
+
+
+async def vk_native_models(request: web.Request) -> web.Response:
+    """Expose native worker capabilities to the signed VK actor only."""
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok':False,'error':'Preview unavailable'},404)
+    actor=await resolve_platform_actor(_bearer(request),expected_platform='vk')
+    return response(await fetch_native_vk_models(actor.external_id))
 
 
 async def vk_native_commerce(request: web.Request) -> web.Response:
@@ -638,6 +648,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
     app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
+    app.router.add_get(root + '/vk-models', _guard(vk_native_models))
     # This route authenticates the signed VK session before reading bytes.
     # The legacy add_post wrapper attempts JSON parsing first and drains a
     # multipart body. Register directly, as the existing owned-media APIs do.
