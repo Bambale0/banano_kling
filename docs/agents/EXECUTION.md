@@ -3177,3 +3177,19 @@ private references and browser-provided actor information fail closed.
 - VK funding offer now filters to packages with a real `lava_offer_id` before recommending a quick checkout; if none exists, no unsupported quick purchase CTA is rendered. The shared UI remains unchanged on Telegram, and all package values remain from authenticated bootstrap/configuration. No fake merchant offer, wallet credit, runtime business settings or payment API write is introduced.
 - RED: 2 new VK-focused frontend tests failed on original branch. GREEN: 32 targeted Jest tests, TypeScript and scoped ESLint passed. Full Jest and production VK build are separate release gates.
 - Real money, successful Lava invoice creation, webhook replay and reward accounting were **not** simulated by this UI fix. Those must pass before #451 full acceptance; do not conflate a safe provider-selection UI with the full native VK payment implementation.
+# 2026-11-12 — VK shared-operation native wallet relay (#451)
+
+- Baseline: `tanyapi@8b4e9951e9a084d03ad7a7c075c38a831792907d`.
+- Goal: let upcoming platform-neutral service/social adapters reserve and settle
+  the authoritative VK wallet without a Telegram ID or browser-provided actor.
+- Dependency: native `Bambale0/tanyavk#82` implements the HMAC reserve/settle
+  ledger; both sides remain default-off until cross-repository release checks pass.
+- Contract: exact method/path/body HMAC, loopback-only origin, 32 KiB request
+  bound, actor only in the verified path, actionable 400/402/403/404/409 mapping,
+  bounded timeouts and strict success response validation.
+- Flag: `VK_NATIVE_SHARED_OPERATIONS_ENABLED` is immutable rollout configuration
+  and defaults off. It does not enable `VK_FULL_APP_PARITY_ENABLED`.
+- TDD: import/route contract failed before implementation; focused relay suite is
+  green. No provider, wallet, payment, schema or production configuration changed.
+- Next: consume this relay from owner-safe services/feed/repeat adapters, release
+  native first, then common backend, then enable only after signed VK WebView E2E.

@@ -239,6 +239,87 @@ async def create_native_vk_invoice(vk_user_id: int, payload: dict) -> tuple[int,
     error = data.get('error')
     return status, {'ok': False, 'error': error if error in permitted_errors
                     else 'native_checkout_unavailable'}
+class NativeVkOperationNotFound(LookupError):
+    """The verified VK owner or requested native operation does not exist."""
+
+
+async def _native_vk_operation_call(
+    vk_user_id: int, *, action: str, payload: dict,
+) -> dict:
+    """Relay one exact-body HMAC wallet operation to native VK storage."""
+    import json
+
+    if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
+        raise ValueError('Invalid verified VK identity')
+    if action not in {'reserve', 'settle'} or not isinstance(payload, dict):
+        raise ValueError('Invalid VK operation request')
+    if {'user_id', 'vk_user_id', 'telegram_user_id'}.intersection(payload):
+        raise ValueError('Actor fields are not accepted')
+    if os.getenv('VK_NATIVE_SHARED_OPERATIONS_ENABLED') != '1':
+        raise PermissionError('VK shared operations are disabled')
+    secret = os.getenv('INTERNAL_API_SECRET', '')
+    if not secret:
+        raise RuntimeError('VK internal authentication is not configured')
+    path = f'/internal/v1/miniapp/users/{vk_user_id}/operations/{action}'
+    body = json.dumps(payload, ensure_ascii=False, separators=(',', ':')).encode()
+    if len(body) > 32768:
+        raise ValueError('VK operation payload is too large')
+    stamp = str(int(time.time()))
+    signature = hmac.new(
+        secret.encode(),
+        b'\n'.join([stamp.encode(), b'POST', path.encode(), body]),
+        hashlib.sha256,
+    ).hexdigest()
+    timeout = aiohttp.ClientTimeout(total=8, connect=2)
+    async with (
+        aiohttp.ClientSession(timeout=timeout) as client,
+        client.post(_internal_origin() + path, data=body, headers={
+            'Content-Type': 'application/json',
+            'X-Internal-Timestamp': stamp,
+            'X-Internal-Signature': signature,
+        }, allow_redirects=False) as result,
+    ):
+        if result.status == 400:
+            raise ValueError('Invalid native VK operation request')
+        if result.status == 402:
+            raise InsufficientFunds('Insufficient VK balance')
+        if result.status == 403:
+            raise PermissionError('VK native account is blocked')
+        if result.status == 404:
+            raise NativeVkOperationNotFound('VK account or operation not found')
+        if result.status == 409:
+            raise PreviewConflict('VK operation conflicts with an earlier request')
+        if result.status != 200:
+            raise RuntimeError('VK native operation ledger unavailable')
+        data = await result.json()
+    key = data.get('client_request_id') if isinstance(data, dict) else None
+    expected_key = payload.get('client_request_id')
+    if (
+        not isinstance(data, dict)
+        or data.get('ok') is not True
+        or data.get('status') not in {'reserved', 'completed', 'unknown', 'refunded'}
+        or type(key) is not str
+        or not 16 <= len(key) <= 80
+        or (expected_key is not None and key != expected_key)
+        or type(data.get('cost')) not in (int, float)
+        or data['cost'] < 0
+        or type(data.get('balance')) not in (int, float)
+        or data['balance'] < 0
+    ):
+        raise RuntimeError('VK native operation response invalid')
+    return data
+
+
+async def reserve_native_vk_operation(vk_user_id: int, payload: dict) -> dict:
+    return await _native_vk_operation_call(
+        vk_user_id, action='reserve', payload=payload,
+    )
+
+
+async def settle_native_vk_operation(vk_user_id: int, payload: dict) -> dict:
+    return await _native_vk_operation_call(
+        vk_user_id, action='settle', payload=payload,
+    )
 
 
 async def submit_native_vk_image(vk_user_id: int, payload: dict) -> dict:
