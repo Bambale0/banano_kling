@@ -90,3 +90,70 @@ def test_reclaim_refuses_equal_size_nonverified_content(monkeypatch, tmp_path):
 
     assert result.status == "blocked"
     assert source.read_bytes() == b"good"
+
+
+def test_reclaim_skips_recent_file_before_remote_head(monkeypatch, tmp_path):
+    root = tmp_path / "uploads"
+    source = root / "refs/image/recent.jpg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"recent")
+
+    def unexpected_remote(_relative):
+        raise AssertionError("Recently changed media must not be touched")
+
+    monkeypatch.setattr(reclaim, "remote_upload_fingerprint", unexpected_remote)
+    result = reclaim.reclaim_one(
+        source, root=root, execute=True, min_age_seconds=86400
+    )
+    assert result.status == "skipped"
+    assert source.read_bytes() == b"recent"
+
+
+def test_reclaim_streams_limited_catalog_and_journals(monkeypatch, tmp_path):
+    root = tmp_path / "uploads"
+    source = root / "feed/old.jpg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"verified")
+    digest = hashlib.sha256(b"verified").hexdigest()
+
+    monkeypatch.setattr(reclaim, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(
+        reclaim.S3Settings,
+        "from_config",
+        classmethod(lambda _cls: type("Settings", (), {"bucket": "media-prod"})()),
+    )
+    monkeypatch.setattr(
+        reclaim, "remote_upload_fingerprint", lambda _relative: (8, digest)
+    )
+
+    def generator(_root, _prefixes):
+        yield source
+        raise AssertionError("CLI loaded beyond --limit into memory")
+
+    monkeypatch.setattr(reclaim, "iter_source_files", generator)
+    manifest = tmp_path / "audit.jsonl"
+    code = reclaim.main([
+        "--root", str(root), "--limit", "1", "--min-age-seconds", "0",
+        "--manifest", str(manifest), "--quiet",
+    ])
+    assert code == 0
+    assert source.read_bytes() == b"verified"
+    import json
+
+    record = json.loads(manifest.read_text().strip())
+    assert record["status"] == "reclaimable"
+    assert record["relative_path"] == "feed/old.jpg"
+
+
+def test_execute_requires_manifest(monkeypatch, tmp_path):
+    root = tmp_path / "uploads"
+    root.mkdir()
+    monkeypatch.setattr(reclaim, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(
+        reclaim.S3Settings,
+        "from_config",
+        classmethod(lambda _cls: type("Settings", (), {"bucket": "media-prod"})()),
+    )
+    assert reclaim.main([
+        "--root", str(root), "--execute", "--confirm-bucket", "media-prod"
+    ]) == 2
