@@ -1220,6 +1220,20 @@ async def test_vk_feed_and_trend_link_ids_are_independent_domains(monkeypatch):
         trend.assert_awaited_once()
 
 
+async def test_vk_linked_account_cannot_claim_full_shell_without_native_adapters(monkeypatch):
+    """Linking TG must never advertise a shared shell backed by TG money."""
+    from types import SimpleNamespace
+
+    from bot.shared_accounts.api import _vk_full_app_ready
+
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    app = web.Application()
+    request = SimpleNamespace(app=app)
+    assert _vk_full_app_ready(request, platform='vk', telegram_linked=True) is False
+    assert _vk_full_app_ready(request, platform='vk', telegram_linked=False) is False
+    assert _vk_full_app_ready(request, platform='telegram', telegram_linked=True) is True
+
+
 async def test_vk_common_shell_capability_requires_all_server_adapters(monkeypatch):
     from types import SimpleNamespace
 

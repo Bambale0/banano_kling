@@ -137,11 +137,9 @@ def _bearer(request: web.Request) -> str:
 def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: bool) -> bool:
     if platform != 'vk':
         return True
-    # Retain the established linked-account studio until native VK adapters
-    # are ready, without making Telegram linking a requirement for VK-only
-    # accounts once the full platform implementation is registered.
-    if telegram_linked:
-        return True
+    # Telegram linking is never proof of native VK domain readiness.
+    # The shared shell may mount only when every native VK operation is
+    # registered, regardless of whether this actor linked Telegram.
     return full_vk_adapter(request.app) is not None
 
 
