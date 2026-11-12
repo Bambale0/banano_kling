@@ -1,5 +1,7 @@
 """Telegram checkout order is consistent with Mini App payment priority."""
 
+from inspect import unwrap
+
 from bot.keyboards import get_payment_method_keyboard
 
 
@@ -34,7 +36,6 @@ def test_unconfigured_lava_is_not_advertised():
 
 
 def test_direct_bot_checkout_hides_robokassa_even_when_provider_is_enabled():
-    from inspect import unwrap
     from bot.handlers.lava_checkout import _payment_options_keyboard
 
     markup = unwrap(_payment_options_keyboard)(
