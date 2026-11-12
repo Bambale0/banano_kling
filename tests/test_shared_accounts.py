@@ -1512,6 +1512,14 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
             })
             assert denied.status == 400
         legacy.assert_not_awaited()
+        # Conflicting header and body credentials must not select one actor
+        # while passing the other credential to the native handler.
+        conflict = await client.post(
+            '/mini-app/api/bootstrap', json={'init_data': telegram_launch(1001)},
+            headers={'X-Telegram-Init-Data': 'vk_session:' + token},
+        )
+        assert conflict.status == 400
+        legacy.assert_not_awaited()
         header_spoof = await client.post(
             '/mini-app/api/bootstrap', json={'vk_user_id': 9999},
             headers={'X-Telegram-Init-Data': 'vk_session:' + token},
