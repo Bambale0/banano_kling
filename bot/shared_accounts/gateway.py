@@ -76,6 +76,25 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             and request.path in native_task_paths
         )
         if not full_enabled and not native_tasks_enabled:
+            # A disabled VK-native task adapter must not fall through to
+            # legacy Telegram history/detail. A linked VK actor still owns
+            # a separate native SQLite task ledger.
+            if request.path in native_task_paths:
+                supplied = request.headers.get('X-Telegram-Init-Data', '')
+                if not supplied and request.content_type == 'application/json':
+                    if (request.content_length is not None
+                        and request.content_length > MAX_GATEWAY_JSON_BYTES):
+                        return await handler(request)
+                    try:
+                        body = await request.json()
+                    except (ValueError, TypeError):
+                        body = None
+                    if isinstance(body, dict):
+                        supplied = body.get('init_data', '')
+                if isinstance(supplied, str) and supplied.startswith('vk_session:'):
+                    return web.json_response({
+                        'ok': False, 'error': 'VK native task history unavailable',
+                    }, status=503, headers={'Cache-Control': 'no-store'})
             return await handler(request)
         if (request.method == 'OPTIONS'
             or not request.path.startswith(base)
