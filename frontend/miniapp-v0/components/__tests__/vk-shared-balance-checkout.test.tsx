@@ -149,3 +149,43 @@ it('refuses VK checkout if the native wallet snapshot is absent or malformed', a
   expect(screen.queryByRole('form', { name: 'Пополнение VK-баланса' })).not.toBeInTheDocument()
   expect(createVkInvoice).not.toHaveBeenCalled()
 })
+
+it('keeps invoice amount, method and email immutable after an ambiguous outcome', async () => {
+  ;(createVkInvoice as jest.Mock)
+    .mockRejectedValueOnce(new Error('provider outcome unknown'))
+    .mockResolvedValueOnce({
+      ok: true, status: 'ready', amount_rub: 250, credits: 25,
+      payment_url: 'https://lava.top/pay/native-test',
+    })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('provider outcome unknown')
+  expect(screen.getByRole('combobox', { name: 'Пакет пополнения' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Способ оплаты' })).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect((createVkInvoice as jest.Mock).mock.calls[1][0])
+    .toEqual((createVkInvoice as jest.Mock).mock.calls[0][0])
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+it('locks invoice parameters when the native provider reports an unknown invoice state', async () => {
+  ;(createVkInvoice as jest.Mock).mockResolvedValue({
+    ok: true, status: 'unknown', amount_rub: 250, credits: 25,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByText(/Статус счёта уточняется/)).toBeInTheDocument()
+  expect(screen.getByRole('combobox', { name: 'Пакет пополнения' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Способ оплаты' })).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+})
