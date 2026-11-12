@@ -87,7 +87,10 @@ def test_text_bot_lava_is_first_and_robokassa_is_hidden() -> None:
         lava_foreign=False, lava_foreign_price_usd=None,
         crypto=True, freekassa=True, robokassa=True,
     )
-    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    callbacks = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+        if button.callback_data
+    ]
     assert callbacks[:4] == [
         "buy_lava_card_pro", "buy_lava_sbp_pro",
         "freekassa_card_pro", "freekassa_sbp_pro",
