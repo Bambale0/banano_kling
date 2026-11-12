@@ -63,11 +63,11 @@ def _provider_keyboard(
     lava: bool,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if robokassa:
-        builder.button(
-            text="💳 СБП / карта · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
-        )
+    # Keep the argument and the old callback handler for pending invoices, but
+    # never surface Robokassa as a new purchase option.
+    _ = robokassa
+    if lava:
+        builder.button(text="💳 Lava.top", callback_data=f"buy_lava_{package_id}")
     if freekassa:
         builder.button(
             text="↩️ Резерв · KASSA",
@@ -80,8 +80,6 @@ def _provider_keyboard(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
         )
-    if lava:
-        builder.button(text="💳 Lava", callback_data=f"buy_lava_{package_id}")
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)
     return builder.as_markup()

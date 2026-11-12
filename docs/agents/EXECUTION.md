@@ -1,3 +1,11 @@
+## 2026-11-12 — Lava.top first, Robokassa hidden from NEW checkout methods (reconciliation of #469)
+
+- This change preserves the restored in-chat offer and privacy contract from #481.
+- Telegram and Mini App offer configured Lava.top card/SBP methods ahead of reserves; Robokassa is not offered for new purchases.
+- Existing Robokassa invoices, provider handlers, webhook, and reconciliation remain compatible, no balance or database edits.
+- Resolved an outdated #469 branch conflict against current tanyapi; kept the current signed Ubuntu apt mirror/IPv4 fallback script unchanged to avoid CI regression.
+- Require current branch-protected tests, exact-SHA deploy and real UI acceptance; no live purchase or financial flags enabled here.
+
 ## 2026-11-12 — Restore Telegram legal documents as full chat text (PR #441 regression)
 
 - Baseline `tanyapi@5188f123043e5b8426f1ce9e7ef53039d7b8d188`, task branch `fix/legal-text-delivery-20261112`. User explicitly requested reverting the file-only delivery from PR #463.

@@ -9,7 +9,7 @@ import { chromium, devices, webkit } from 'playwright'
 const root = mkdtempSync(join(tmpdir(), 'payment-browser-e2e-'))
 const origin = 'http://127.0.0.1:4203'
 const baseUrl = `${origin}/mini-app/`
-const exactUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx?InvId=9007199254740993123&Receipt=%257B%2522items%2522%253A%255B%255D%257D&SignatureValue=synthetic'
+const exactUrl = 'https://gate.lava.top/pay/fixture-9007199254740993123?order=fixture&signature=synthetic'
 symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
 const server = spawn('python3', ['-m', 'http.server', '4203', '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
 let browser
@@ -71,7 +71,7 @@ try {
           ok: true, telegram_id: 720005, first_name: 'Synthetic', telegram_username: 'fixture',
           referral_code: 'FIXTURE', bot_username: 'fixture_bot', credits: creditedBalance, is_admin: false,
           telegram_chat_available: true, mini_app_url: baseUrl, actions: [],
-          payment_packages: [{ id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true }],
+          payment_packages: [{ id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true, lava_offer_id: 'configured-offer' }],
           image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro', cost: 2, ratios: ['1:1'] }],
           video_models: [{
             id: 'v3_pro', label: 'Synthetic video', description: 'Fixture video model',
@@ -82,9 +82,9 @@ try {
         else if (url.pathname.endsWith('/create-payment')) {
           paymentRequests++
           const body = request.postDataJSON()
-          assert.equal(body.provider, 'robokassa'); assert.equal(body.package_id, 'start')
+          assert.equal(body.provider, 'lava_card'); assert.equal(body.package_id, 'start')
           await new Promise(resolve => setTimeout(resolve, 1250))
-          data = { ok: true, provider: 'robokassa', order_id: '9007199254740993123', payment_id: 'fixture', payment_url: exactUrl, credits: 50 }
+          data = { ok: true, provider: 'lava_card', order_id: '9007199254740993123', payment_id: 'fixture', payment_url: exactUrl, credits: 50 }
         }
         else if (url.pathname.endsWith('/client-log')) return route.fulfill({ json: { ok: true } })
         else if (url.pathname.endsWith('/prompts')) data = { ok: true, prompts: showTrend ? [{
@@ -108,7 +108,7 @@ try {
     })
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
     await page.locator('header button').last().click()
-    await page.getByRole('button', { name: 'СБП / карта', exact: true }).click()
+    await page.getByRole('button', { name: 'Карта', exact: true }).click()
     const proceed = page.getByRole('link', { name: 'Перейти к оплате', exact: true })
     await proceed.waitFor()
     assert.equal(await proceed.getAttribute('href'), exactUrl)
@@ -137,7 +137,7 @@ try {
     const clientLogs = await page.evaluate(() => window.__paymentClientLogs)
     assert.equal(clientLogs.some(item => item.event === 'payment-checkout-ready'), true)
     for (const log of clientLogs.filter(item => item.event.startsWith('payment-checkout'))) {
-      assert.equal(JSON.stringify(log).includes('SignatureValue'), false, 'No signed URLs in telemetry')
+      assert.equal(/signature=|SignatureValue/i.test(JSON.stringify(log)), false, 'No signed URLs in telemetry')
     }
     // Funding a video must keep the form mounted, select the correct package,
     // and never submit the generation or create a payment without explicit action.

@@ -1,3 +1,4 @@
+from inspect import unwrap
 from pathlib import Path
 
 from aiohttp import web
@@ -32,21 +33,17 @@ def test_telegram_payment_router_places_robokassa_before_freekassa():
     assert robokassa < freekassa < legacy
 
 
-def test_miniapp_exposes_robokassa_primary_freekassa_reserve_and_lava_last():
+def test_miniapp_hides_robokassa_and_shows_lava_primary():
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
-    robokassa_primary = source.index("Robokassa · основной способ")
-    robokassa_button = source.index("handleTopup(pkg.id, 'robokassa')")
-    kassa_reserve = source.index("Резерв · KASSA")
-    tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
-    lava_secondary = source.index("Lava · дополнительный способ")
+    assert "Robokassa · основной способ" not in source
+    assert "handleTopup(pkg.id, 'robokassa')" not in source
+    lava_label = source.index("Lava.top · основной способ")
     lava_card = source.index("handleTopup(pkg.id, 'lava_card')")
     lava_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
-
-    assert robokassa_primary < robokassa_button < kassa_reserve
-    assert kassa_reserve < tribute < lava_secondary
-    assert lava_secondary < lava_card
-    assert lava_secondary < lava_sbp
-    assert "СБП / карта" in source
+    kassa_reserve = source.index("Резерв · KASSA")
+    tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
+    assert lava_label < lava_card < kassa_reserve
+    assert lava_label < lava_sbp < kassa_reserve < tribute
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
 
@@ -68,29 +65,39 @@ def test_main_registers_robokassa_before_freekassa_routes():
     assert robokassa < freekassa
 
 
-def test_text_bot_marks_robokassa_as_primary() -> None:
+def test_text_bot_hides_robokassa_button_but_keeps_old_invoice_callbacks() -> None:
+    from bot.handlers.robokassa_payments import _provider_keyboard
+
+    keyboard = _provider_keyboard(
+        "pro", robokassa=True, freekassa=True, stars=True, crypto=True, lava=True
+    )
+    callbacks = [button.callback_data for row in keyboard.inline_keyboard for button in row]
+    assert callbacks[0] == "buy_lava_pro"
+    assert "buy_robokassa_pro" not in callbacks
     source = _read("bot/handlers/robokassa_payments.py")
-    assert 'text="💳 СБП / карта · Robokassa"' in source
-    assert 'text="↩️ Резерв · Robokassa"' not in source
-    assert '💳 <b>КАРТА | СБП</b>' in source
+    assert 'F.data.startswith("buy_robokassa_")' in source
+    assert 'F.data.startswith("check_robokassa_")' in source
+    assert "async def handle_robokassa_result" in source
 
 
-def test_text_bot_primary_payment_surface_is_robokassa() -> None:
+def test_text_bot_lava_is_first_and_robokassa_is_hidden() -> None:
+    from bot.handlers.lava_checkout import _payment_options_keyboard
+
+    keyboard = unwrap(_payment_options_keyboard)(
+        "pro", stars=True, lava_card=True, lava_sbp=True,
+        lava_foreign=False, lava_foreign_price_usd=None,
+        crypto=True, freekassa=True, robokassa=True,
+    )
+    callbacks = [
+        button.callback_data for row in keyboard.inline_keyboard for button in row
+        if button.callback_data
+    ]
+    assert callbacks[:4] == [
+        "buy_lava_card_pro", "buy_lava_sbp_pro",
+        "freekassa_card_pro", "freekassa_sbp_pro",
+    ]
+    assert "buy_robokassa_pro" not in callbacks
     source = _read("bot/handlers/lava_checkout.py")
-
-    assert 'from bot.services.robokassa_service import robokassa_service' in source
-    assert 'has_robokassa = bool(robokassa_service.enabled)' in source
-    assert 'text="💳 СБП / карта · Robokassa"' in source
-    assert 'text="↩️ Резерв · KASSA · карта"' in source
-    assert 'text="↩️ Резерв · KASSA · СБП"' in source
-    assert 'text="💳 Карта · Lava"' in source
-    assert 'text="⚡ СБП · Lava"' in source
-    assert source.index('text="💳 СБП / карта · Robokassa"') < source.index(
-        'text="↩️ Резерв · KASSA · карта"'
-    )
-    assert source.index('text="↩️ Резерв · KASSA · СБП"') < source.index(
-        'text="💳 Карта · Lava"'
-    )
-    assert 'callback_data=f"buy_robokassa_{package_id}"' in source
-    assert 'robokassa=has_robokassa' in source
-
+    assert "has_robokassa" not in source
+    assert "Lava.top · карта" in source
+    assert "Lava.top · СБП" in source

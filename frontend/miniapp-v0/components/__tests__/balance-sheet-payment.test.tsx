@@ -10,10 +10,10 @@ jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
 jest.mock('@/lib/api', () => ({ bootstrapApp: jest.fn(), sendMiniAppClientLog: jest.fn() }))
 
-const exactUrl = 'https://auth.robokassa.ru/Merchant/Index.aspx?InvId=9007199254740993123&Receipt=%257B%2522items%2522%253A%255B%255D%257D&SignatureValue=synthetic'
+const exactUrl = 'https://gate.lava.top/pay/fixture-9007199254740993123?order=fixture&signature=synthetic'
 const openLink = jest.fn()
 const fixture = { state: { mode: 'live', user: { credits: 1 }, recentTasks: [], paymentPackages: [
-  { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true },
+  { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true, lava_offer_id: 'configured-offer' },
 ] }, isBalanceOpen: true, closeBalance: jest.fn(), refreshTasks: jest.fn(), refreshBalance: jest.fn() }
 
 beforeEach(() => {
@@ -22,13 +22,13 @@ beforeEach(() => {
   openLink.mockReset()
   ;(useApp as jest.Mock).mockReturnValue(fixture)
   ;(bootstrapApp as jest.Mock).mockResolvedValue({})
-  ;(createPayment as jest.Mock).mockResolvedValue({ ok: true, provider: 'robokassa', order_id: '9007199254740993123', credits: 50, payment_url: exactUrl })
+  ;(createPayment as jest.Mock).mockResolvedValue({ ok: true, provider: 'lava_card', order_id: '9007199254740993123', credits: 50, payment_url: exactUrl })
   Object.assign(window.Telegram!.WebApp!, { platform: 'ios', openLink })
 })
 
 it('opens an iPhone checkout externally on a fresh tap and reuses the exact signed URL', async () => {
   render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   const proceed = await screen.findByRole('link', { name: 'Перейти к оплате' })
   expect(openLink).not.toHaveBeenCalled()
   expect(screen.getByRole('region', { name: 'Готовый счёт' })).toHaveTextContent('500 ₽')
@@ -43,7 +43,7 @@ it('opens an iPhone checkout externally on a fresh tap and reuses the exact sign
 it('keeps a direct retry after an Android bridge silently ignores the async open', async () => {
   Object.assign(window.Telegram!.WebApp!, { platform: 'android' })
   render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   await waitFor(() => expect(openLink).toHaveBeenCalledWith(exactUrl))
   fireEvent.click(await screen.findByRole('link', { name: 'Перейти к оплате' }))
   expect(openLink).toHaveBeenCalledTimes(2)
@@ -53,7 +53,7 @@ it('keeps a direct retry after an Android bridge silently ignores the async open
 it('does not show a checkout when creation fails', async () => {
   ;(createPayment as jest.Mock).mockRejectedValue(new Error('Unavailable'))
   render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   await waitFor(() => expect(createPayment).toHaveBeenCalledTimes(1))
   expect(screen.queryByRole('link', { name: 'Перейти к оплате' })).not.toBeInTheDocument()
   expect(openLink).not.toHaveBeenCalled()
@@ -63,7 +63,7 @@ it('does not show a checkout when creation fails', async () => {
 it('falls back to a native external anchor when Telegram has no bridge', async () => {
   Object.assign(window.Telegram!.WebApp!, { openLink: undefined })
   render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   const proceed = await screen.findByRole('link', { name: 'Перейти к оплате' })
   expect(proceed).toHaveAttribute('href', exactUrl)
   expect(proceed).toHaveAttribute('target', '_blank')
@@ -73,14 +73,14 @@ it('falls back to a native external anchor when Telegram has no bridge', async (
 it('leaves the native anchor action available if Telegram throws', async () => {
   openLink.mockImplementation(() => { throw new Error('Bridge unavailable') })
   render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   const proceed = await screen.findByRole('link', { name: 'Перейти к оплате' })
   const click = new MouseEvent('click', { bubbles: true, cancelable: true })
   fireEvent(proceed, click)
   expect(click.defaultPrevented).toBe(false)
   expect(createPayment).toHaveBeenCalledTimes(1)
   expect(sendMiniAppClientLog).toHaveBeenLastCalledWith('payment-checkout-open-requested', {
-    message: 'provider=robokassa order_id=9007199254740993123 method=browser-link-fallback',
+    message: 'provider=lava_card order_id=9007199254740993123 method=browser-link-fallback',
   })
 })
 
@@ -89,11 +89,11 @@ it('does not open a late checkout response after the balance sheet closes', asyn
   let resolvePayment!: (value: unknown) => void
   ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { resolvePayment = resolve }))
   const { rerender } = render(<BalanceSheet />)
-  fireEvent.click(screen.getByRole('button', { name: 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
   ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
   rerender(<BalanceSheet />)
   await act(async () => {
-    resolvePayment({ ok: true, provider: 'robokassa', order_id: 'fixture', credits: 50, payment_url: exactUrl })
+    resolvePayment({ ok: true, provider: 'lava_card', order_id: 'fixture', credits: 50, payment_url: exactUrl })
   })
   expect(openLink).not.toHaveBeenCalled()
   expect(sendMiniAppClientLog).not.toHaveBeenCalledWith('payment-checkout-ready', expect.anything())
@@ -116,15 +116,15 @@ it('keeps Telegram Stars on the native invoice flow', async () => {
 })
 
 
-it('puts the recommended package first while preserving every existing payment method', () => {
+it('puts the recommended package first without exposing hidden Robokassa', () => {
   ;(useApp as jest.Mock).mockReturnValue({
     ...fixture,
     balanceRequest: { packageId: 'pro', requiredCredits: 50 },
     state: {
       ...fixture.state,
       paymentPackages: [
-        { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true },
-        { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true },
+        { id: 'start', name: 'Старт', credits: 50, price_rub: 500, robokassa_enabled: true, lava_offer_id: 'configured-offer' },
+        { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true, lava_offer_id: 'configured-offer' },
       ],
     },
   })
@@ -134,7 +134,8 @@ it('puts the recommended package first while preserving every existing payment m
   const first = screen.getByRole('heading', { name: 'Про' })
   const second = screen.getByRole('heading', { name: 'Старт' })
   expect(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  expect(screen.getAllByRole('button', { name: 'СБП / карта' })).toHaveLength(2)
+  expect(screen.getAllByRole('button', { name: 'Карта' })).toHaveLength(2)
+  expect(screen.queryByText(/Robokassa/)).not.toBeInTheDocument()
 })
 
 it('offers explicit return to the unchanged repeat only once wallet funds cover its cost', () => {
@@ -170,7 +171,7 @@ it('explains an automatic repeat shortage and starts its configured checkout', a
   expect(region).toHaveTextContent('Подойдёт пакет «Старт»: 50🍌 за 500 ₽')
   fireEvent.click(screen.getByRole('button', { name: 'Купить 50🍌 за 500 ₽' }))
   await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({
-    packageId: 'start', provider: 'robokassa',
+    packageId: 'start', provider: 'lava_card',
   })))
   expect(screen.getByRole('button', { name: 'Выбрать другой пакет' })).toBeInTheDocument()
 })
@@ -309,7 +310,7 @@ it('scrolls the manual payment fallback into view even when checkout was selecte
 
 it.each([
   ['Stars', { ok: true, provider: 'telegram_stars', invoice_url: 'https://t.me/$previous-session', credits: 50 }],
-  ['СБП / карта', { ok: true, provider: 'robokassa', order_id: 'old-order', payment_url: exactUrl, credits: 50 }],
+  ['Карта', { ok: true, provider: 'lava_card', order_id: 'old-order', payment_url: exactUrl, credits: 50 }],
 ] as const)('rejects a previous sheet session %s invoice after closing and reopening', async (name, reply) => {
   let resolvePayment!: (value: unknown) => void
   ;(createPayment as jest.Mock).mockImplementation(() => new Promise(resolve => { resolvePayment = resolve }))
@@ -317,7 +318,7 @@ it.each([
   Object.assign(window.Telegram!.WebApp!, { openInvoice, platform: 'ios' })
   const { rerender } = render(<BalanceSheet />)
 
-  fireEvent.click(screen.getByRole('button', { name: name === 'Stars' ? /Stars/ : 'СБП / карта' }))
+  fireEvent.click(screen.getByRole('button', { name: name === 'Stars' ? /Stars/ : 'Карта' }))
   ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
   rerender(<BalanceSheet />)
   ;(useApp as jest.Mock).mockReturnValue(fixture)
@@ -353,10 +354,11 @@ it('shows only Lava payment methods in the VK application', () => {
 
   render(<BalanceSheet />)
 
-  expect(screen.queryByRole('button', { name: 'СБП / карта' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/Robokassa/i)).not.toBeInTheDocument()
+  expect(screen.queryByText('Резерв · KASSA')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Stars/ })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Карта' })).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'СБП' })).toBeInTheDocument()
-  expect(screen.getByText('Lava')).toBeInTheDocument()
+  expect(screen.getByText('Lava.top · основной способ')).toBeInTheDocument()
 })
