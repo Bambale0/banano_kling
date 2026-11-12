@@ -20,30 +20,26 @@ def test_miniapp_freekassa_uses_signed_server_checkout() -> None:
     assert "freekassa_service.create_payment" not in source
 
 
-def test_miniapp_uses_robokassa_primary_then_freekassa_reserve_then_lava() -> None:
+def test_miniapp_uses_lava_primary_then_freekassa_reserve() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
-
-    assert "Robokassa · основной способ" in source
-    assert "Резерв · Robokassa" not in source
+    assert "Lava.top · основной способ" in source
+    assert "Robokassa · основной способ" not in source
+    assert "handleTopup(pkg.id, 'robokassa')" not in source
     assert "Резерв · KASSA" in source
-    assert "Lava · дополнительный способ" in source
     assert "handleTopup(pkg.id, 'freekassa_card')" in source
     assert "handleTopup(pkg.id, 'freekassa_sbp')" in source
     assert "handleTopup(pkg.id, 'lava_card')" in source
     assert "handleTopup(pkg.id, 'lava_sbp')" in source
     assert "freekassa_enabled" in source
 
-    robokassa = source.index("Robokassa · основной способ")
-    robokassa_button = source.index("handleTopup(pkg.id, 'robokassa')")
-    kassa_reserve = source.index("Резерв · KASSA")
-    tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
-    lava_label = source.index("Lava · дополнительный способ")
+    lava_label = source.index("Lava.top · основной способ")
     lava_card = source.index("handleTopup(pkg.id, 'lava_card')")
     lava_sbp = source.index("handleTopup(pkg.id, 'lava_sbp')")
-    assert robokassa < robokassa_button < kassa_reserve
-    assert kassa_reserve < tribute < lava_label
-    assert lava_label < lava_card
-    assert lava_label < lava_sbp
+    kassa_reserve = source.index("Резерв · KASSA")
+    tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
+    assert lava_label < lava_card < kassa_reserve
+    assert lava_label < lava_sbp < kassa_reserve
+    assert kassa_reserve < tribute
 
 
 def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
@@ -61,14 +57,14 @@ def test_freekassa_checkout_still_owns_email_ip_and_provider_creation() -> None:
     assert 'web.Response(status=499, text="Client closed request")' in checkout
 
 
-def test_miniapp_places_robokassa_then_kassa_then_tribute_then_lava() -> None:
+def test_miniapp_places_lava_before_reserve_methods() -> None:
     source = _read("frontend/miniapp-v0/components/balance-sheet.tsx")
 
-    robokassa = source.index("Robokassa · основной способ")
+    lava = source.index("Lava.top · основной способ")
     kassa_reserve = source.index("Резерв · KASSA")
     tribute = source.index("handleTopup(pkg.id, 'tribute' as PaymentProvider)")
-    lava = source.index("Lava · дополнительный способ")
-    assert robokassa < kassa_reserve < tribute < lava
+    assert lava < kassa_reserve < tribute
+    assert "Robokassa · основной способ" not in source
 
 
 def test_payment_provider_type_includes_freekassa_methods() -> None:
