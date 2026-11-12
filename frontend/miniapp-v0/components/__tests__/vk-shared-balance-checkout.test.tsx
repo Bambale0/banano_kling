@@ -189,3 +189,24 @@ it('locks invoice parameters when the native provider reports an unknown invoice
   expect(screen.getByRole('combobox', { name: 'Способ оплаты' })).toBeDisabled()
   expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
 })
+
+it('permits a fresh invoice only after the previous one is confirmed paid', async () => {
+  ;(createVkInvoice as jest.Mock).mockResolvedValue({
+    ok: true, status: 'paid', amount_rub: 250, credits: 25,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByText('Оплата подтверждена. Обновите баланс.')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+  const originalKey = (createVkInvoice as jest.Mock).mock.calls[0][0].client_request_id
+  fireEvent.click(screen.getByRole('button', { name: 'Начать новое пополнение' }))
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).not.toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect((createVkInvoice as jest.Mock).mock.calls[1][0].client_request_id).not.toBe(originalKey)
+  expect(createPayment).not.toHaveBeenCalled()
+})
