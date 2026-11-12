@@ -291,6 +291,34 @@ export async function createVkInvoice(payload: VkInvoiceRequest, signal?: AbortS
   }), signal)
 }
 
+
+export interface VkNativeModelCatalog {
+  ok: true
+  photo_models: {
+    id: string
+    label: string
+    ratios: string[]
+    resolutions: string[]
+    max_references: number
+  }[]
+  video_models: {
+    id: string
+    label: string
+    ratios: string[]
+    duration_min: number
+    duration_max: number
+    scenarios: ('text' | 'imgtxt')[]
+    max_image_references: number
+  }[]
+}
+
+export async function fetchVkModelCatalog(signal?: AbortSignal): Promise<VkNativeModelCatalog> {
+  // Only the signed VK actor's real native worker may define capabilities.
+  return withPreviewSession(headers => request<VkNativeModelCatalog>('vk-models', {
+    headers, signal,
+  }), signal)
+}
+
 export interface VkNativeCommerce {
   ok: true
   registered: boolean

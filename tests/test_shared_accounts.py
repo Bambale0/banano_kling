@@ -364,6 +364,61 @@ async def test_vk_invoice_loopback_signs_exact_body_and_keeps_provider_status(mo
     assert 'vk_user_id' not in str(expected_payload)
 
 
+
+async def test_vk_model_catalog_bound_to_signed_vk_actor_and_no_telegram(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import api
+
+    monkeypatch.setenv('VK_MINI_APP_SECRET', 'test-vk-app-secret')
+    native = AsyncMock(return_value={
+        'ok': True,
+        'photo_models': [{'id':'nano_banana_pro','label':'Nano Banana Pro',
+                          'ratios':['1:1'],'resolutions':['2K'],'max_references':4}],
+        'video_models': [],
+    })
+    monkeypatch.setattr(api,'fetch_native_vk_models',native,raising=False)
+    async with preview_client() as client:
+        await enable(client,vk_app_id=123)
+        vk_login = await client.post(ROOT+'/session', json={
+            'platform':'vk','launch_data':vk_launch(2001),
+        })
+        header={'Authorization':'Bearer '+(await vk_login.json())['session_token']}
+        result=await client.get(ROOT+'/vk-models?vk_user_id=999999',headers=header)
+        assert result.status==200
+        assert (await result.json())['photo_models'][0]['id']=='nano_banana_pro'
+        native.assert_awaited_once_with(2001)
+        assert (await client.get(ROOT+'/vk-models')).status==401
+        telegram=await login(client,1001)
+        other={'Authorization':'Bearer '+(await telegram.json())['session_token']}
+        assert (await client.get(ROOT+'/vk-models',headers=other)).status==403
+        native.assert_awaited_once_with(2001)
+
+
+async def test_vk_model_catalog_loopback_hmac_rejects_untrusted_schema(monkeypatch):
+    import hashlib
+    import hmac
+
+    from bot.shared_accounts.vk_native import fetch_native_vk_models
+
+    monkeypatch.setenv('INTERNAL_API_SECRET','native-model-catalog')
+    app=web.Application()
+    route='/internal/v1/miniapp/users/2001/models'
+    async def native(request):
+        ts=request.headers['X-Internal-Timestamp']
+        msg=f'{ts}\nGET\n{request.path}\n'.encode()
+        expected=hmac.new(b'native-model-catalog',msg,hashlib.sha256).hexdigest()
+        assert hmac.compare_digest(request.headers['X-Internal-Signature'],expected)
+        assert abs(int(ts)-int(time.time())) < 30
+        return web.json_response({'ok':True,'photo_models':[],'video_models':[]})
+    app.router.add_get(route,native)
+    async with TestClient(TestServer(app)) as client:
+        monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN',f'http://127.0.0.1:{client.server.port}')
+        assert (await fetch_native_vk_models(2001))['ok']
+        with pytest.raises(ValueError):
+            await fetch_native_vk_models(0)
+
+
 async def test_vk_commerce_hmac_loopback_and_proof_shape(monkeypatch):
     import hashlib
     import hmac
@@ -1571,6 +1626,13 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         legacy.assert_not_awaited()
 
         monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '0')
+        # Even with the full adapter disabled, a bearer in a URL must not
+        # reach the legacy handler (logs, proxies and browser history leak it).
+        off_query = await client.post(
+            '/mini-app/api/bootstrap?init_data=vk_session:' + token, json={},
+        )
+        assert off_query.status == 400
+        legacy.assert_not_awaited()
         fallback = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + token,
         })
@@ -1678,8 +1740,10 @@ async def test_partial_native_vk_history_uses_same_route_without_opening_full_sh
         monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '0')
         print('TRACE_NATIVE_TASK_GATE',"        fallback = await client.post('/mini-app/",flush=True)
         fallback = await client.post('/mini-app/api/task-history', json=auth)
-        assert fallback.status == 200
-        assert legacy.await_count == 2
+        # Disabling the native task adapter must not silently project a
+        # signed VK actor into Telegram's legacy task history.
+        assert fallback.status == 503
+        assert legacy.await_count == 1
 
 
 async def test_native_vk_video_quote_signed_identity_contract(monkeypatch):
