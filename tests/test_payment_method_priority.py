@@ -47,10 +47,14 @@ def test_direct_bot_checkout_hides_robokassa_even_when_provider_is_enabled():
         freekassa=True,
         robokassa=True,
     )
-    buttons = _payment_buttons(markup)
-    callbacks = [button.callback_data for button in buttons]
-    assert callbacks[:2] == ["buy_lava_card_pro", "buy_lava_sbp_pro"]
-    assert callbacks[2:4] == ["freekassa_card_pro", "freekassa_sbp_pro"]
+    callbacks = [
+        button.callback_data for row in markup.inline_keyboard for button in row
+        if button.callback_data
+    ]
+    assert callbacks[:4] == [
+        "buy_lava_card_pro", "buy_lava_sbp_pro",
+        "freekassa_card_pro", "freekassa_sbp_pro",
+    ]
     assert "buy_robokassa_pro" not in callbacks
 
 
