@@ -1143,8 +1143,8 @@ class Wan3PrimeLifecycle:
         if not local_path or not os.path.exists(local_path):
             await reject_invalid_result(row["internal_task_id"])
             return False
-        public_url = _managed_public_url(local_path)
-        if not public_url:
+        managed_url = _managed_public_url(local_path)
+        if not managed_url:
             logger.warning("Wan3 result not under managed public upload root: task=%s", row["internal_task_id"])
             await reject_invalid_result(row["internal_task_id"])
             return False
@@ -1156,6 +1156,27 @@ class Wan3PrimeLifecycle:
             except (ImportError, AttributeError, ValueError):
                 result_seconds = None
         if result_seconds is None or not math.isfinite(float(result_seconds)) or float(result_seconds) <= 0:
+            await reject_invalid_result(row["internal_task_id"], local_path)
+            return False
+
+        try:
+            from bot.services.media_storage import persist_upload_file
+
+            relative = Path(local_path).resolve().relative_to(
+                Path("static/uploads").resolve()
+            )
+            public_url = await asyncio.to_thread(
+                persist_upload_file,
+                relative.as_posix(),
+                local_path,
+                content_type="video/mp4",
+                cache_control="private, max-age=0",
+            )
+        except Exception:
+            logger.exception(
+                "Wan3 durable result persistence failed: task=%s",
+                row["internal_task_id"],
+            )
             await reject_invalid_result(row["internal_task_id"], local_path)
             return False
 

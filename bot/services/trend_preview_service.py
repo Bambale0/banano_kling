@@ -7,7 +7,6 @@ import os
 import subprocess
 from pathlib import Path
 
-from bot.config import config
 from bot.services.media_input_utils import resolve_local_upload_path
 
 logger = logging.getLogger(__name__)
@@ -32,7 +31,7 @@ def _is_video_preview_source(source: Path) -> bool:
 def _preview_digest(source: Path, public_url: str) -> str:
     try:
         stat = source.stat()
-        payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
+        payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{stat.st_size}"
     except OSError:
         payload = f"{TREND_PREVIEW_VERSION}|{public_url}|{source}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
@@ -54,8 +53,31 @@ def _poster_output_path(source: Path, public_url: str) -> Path:
 
 def _preview_public_url(output_path: Path) -> str:
     rel_path = output_path.relative_to(Path("static") / "uploads")
-    rel_url = str(rel_path).replace(os.sep, "/")
-    return f"{config.static_base_url.rstrip('/')}/uploads/{rel_url}"
+    from bot.services.media_storage import public_upload_url
+
+    return public_upload_url(str(rel_path).replace(os.sep, "/"))
+
+
+def _materialize_derived(path: Path) -> Path:
+    if path.is_file():
+        return path
+    from bot.services.media_storage import materialize_upload
+
+    relative = path.relative_to(Path("static/uploads")).as_posix()
+    materialized = materialize_upload(relative)
+    return Path(materialized) if materialized else path
+
+
+def _persist_derived(path: Path, *, content_type: str) -> str:
+    from bot.services.media_storage import persist_upload_file
+
+    relative = path.relative_to(Path("static/uploads")).as_posix()
+    return persist_upload_file(
+        relative,
+        path,
+        content_type=content_type,
+        cache_control="public, max-age=31536000, immutable",
+    )
 
 
 def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
@@ -160,6 +182,8 @@ def cached_trend_preview_assets(preview_url: str | None) -> dict[str, str | None
         return result
     mp4 = _preview_output_path(source, preview_url)
     poster = _poster_output_path(source, preview_url)
+    mp4 = _materialize_derived(mp4)
+    poster = _materialize_derived(poster)
     if mp4.is_file() and mp4.stat().st_size > 0:
         result["preview_url"] = _preview_public_url(mp4)
     if poster.is_file() and poster.stat().st_size > 0:
@@ -184,9 +208,6 @@ async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str 
 
     output_path = _preview_output_path(source, preview_url)
     poster_path = _poster_output_path(source, preview_url)
-    preview_public_url = _preview_public_url(output_path)
-    poster_public_url = _preview_public_url(poster_path)
-
     if not output_path.exists() or output_path.stat().st_size <= 0:
         try:
             await asyncio.to_thread(_run_ffmpeg_preview, source, output_path)
@@ -210,9 +231,13 @@ async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str 
             poster_path.unlink(missing_ok=True)
 
     if output_path.exists() and output_path.stat().st_size > 0:
-        result["preview_url"] = preview_public_url
+        result["preview_url"] = await asyncio.to_thread(
+            _persist_derived, output_path, content_type="video/mp4"
+        )
     if poster_path.exists() and poster_path.stat().st_size > 0:
-        result["preview_poster_url"] = poster_public_url
+        result["preview_poster_url"] = await asyncio.to_thread(
+            _persist_derived, poster_path, content_type="image/jpeg"
+        )
     return result
 
 

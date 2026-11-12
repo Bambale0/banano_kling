@@ -42,8 +42,15 @@ def verified_image_urls(actor_id: int, raw: object) -> list[str]:
             or parsed.query or parsed.fragment or
             not re.fullmatch(rf'/uploads/vk-refs/image/{actor_id}/[0-9a-f]{{32}}\.jpg', parsed.path)):
             raise ValueError('VK reference is not owned by this account')
-        local_path = ROOT / str(actor_id) / Path(parsed.path).name
-        if not local_path.is_file() or local_path.is_symlink():
+        from bot.services.media_storage import is_s3_enabled, upload_exists
+
+        if is_s3_enabled():
+            relative = f"vk-refs/image/{actor_id}/{Path(parsed.path).name}"
+            available = upload_exists(relative)
+        else:
+            local_path = ROOT / str(actor_id) / Path(parsed.path).name
+            available = local_path.is_file() and not local_path.is_symlink()
+        if not available:
             raise ValueError('VK reference is no longer available')
         valid.append(raw_url)
     if len(set(valid)) != len(valid):
@@ -76,26 +83,35 @@ def _write_image(actor_id: int, raw: bytes) -> str:
     except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
         raise ValueError('Invalid image') from exc
 
-    folder = ROOT / str(actor_id)
-    folder.mkdir(parents=True, exist_ok=True)
-    # Bounded retention until DB-aware media GC is available. Do not silently
-    # erase uploaded references that an active native VK task may still use.
-    max_files = int(os.getenv('VK_MINIAPP_REF_MAX_FILES_PER_USER', '100'))
-    min_free = int(os.getenv('VK_MINIAPP_REF_MIN_FREE_BYTES', str(5 * 1024**3)))
-    if not 1 <= max_files <= 10000 or min_free < 1024**3:
-        raise ValueError('VK reference storage is not configured')
-    available = os.statvfs(folder)
-    if available.f_bavail * available.f_frsize < min_free:
-        raise ValueError('VK image storage is temporarily full')
-    if sum(1 for entry in folder.iterdir() if entry.is_file()) >= max_files:
-        raise ValueError('Maximum uploaded VK references reached')
     filename = uuid4().hex + '.jpg'
-    local_path = folder / filename
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
-    with os.fdopen(os.open(local_path, flags, 0o644), 'wb') as output:
-        output.write(jpeg)
-    base = config.static_base_url.rstrip('/')
-    return f'{base}/uploads/vk-refs/image/{actor_id}/{filename}'
+    from bot.services.media_storage import is_s3_enabled, persist_upload_bytes
+
+    if not is_s3_enabled():
+        folder = ROOT / str(actor_id)
+        folder.mkdir(parents=True, exist_ok=True)
+        # Bounded retention until DB-aware media GC is available. Do not
+        # silently erase uploaded references that an active task may still use.
+        max_files = int(os.getenv('VK_MINIAPP_REF_MAX_FILES_PER_USER', '100'))
+        min_free = int(os.getenv('VK_MINIAPP_REF_MIN_FREE_BYTES', str(5 * 1024**3)))
+        if not 1 <= max_files <= 10000 or min_free < 1024**3:
+            raise ValueError('VK reference storage is not configured')
+        available = os.statvfs(folder)
+        if available.f_bavail * available.f_frsize < min_free:
+            raise ValueError('VK image storage is temporarily full')
+        if sum(1 for entry in folder.iterdir() if entry.is_file()) >= max_files:
+            raise ValueError('Maximum uploaded VK references reached')
+        local_path = folder / filename
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+        with os.fdopen(os.open(local_path, flags, 0o644), 'wb') as output:
+            output.write(jpeg)
+        base = config.static_base_url.rstrip('/')
+        return f'{base}/uploads/vk-refs/image/{actor_id}/{filename}'
+    return persist_upload_bytes(
+        f'vk-refs/image/{actor_id}/{filename}',
+        jpeg,
+        content_type='image/jpeg',
+        cache_control='private, max-age=0',
+    )
 
 
 async def save_vk_image(actor_id: int, raw: bytes) -> str:

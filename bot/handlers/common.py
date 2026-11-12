@@ -5341,13 +5341,16 @@ async def handle_motion_character_upload(message: types.Message, state: FSMConte
     image_bytes = await message.bot.download_file(file.file_path)
     image_data = image_bytes.read()
 
-    os.makedirs("static/uploads", exist_ok=True)
-    host = config.static_base_url.rstrip("/")
     fname = f"{uuid.uuid4().hex}.jpg"
-    fpath = f"static/uploads/{fname}"
-    with open(fpath, "wb") as f:
-        f.write(image_data)
-    v_image_url = f"{host}/uploads/{fname}"
+    from bot.services.media_storage import persist_upload_bytes
+
+    v_image_url = await asyncio.to_thread(
+        persist_upload_bytes,
+        fname,
+        image_data,
+        content_type="image/jpeg",
+        cache_control="private, max-age=0",
+    )
 
     await state.update_data(v_image_url=v_image_url)
     await message.answer(
@@ -5385,13 +5388,16 @@ async def handle_motion_video_upload(message: types.Message, state: FSMContext):
     video_bytes = await message.bot.download_file(file.file_path)
     video_data = video_bytes.read()
 
-    os.makedirs("static/uploads", exist_ok=True)
-    host = config.static_base_url.rstrip("/")
     fname = f"{uuid.uuid4().hex}.mp4"
-    fpath = f"static/uploads/{fname}"
-    with open(fpath, "wb") as f:
-        f.write(video_data)
-    v_video_url = f"{host}/uploads/{fname}"
+    from bot.services.media_storage import persist_upload_bytes
+
+    v_video_url = await asyncio.to_thread(
+        persist_upload_bytes,
+        fname,
+        video_data,
+        content_type="video/mp4",
+        cache_control="private, max-age=0",
+    )
 
     telegram_id = message.from_user.id
     user = await get_or_create_user(telegram_id)

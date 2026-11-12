@@ -18,8 +18,6 @@ from urllib.parse import urlparse
 import aiohttp
 from PIL import Image, ImageOps
 
-from bot.config import config
-
 logger = logging.getLogger(__name__)
 
 FEED_STORAGE_DIR = Path("static/uploads/feed")
@@ -76,7 +74,14 @@ async def download_to_local(url: str, max_size_bytes: int = FEED_MEDIA_MAX_BYTES
                             return None
 
                 filepath = _rename_to_detected_ext(filepath)
-                local_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/{filepath.name}"
+                from bot.services.media_storage import persist_upload_file
+
+                local_url = persist_upload_file(
+                    f"feed/{filepath.name}",
+                    filepath,
+                    content_type=content_type or None,
+                    cache_control="public, max-age=31536000, immutable",
+                )
                 logger.info("Feed persist: downloaded %s -> %s (%d bytes)", url, local_url, downloaded)
                 return local_url
 
@@ -199,7 +204,19 @@ def feed_thumbnail_url_for(url: str) -> str | None:
     jpg_thumb, legacy_webp_thumb = _thumbnail_paths(source)
     for thumb in (jpg_thumb,):
         if thumb.exists() and _thumbnail_is_usable(thumb):
-            return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{thumb.name}"
+            from bot.services.media_storage import persist_upload_file
+
+            return persist_upload_file(
+                f"feed/thumbs/{thumb.name}",
+                thumb,
+                content_type="image/jpeg",
+                cache_control="public, max-age=31536000, immutable",
+            )
+    from bot.services.media_storage import public_upload_url, upload_exists
+
+    thumb_relative = f"feed/thumbs/{jpg_thumb.name}"
+    if upload_exists(thumb_relative):
+        return public_upload_url(thumb_relative)
     if legacy_webp_thumb.exists():
         try:
             legacy_webp_thumb.unlink()
@@ -272,7 +289,13 @@ def _build_jpeg_thumbnail(source: Path) -> tuple[bytes, int, tuple[int, int]]:
 def ensure_feed_thumbnail(url: str) -> str | None:
     """Create a bounded JPEG thumbnail for a local feed image."""
     source = _local_feed_upload_path(url)
-    if not source or not source.exists() or not source.is_file():
+    if not source:
+        return None
+    if not source.exists():
+        from bot.services.media_storage import materialize_upload
+
+        source = Path(materialize_upload(f"feed/{source.name}") or source)
+    if not source.is_file():
         return None
     if source.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
@@ -282,7 +305,19 @@ def ensure_feed_thumbnail(url: str) -> str | None:
 
     jpg_thumb, legacy_webp_thumb = _thumbnail_paths(source)
     if jpg_thumb.exists() and _thumbnail_is_usable(jpg_thumb):
-        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{jpg_thumb.name}"
+        from bot.services.media_storage import persist_upload_file
+
+        return persist_upload_file(
+            f"feed/thumbs/{jpg_thumb.name}",
+            jpg_thumb,
+            content_type="image/jpeg",
+            cache_control="public, max-age=31536000, immutable",
+        )
+    from bot.services.media_storage import public_upload_url, upload_exists
+
+    thumb_relative = f"feed/thumbs/{jpg_thumb.name}"
+    if upload_exists(thumb_relative):
+        return public_upload_url(thumb_relative)
     if jpg_thumb.exists():
         try:
             jpg_thumb.unlink()
@@ -312,7 +347,14 @@ def ensure_feed_thumbnail(url: str) -> str | None:
                 jpg_thumb,
                 len(encoded) / 1024,
             )
-        return f"{config.static_base_url.rstrip('/')}/uploads/feed/thumbs/{jpg_thumb.name}"
+        from bot.services.media_storage import persist_upload_file
+
+        return persist_upload_file(
+            f"feed/thumbs/{jpg_thumb.name}",
+            jpg_thumb,
+            content_type="image/jpeg",
+            cache_control="public, max-age=31536000, immutable",
+        )
     except Exception:
         try:
             tmp.unlink(missing_ok=True)
@@ -340,8 +382,16 @@ def _copy_local_upload_to_feed(url: str) -> str | None:
         source = Path(source_path)
         try:
             source.resolve().relative_to(FEED_STORAGE_DIR.resolve())
+            from bot.services.media_storage import persist_upload_file
+
+            relative = source.resolve().relative_to(Path("static/uploads").resolve())
+            persisted_url = persist_upload_file(
+                relative.as_posix(),
+                source,
+                cache_control="public, max-age=31536000, immutable",
+            )
             ensure_feed_thumbnail(url)
-            return url
+            return persisted_url
         except ValueError:
             pass
 
@@ -352,7 +402,13 @@ def _copy_local_upload_to_feed(url: str) -> str | None:
         shutil.copy2(source, destination)
         destination = _rename_to_detected_ext(destination)
 
-        local_url = f"{config.static_base_url.rstrip('/')}/uploads/feed/{destination.name}"
+        from bot.services.media_storage import persist_upload_file
+
+        local_url = persist_upload_file(
+            f"feed/{destination.name}",
+            destination,
+            cache_control="public, max-age=31536000, immutable",
+        )
         ensure_feed_thumbnail(local_url)
         logger.info("Feed persist: copied local upload %s -> %s", url, local_url)
         return local_url
@@ -368,10 +424,12 @@ def _remove_new_feed_files(urls: list[str]) -> None:
         if not path:
             continue
         try:
-            path.unlink(missing_ok=True)
+            from bot.services.media_storage import delete_upload
+
+            delete_upload(path.relative_to(Path("static/uploads")).as_posix())
             jpg_thumb, legacy_webp_thumb = _thumbnail_paths(path)
-            jpg_thumb.unlink(missing_ok=True)
-            legacy_webp_thumb.unlink(missing_ok=True)
+            for thumb in (jpg_thumb, legacy_webp_thumb):
+                delete_upload(thumb.relative_to(Path("static/uploads")).as_posix())
         except OSError:
             logger.exception("Feed persist: failed to remove orphaned file %s", path)
 

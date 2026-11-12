@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from datetime import UTC, datetime
@@ -154,7 +155,15 @@ async def _assemble_seedance25_video(
         final_path = Path("static/uploads") / final_relative
         os.replace(temp_path, final_path)
 
-        public_url = _public_reference_url(final_relative)
+        from bot.services.media_storage import persist_upload_file
+
+        public_url = await asyncio.to_thread(
+            persist_upload_file,
+            final_relative.as_posix(),
+            final_path,
+            content_type="video/quicktime" if ext == "mov" else "video/mp4",
+            cache_control="private, max-age=0",
+        )
         reference = await save_user_reference(
             telegram_id,
             kind="video",

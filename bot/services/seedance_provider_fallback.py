@@ -685,7 +685,15 @@ async def resolve_seedance_status(
                 Path(source).unlink(missing_ok=True)
 
         await asyncio.to_thread(persist)
-        url = config.static_base_url + "/uploads/seedance_fallback/" + filename
+        from bot.services.media_storage import persist_upload_file
+
+        url = await asyncio.to_thread(
+            persist_upload_file,
+            f"seedance_fallback/{filename}",
+            target,
+            content_type="video/mp4",
+            cache_control="private, max-age=0",
+        )
         await _update(
             task_id,
             result_url=url,

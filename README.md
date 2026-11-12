@@ -23,11 +23,11 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 | --- | --- | --- |
 | Telegram Mini App | `https://neuromixbot.com/mini-app/` | Nginx, статический Next.js export и reverse proxy к API |
 | Backend API | `https://tanyapi.chillcreative.ru` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
-| Media origin | `https://neuromixbot.com/uploads/...` | Nginx proxy `/uploads/` к backend `static/uploads` |
+| Media origin | `https://neuromixbot.com/uploads/...` | Стабильный URL-контракт; backend поддерживает local storage и Selectel S3 |
 | Production checkout | `144.76.188.75`, `/root/tanya/banano_kling`, ветка `tanyapi` | Backend и актуальный frontend Nginx размещены на этом сервере |
 | Backend runtime | Docker container `banano-kling-bot` | Compose, localhost API `127.0.0.1:1888`; старый `banano-kling.service` отключён |
 
-Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Исходные файлы production хранятся в `static/uploads`; текущую конфигурацию доменов нужно сверять с runtime и активным Nginx, а не с историческими SSH-профилями.
+Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Проверенный production baseline от 2026-10-22 хранит файлы в `static/uploads`; код также поддерживает Selectel S3 без изменения `/uploads/...` URL. Фактический backend хранилища нужно подтверждать по `/health`, runtime env и логам, а не предполагать по коду.
 
 ## Основные возможности
 
@@ -55,11 +55,14 @@ Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/
 
 ### Media delivery
 
-- production-файлы продолжают храниться в `/root/tanya/banano_kling/static/uploads`;
-- Nginx получает к ним доступ через постоянный bind mount;
+- backend выбирается через `MEDIA_STORAGE_BACKEND=local|s3`; default и старый production baseline — `local`;
+- в S3 mode Selectel хранит канонический объект `uploads/<relative>`, а локальный файл является staging/cache;
+- существующие `/uploads/...` URL и записи БД не переписываются;
 - публичная лента и WebP-превью кешируются Cloudflare;
 - приватные и временные uploads не получают годовой публичный кеш;
 - DEV использует отдельный checkout/media root и не должен писать в production `static/uploads`.
+
+Пошаговая миграция, проверка и rollback: [docs/selectel-s3-media.md](docs/selectel-s3-media.md).
 
 ## Стек
 

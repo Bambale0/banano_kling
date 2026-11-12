@@ -33,6 +33,7 @@ STATIC_BASE_URL=https://neuromixbot.com
 DATABASE_URL=REPLACE_ME
 REDIS_URL=redis://127.0.0.1:6379/0
 REDIS_PREFIX=neuromix
+MEDIA_STORAGE_BACKEND=local
 
 # Security
 INTERNAL_API_SECRET=REPLACE_ME
@@ -330,7 +331,35 @@ BANANO_LOG_TO_STDOUT=1
 
 Технический prefix `BANANO_*` legacy и не является пользовательским брендом.
 
-## 13. Frontend build variables
+## 13. Selectel S3 media storage
+
+`MEDIA_STORAGE_BACKEND` принимает `local` (default/rollback) или `s3`.
+Для `s3` обязательны:
+
+- `MEDIA_S3_ENDPOINT` — точный pool-specific S3 endpoint из Selectel;
+- `MEDIA_S3_REGION` — пул/регион бакета;
+- `MEDIA_S3_BUCKET`;
+- `MEDIA_S3_ACCESS_KEY_ID` и `MEDIA_S3_SECRET_ACCESS_KEY`;
+- `MEDIA_S3_KEY_PREFIX=uploads` — текущий compatibility invariant;
+- `MEDIA_S3_PUBLIC_BASE_URL` — стабильный HTTPS media origin, обычно
+  `https://neuromixbot.com`.
+
+Дополнительно:
+
+- `MEDIA_S3_FORCE_PATH_STYLE=1`;
+- `MEDIA_S3_KEEP_LOCAL_CACHE=1` только на окно наблюдения, затем `0` после отдельного
+  подтверждённого этапа очистки;
+- `MEDIA_S3_CACHE_TTL_SECONDS=3600`;
+- `MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS=900`;
+- `MEDIA_S3_CONNECT_TIMEOUT_SECONDS=10`;
+- `MEDIA_S3_READ_TIMEOUT_SECONDS=120`;
+- `MEDIA_S3_MAX_ATTEMPTS=3`;
+- `MEDIA_S3_PRESIGN_TTL_SECONDS=900` — срок короткой подписанной ссылки,
+  которую `/uploads/...` выдаёт редиректом без записи объекта на локальный диск.
+
+Полный rollout и rollback: [selectel-s3-media.md](selectel-s3-media.md).
+
+## 14. Frontend build variables
 
 Frontend может использовать:
 
@@ -340,7 +369,7 @@ Frontend может использовать:
 
 `NEXT_PUBLIC_*` не должны содержать secrets: они попадают в клиентский bundle.
 
-## 14. Cloudflare deploy variables
+## 15. Cloudflare deploy variables
 
 Для `scripts/deploy_media_origin.sh`:
 
@@ -358,7 +387,7 @@ RUN_RENEWAL_DRY_RUN=1
 
 Обычно они передаются окружением запуска и не обязаны находиться в application `.env`.
 
-## 15. Безопасное изменение `.env`
+## 16. Безопасное изменение `.env`
 
 ```bash
 cd /root/tanya/banano_kling
@@ -376,7 +405,7 @@ curl -fsS http://127.0.0.1:1888/health
 journalctl -u banano-kling.service -n 100 --no-pager
 ```
 
-## 16. Проверка без раскрытия секретов
+## 17. Проверка без раскрытия секретов
 
 Показывать только имена заполненных переменных:
 

@@ -85,7 +85,14 @@ def save_repeat_choice_image(raw: bytes) -> str:
             temporary.replace(directory / name)
         finally:
             temporary.unlink(missing_ok=True)
-    return f"{config.static_base_url.rstrip('/')}/uploads/repeat-choices/{name}"
+    from bot.services.media_storage import persist_upload_file
+
+    return persist_upload_file(
+        f"repeat-choices/{name}",
+        directory / name,
+        content_type="image/jpeg",
+        cache_control="public, max-age=31536000, immutable",
+    )
 
 
 def _image_choices(raw: Mapping[str, Any]) -> list[dict[str, str]]:
