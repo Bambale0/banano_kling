@@ -220,6 +220,10 @@ def _provider_keyboard(
     lava: bool,
 ) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if lava:
+        builder.button(
+            text="💳 Lava.top", callback_data=f"buy_lava_{package_id}"
+        )
     if freekassa:
         builder.button(
             text="↩️ Резерв · KASSA",
@@ -233,10 +237,6 @@ def _provider_keyboard(
         builder.button(
             text="₿ Криптовалюта (CryptoBot)",
             callback_data=f"buy_crypto_{package_id}",
-        )
-    if lava:
-        builder.button(
-            text="💳 Lava", callback_data=f"buy_lava_{package_id}"
         )
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)

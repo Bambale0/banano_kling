@@ -15,7 +15,19 @@ describe('platform-aware contextual checkout provider', () => {
     expect(preferredProviderForPackage({ ...packageWithAllMethods, lava_offer_id: '' }, 'vk')).toBeNull()
   })
 
-  it('preserves the Telegram provider ordering', () => {
-    expect(preferredProviderForPackage(packageWithAllMethods)).toBe('robokassa')
+  it('prioritizes Lava.top in Telegram even when Robokassa and KASSA are configured', () => {
+    expect(preferredProviderForPackage(packageWithAllMethods)).toBe('lava_card')
+  })
+
+  it('uses KASSA as the reserve when Lava is not configured, never hidden Robokassa', () => {
+    expect(preferredProviderForPackage({
+      ...packageWithAllMethods, lava_offer_id: '',
+    })).toBe('freekassa_card')
+  })
+
+  it('uses Stars when only hidden Robokassa is configured', () => {
+    expect(preferredProviderForPackage({
+      ...packageWithAllMethods, lava_offer_id: '', freekassa_enabled: false,
+    })).toBe('telegram_stars')
   })
 })

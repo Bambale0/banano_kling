@@ -305,9 +305,9 @@ export function BalanceSheet() {
         openExternalPayment(payment.payment_url)
         toast.message(
           provider === 'lava_sbp'
-            ? 'Открыта резервная оплата Lava через СБП'
+            ? 'Открыта оплата Lava.top через СБП'
             : provider === 'lava_card'
-              ? 'Открыта резервная оплата Lava картой'
+              ? 'Открыта оплата Lava.top картой'
               : provider === 'lava_foreign_card'
                 ? 'Открыта резервная зарубежная оплата картой'
                 : provider === 'lava_foreign_paypal'
@@ -518,7 +518,7 @@ export function BalanceSheet() {
               </div>
 
               <label className="block space-y-2" htmlFor="payment-customer-email">
-                <span className="text-sm font-medium text-foreground">Почта для дополнительной оплаты через Lava</span>
+                <span className="text-sm font-medium text-foreground">Почта для оплаты через Lava.top</span>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <input
@@ -571,11 +571,9 @@ export function BalanceSheet() {
                     const foreignLoading = loadingPayment === `${pkg.id}:lava_foreign`
                     const foreignCardLoading = loadingPayment === `${pkg.id}:lava_foreign_card`
                     const foreignPayPalLoading = loadingPayment === `${pkg.id}:lava_foreign_paypal`
-                    const robokassaLoading = loadingPayment === `${pkg.id}:robokassa`
                     const freekassaCardLoading = loadingPayment === `${pkg.id}:freekassa_card`
                     const freekassaSbpLoading = loadingPayment === `${pkg.id}:freekassa_sbp`
                     const foreignConfigured = Boolean(pkg.lava_foreign_offer_id || pkg.lava_foreign_product_id)
-                    const robokassaConfigured = Boolean(pkg.robokassa_enabled)
                     const freekassaConfigured = Boolean(pkg.freekassa_enabled)
                     return (
                       <div
@@ -624,22 +622,36 @@ export function BalanceSheet() {
                         </div>
 
                         <div className="mt-4 grid grid-cols-2 gap-2">
-                          {!vkPaymentsOnly && robokassaConfigured ? (
+                          {lavaConfigured ? (
                             <>
-                              <p className="col-span-2 px-1 text-center text-[11px] font-medium text-foreground">
-                                Robokassa · основной способ
+                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
+                                Lava.top · основной способ
                               </p>
                               <Button
-                                onClick={() => handleTopup(pkg.id, 'robokassa')}
+                                onClick={() => handleTopup(pkg.id, 'lava_card')}
                                 disabled={Boolean(loadingPayment)}
-                                className="col-span-2 w-full bg-gold text-primary-foreground hover:bg-gold/90"
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
                               >
-                                {robokassaLoading ? (
+                                {cardLoading ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                  <CreditCard className="mr-2 h-4 w-4" />
+                                )}
+                                Карта
+                              </Button>
+                              <Button
+                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
+                                disabled={Boolean(loadingPayment)}
+                                variant="outline"
+                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+                              >
+                                {sbpLoading ? (
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                 ) : (
                                   <QrCode className="mr-2 h-4 w-4" />
                                 )}
-                                СБП / карта
+                                СБП
                               </Button>
                             </>
                           ) : null}
@@ -701,39 +713,6 @@ export function BalanceSheet() {
                             )}
                             Stars · {starsPrice}⭐
                           </Button> : null}
-                          {lavaConfigured ? (
-                            <>
-                              <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">
-                                {vkPaymentsOnly ? 'Lava' : 'Lava · дополнительный способ'}
-                              </p>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_card')}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                              >
-                                {cardLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <CreditCard className="mr-2 h-4 w-4" />
-                                )}
-                                Карта
-                              </Button>
-                              <Button
-                                onClick={() => handleTopup(pkg.id, 'lava_sbp')}
-                                disabled={Boolean(loadingPayment)}
-                                variant="outline"
-                                className="w-full border-border/40 bg-background/10 text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
-                              >
-                                {sbpLoading ? (
-                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                ) : (
-                                  <QrCode className="mr-2 h-4 w-4" />
-                                )}
-                                СБП
-                              </Button>
-                            </>
-                          ) : null}
                           {foreignConfigured ? (
                             <>
                               <p className="col-span-2 mt-1 px-1 text-center text-[11px] text-muted-foreground">

@@ -38,7 +38,7 @@ const bootstrap = { ok: true, telegram_id: 424242, first_name: 'E2E', last_name:
   referral_code: 'E2EOWNER', profile_link: '', referral_link: '', channel_url: '', prompt_repeat_balance_rub: 0, prompt_repeat_total_rub: 0,
   bot_username: 'test_bot', credits: 125, is_admin: false, mini_app_url: baseUrl, actions: [], payment_packages: [
     { id: 'repeat-mini', name: 'Для повтора', credits: 10, price_rub: 100, price_stars: 100,
-      robokassa_enabled: true, description: 'Минимальное пополнение для теста' },
+      robokassa_enabled: true, lava_offer_id: 'synthetic-lava-offer', description: 'Минимальное пополнение для теста' },
     { id: 'repeat-more', name: 'С запасом', credits: 50, price_rub: 450, price_stars: 450,
       robokassa_enabled: true, description: 'Больше бананов' },
   ], image_models: [],

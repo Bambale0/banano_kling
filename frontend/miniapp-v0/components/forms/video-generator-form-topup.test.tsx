@@ -39,7 +39,7 @@ it('offers a configured package only after server verifies the private video rep
       mode: 'live', user: { credits: 5, isAdmin: false },
       paymentPackages: [
         { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
-        { id: 'start', name: 'Старт', credits: 25, price_rub: 250, robokassa_enabled: true },
+        { id: 'start', name: 'Старт', credits: 25, price_rub: 250, robokassa_enabled: true, lava_offer_id: 'configured-offer' },
       ],
     },
     openBalance,

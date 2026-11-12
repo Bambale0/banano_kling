@@ -28,7 +28,6 @@ from bot.payment_utils import (
 from bot.services.cryptobot_service import cryptobot_service
 from bot.services.lava_service import lava_service
 from bot.services.preset_manager import preset_manager
-from bot.services.robokassa_service import robokassa_service
 from bot.states import PaymentStates
 
 logger = logging.getLogger(__name__)
@@ -191,13 +190,20 @@ def _payment_options_keyboard(
     freekassa: bool,
     robokassa: bool = False,
 ) -> types.InlineKeyboardMarkup:
-    """Show Robokassa first, KASSA as reserve, and Lava lower in the list."""
+    """Show configured Lava.top first and keep existing reserve payment methods."""
 
     builder = InlineKeyboardBuilder()
-    if robokassa:
+    # Kept for old call sites; never expose Robokassa for new purchases.
+    _ = robokassa
+    if lava_card:
         builder.button(
-            text="💳 СБП / карта · Robokassa",
-            callback_data=f"buy_robokassa_{package_id}",
+            text="💳 Lava.top · карта",
+            callback_data=f"buy_lava_card_{package_id}",
+        )
+    if lava_sbp:
+        builder.button(
+            text="⚡ Lava.top · СБП",
+            callback_data=f"buy_lava_sbp_{package_id}",
         )
     if freekassa:
         builder.button(
@@ -209,25 +215,9 @@ def _payment_options_keyboard(
             callback_data=f"freekassa_sbp_{package_id}",
         )
     if stars:
-        builder.button(
-            text="⭐ Stars",
-            callback_data=f"buy_stars_{package_id}",
-        )
+        builder.button(text="⭐ Stars", callback_data=f"buy_stars_{package_id}")
     if crypto:
-        builder.button(
-            text="₿ Криптовалюта",
-            callback_data=f"buy_crypto_{package_id}",
-        )
-    if lava_card:
-        builder.button(
-            text="💳 Карта · Lava",
-            callback_data=f"buy_lava_card_{package_id}",
-        )
-    if lava_sbp:
-        builder.button(
-            text="⚡ СБП · Lava",
-            callback_data=f"buy_lava_sbp_{package_id}",
-        )
+        builder.button(text="₿ Криптовалюта", callback_data=f"buy_crypto_{package_id}")
     if lava_foreign:
         builder.button(
             text="🌐 Резерв · зарубежная карта",
@@ -336,14 +326,12 @@ async def show_direct_payment_methods(
         lava_foreign_price_usd = float(package.get("price_usd") or 0) or None
     except (TypeError, ValueError):
         lava_foreign_price_usd = None
-    has_robokassa = bool(robokassa_service.enabled)
     has_freekassa = False
     has_stars = bool(config.TELEGRAM_STARS_ENABLED)
     has_crypto = bool(cryptobot_service.enabled)
 
     if not any(
         (
-            has_robokassa,
             has_lava_card,
             has_lava_sbp,
             has_lava_foreign,
@@ -392,7 +380,7 @@ async def show_direct_payment_methods(
             lava_foreign_price_usd=lava_foreign_price_usd,
             crypto=has_crypto,
             freekassa=has_freekassa,
-            robokassa=has_robokassa,
+            robokassa=False,
         ),
         parse_mode="HTML",
     )
