@@ -10,8 +10,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import stat
 import sys
+import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
+from itertools import islice
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
@@ -35,9 +40,16 @@ class ReclaimResult:
     detail: str = ""
 
 
-def reclaim_one(path: Path, *, root: Path, execute: bool) -> ReclaimResult:
+def reclaim_one(
+    path: Path, *, root: Path, execute: bool, min_age_seconds: int = 0
+) -> ReclaimResult:
     relative = path.relative_to(root).as_posix()
-    size = path.stat().st_size
+    initial = path.lstat()
+    size = initial.st_size
+    if not stat.S_ISREG(initial.st_mode):
+        return ReclaimResult(relative, size, "skipped", "not a regular source file")
+    if min_age_seconds and time.time() - initial.st_mtime < min_age_seconds:
+        return ReclaimResult(relative, size, "skipped", "recently modified source")
     if size <= 0:
         return ReclaimResult(relative, size, "skipped", "empty source file")
     source_digest = file_sha256(path)
@@ -50,11 +62,18 @@ def reclaim_one(path: Path, *, root: Path, execute: bool) -> ReclaimResult:
 
     # Re-read local metadata after the remote check to avoid deleting a file
     # replaced concurrently with a different payload.
-    current_size = path.stat().st_size
-    if current_size != size or file_sha256(path) != source_digest:
+    current = path.lstat()
+    def identity(st):
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+    if (
+        not stat.S_ISREG(current.st_mode)
+        or identity(current) != identity(initial)
+        or file_sha256(path) != source_digest
+        or identity(path.lstat()) != identity(initial)
+    ):
         return ReclaimResult(
             relative,
-            current_size,
+            current.st_size,
             "blocked",
             "local file changed during verification",
         )
@@ -75,6 +94,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="relative subtree to include; repeat for multiple prefixes",
     )
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--min-age-seconds", type=int, default=86400,
+        help="skip recently modified source files (default: 24 hours)",
+    )
+    parser.add_argument("--quiet", action="store_true", help="write per-file results only to manifest")
     parser.add_argument("--manifest", help="append JSONL results to this file")
     parser.add_argument(
         "--execute",
@@ -95,6 +119,12 @@ def main(argv: list[str] | None = None) -> int:
         print("MEDIA_STORAGE_BACKEND must be s3", file=sys.stderr)
         return 2
     settings = S3Settings.from_config()
+    if args.min_age_seconds < 0 or args.limit < 0:
+        print("--min-age-seconds and --limit must not be negative", file=sys.stderr)
+        return 2
+    if args.execute and not args.manifest:
+        print("--execute requires --manifest for durable per-file audit", file=sys.stderr)
+        return 2
     if args.execute and args.confirm_bucket != settings.bucket:
         print(
             "--execute requires --confirm-bucket matching MEDIA_S3_BUCKET",
@@ -106,38 +136,50 @@ def main(argv: list[str] | None = None) -> int:
     if not root.is_dir() or root.is_symlink():
         print(f"Upload root is not a safe directory: {root}", file=sys.stderr)
         return 2
-    files = list(iter_source_files(root, tuple(args.prefix)))
+    # Never materialize the whole multi-million-file catalog in RAM.
+    files = iter_source_files(root, tuple(args.prefix))
     if args.limit > 0:
-        files = files[: args.limit]
-
-    results: list[ReclaimResult] = []
-    for path in files:
-        try:
-            result = reclaim_one(path, root=root, execute=bool(args.execute))
-        except Exception as exc:  # noqa: BLE001 - per-file reclamation boundary
-            result = ReclaimResult(
-                path.relative_to(root).as_posix(),
-                path.stat().st_size if path.exists() else 0,
-                "failed",
-                type(exc).__name__,
-            )
-        results.append(result)
-        print(json.dumps(asdict(result), ensure_ascii=False, sort_keys=True))
-
-    if args.manifest:
-        manifest = Path(args.manifest)
-        manifest.parent.mkdir(parents=True, exist_ok=True)
-        with manifest.open("a", encoding="utf-8") as output:
-            for result in results:
-                output.write(
-                    json.dumps(asdict(result), ensure_ascii=False, sort_keys=True) + "\n"
-                )
+        files = islice(files, args.limit)
 
     summary: dict[str, int] = {}
-    for result in results:
-        summary[result.status] = summary.get(result.status, 0) + 1
-    print(json.dumps({"summary": summary, "total": len(results)}, sort_keys=True))
-    return 1 if any(item.status in {"blocked", "failed"} for item in results) else 0
+    total = 0
+    reclaimed_bytes = 0
+    journal = Path(args.manifest) if args.manifest else None
+    if journal:
+        journal.parent.mkdir(parents=True, exist_ok=True)
+    with (journal.open("a", encoding="utf-8") if journal else nullcontext(None)) as output:
+        for path in files:
+            try:
+                result = reclaim_one(
+                    path, root=root, execute=bool(args.execute),
+                    min_age_seconds=args.min_age_seconds,
+                )
+            except Exception as exc:  # noqa: BLE001 - per-file boundary
+                result = ReclaimResult(
+                    path.relative_to(root).as_posix(),
+                    path.stat().st_size if path.exists() else 0,
+                    "failed",
+                    type(exc).__name__,
+                )
+            record = json.dumps(asdict(result), ensure_ascii=False, sort_keys=True)
+            if output is not None:
+                output.write(record + "\n")
+                output.flush()
+            if not args.quiet:
+                print(record)
+            summary[result.status] = summary.get(result.status, 0) + 1
+            total += 1
+            if result.status == "deleted":
+                reclaimed_bytes += result.size_bytes
+
+        if output is not None:
+            output.flush()
+            os.fsync(output.fileno())
+
+    print(json.dumps({
+        "summary": summary, "total": total, "reclaimed_bytes": reclaimed_bytes,
+    }, sort_keys=True))
+    return 1 if summary.get("blocked", 0) or summary.get("failed", 0) else 0
 
 
 if __name__ == "__main__":
