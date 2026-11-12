@@ -79,6 +79,13 @@ def test_catalog_read_uses_existing_local_derivatives_without_s3(
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(config, "MEDIA_STORAGE_BACKEND", "s3")
+    monkeypatch.setattr(config, "MEDIA_S3_ENDPOINT", "https://s3.example.test")
+    monkeypatch.setattr(config, "MEDIA_S3_REGION", "test-region")
+    monkeypatch.setattr(config, "MEDIA_S3_BUCKET", "test-bucket")
+    monkeypatch.setattr(config, "MEDIA_S3_ACCESS_KEY_ID", "synthetic-access")
+    monkeypatch.setattr(config, "MEDIA_S3_SECRET_ACCESS_KEY", "synthetic-secret")
+    monkeypatch.setattr(config, "MEDIA_S3_KEY_PREFIX", "uploads")
+    monkeypatch.setattr(config, "MEDIA_S3_PUBLIC_BASE_URL", "https://neuromixbot.com")
     source = Path("static/uploads/trends/source.mp4")
     source.parent.mkdir(parents=True)
     source.write_bytes(b"original-video")
