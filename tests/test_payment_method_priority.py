@@ -31,3 +31,36 @@ def test_unconfigured_lava_is_not_advertised():
     assert [button.callback_data for button in _payment_buttons(markup)] == [
         "buy_stars_pro", "buy_crypto_pro",
     ]
+
+
+def test_direct_bot_checkout_hides_robokassa_even_when_provider_is_enabled():
+    from bot.handlers.lava_checkout import _payment_options_keyboard
+
+    markup = _payment_options_keyboard(
+        "pro",
+        stars=True,
+        lava_card=True,
+        lava_sbp=True,
+        lava_foreign=False,
+        lava_foreign_price_usd=None,
+        crypto=True,
+        freekassa=True,
+        robokassa=True,
+    )
+    buttons = _payment_buttons(markup)
+    callbacks = [button.callback_data for button in buttons]
+    assert callbacks[:2] == ["buy_lava_card_pro", "buy_lava_sbp_pro"]
+    assert callbacks[2:4] == ["freekassa_card_pro", "freekassa_sbp_pro"]
+    assert "buy_robokassa_pro" not in callbacks
+
+
+def test_legacy_bot_checkout_keyboard_hides_robokassa_and_prefers_lava():
+    from bot.handlers.robokassa_payments import _provider_keyboard
+
+    markup = _provider_keyboard(
+        "pro", robokassa=True, freekassa=True,
+        stars=True, crypto=True, lava=True,
+    )
+    callbacks = [button.callback_data for button in _payment_buttons(markup)]
+    assert callbacks[0] == "buy_lava_pro"
+    assert "buy_robokassa_pro" not in callbacks
