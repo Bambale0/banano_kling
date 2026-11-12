@@ -105,3 +105,7 @@ method and email for that checkout attempt: ambiguous timeouts and native
 `creating`/`unknown` states may be retried **only with the exact original
 payload and idempotency claim**. This prevents a second invoice being created
 by editing the terms while the first provider result is unresolved.
+
+A fresh invoice with a new idempotency key is available only after the
+previous attempt has been **confirmed paid**; ambiguous and pending attempts
+remain immutable until a verified status is returned.
