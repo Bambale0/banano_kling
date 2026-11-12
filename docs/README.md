@@ -36,9 +36,10 @@ feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smok
 
 Для media-домена:
 
-1. [../ops/media/README.md](../ops/media/README.md);
-2. `scripts/deploy_media_origin.sh`;
-3. `scripts/check_media_delivery.sh`.
+1. [selectel-s3-media.md](selectel-s3-media.md) — S3 rollout, migration, verification и rollback;
+2. [../ops/media/README.md](../ops/media/README.md) — legacy/local origin и Cloudflare;
+3. `scripts/deploy_media_origin.sh`;
+4. `scripts/check_media_delivery.sh`.
 
 ## Основные документы
 
@@ -50,6 +51,7 @@ feature/* -> PR в dev -> автодеплой DEV-бота -> ручной smok
 | [production-deployment.md](production-deployment.md) | DevOps, владелец проекта | DNS, backend, frontend, media, SSL, Cloudflare, smoke tests и rollback |
 | [miniapp-frontend-deployment.md](miniapp-frontend-deployment.md) | frontend/DevOps | `cdn.sh`, remote profile, build, release, cache overlap и npm troubleshooting |
 | [environment.md](environment.md) | разработчик, DevOps | env-переменные, обязательность, значения и правила хранения секретов |
+| [selectel-s3-media.md](selectel-s3-media.md) | backend, DevOps | Selectel S3, безопасная миграция media, verification и rollback |
 | [runbook.md](runbook.md) | оператор | restart, status, logs, health, backup и routine checks |
 | [troubleshooting.md](troubleshooting.md) | оператор, разработчик | симптомы, причины, команды диагностики и безопасные действия |
 | [branding.md](branding.md) | frontend, контент, QA | пользовательский бренд NEUROMIX и допустимые технические имена |

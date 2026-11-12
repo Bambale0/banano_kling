@@ -47,7 +47,7 @@ def _decorate_text_payment_options(
     markup: InlineKeyboardMarkup,
     package_id: str,
 ) -> InlineKeyboardMarkup:
-    """Keep Robokassa first, KASSA reserve next, then Tribute before Lava."""
+    """Keep Lava at the top, KASSA as reserve, Tribute after domestic options."""
 
     tribute_url = TRIBUTE_PACKAGE_LINKS.get(str(package_id))
     if not tribute_url:
@@ -55,44 +55,32 @@ def _decorate_text_payment_options(
 
     reserve_label = "🌍 Зарубежная / СНГ"
     rows: list[list[InlineKeyboardButton]] = []
-
     for row in markup.inline_keyboard:
         if any(button.text == reserve_label for button in row):
             continue
         rows.append(list(row))
 
     reserve_row = [InlineKeyboardButton(text=reserve_label, url=tribute_url)]
-    kassa_callbacks = {
+    domestic_callbacks = {
+        f"buy_lava_card_{package_id}",
+        f"buy_lava_sbp_{package_id}",
+        f"buy_lava_{package_id}",
         f"freekassa_card_{package_id}",
         f"freekassa_sbp_{package_id}",
         f"buy_freekassa_{package_id}",
     }
-    kassa_indexes = [
+    domestic_indexes = [
         index
         for index, row in enumerate(rows)
-        if any(button.callback_data in kassa_callbacks for button in row)
+        if any(button.callback_data in domestic_callbacks for button in row)
     ]
-    if kassa_indexes:
-        rows.insert(max(kassa_indexes) + 1, reserve_row)
-    else:
-        robokassa_indexes = [
-            index
-            for index, row in enumerate(rows)
-            if any(
-                str(button.callback_data or "").startswith("buy_robokassa_")
-                for button in row
-            )
-        ]
-        if robokassa_indexes:
-            rows.insert(max(robokassa_indexes) + 1, reserve_row)
-        else:
-            rows.insert(0, reserve_row)
-
+    # Never jump ahead of Lava.top. Fall back to first when no domestic
+    # providers are enabled; preserve all remaining methods and callbacks.
+    rows.insert(max(domestic_indexes) + 1 if domestic_indexes else 0, reserve_row)
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def _install_freekassa_reserve_button() -> None:
-    """Expose KASSA as primary and keep Tribute/Lava reserve options."""
+    """Preserve optional KASSA reserve and the international Tribute link."""
 
     from bot.handlers import lava_checkout as lava_checkout_module
 
@@ -214,7 +202,7 @@ async def _create_freekassa_miniapp_checkout(
 
 
 def install_miniapp_lava_payment_methods() -> None:
-    """Handle KASSA as primary while keeping explicit Lava reserve actions."""
+    """Handle exact Lava payment methods while retaining configured KASSA reserve."""
 
     import bot.miniapp as miniapp_module
 

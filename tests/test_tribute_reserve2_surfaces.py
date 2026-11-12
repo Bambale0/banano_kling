@@ -25,7 +25,7 @@ def _button(markup: InlineKeyboardMarkup, text: str) -> InlineKeyboardButton:
     )
 
 
-def test_live_text_bot_keyboard_places_robokassa_then_kassa_then_lava() -> None:
+def test_live_text_bot_keyboard_places_lava_first_then_kassa_then_foreign() -> None:
     raw_keyboard = unwrap(lava_checkout._payment_options_keyboard)
     base = raw_keyboard(
         "optimal",
@@ -42,19 +42,24 @@ def test_live_text_bot_keyboard_places_robokassa_then_kassa_then_lava() -> None:
     labels = _button_texts(markup)
 
     assert labels[:6] == [
-        "💳 СБП / карта · Robokassa",
+        "💳 Lava.top · карта",
+        "⚡ Lava.top · СБП",
         "↩️ Резерв · KASSA · карта",
         "↩️ Резерв · KASSA · СБП",
         "🌍 Зарубежная / СНГ",
         "⭐ Stars",
-        "₿ Криптовалюта",
     ]
-    assert labels.index("⭐ Stars") < labels.index("💳 Карта · Lava")
-    assert labels.index("⚡ СБП · Lava") < labels.index("🌐 Резерв · зарубежная карта")
+    assert all("Robokassa" not in label for label in labels)
+    assert labels.index("⚡ Lava.top · СБП") < labels.index(
+        "↩️ Резерв · KASSA · карта"
+    )
+    assert labels.index("⭐ Stars") < labels.index("₿ Криптовалюта")
+    assert labels.index("🌍 Зарубежная / СНГ") < labels.index("⭐ Stars")
+    assert labels.index("🌍 Зарубежная / СНГ") < labels.index(
+        "🌐 Резерв · зарубежная карта"
+    )
     assert _button(markup, "🌍 Зарубежная / СНГ").url == TRIBUTE_PACKAGE_LINKS["optimal"]
     assert _button(markup, "🌍 Зарубежная / СНГ").url == "https://web.tribute.tg/p/Dxm"
-    assert labels.index("🌍 Зарубежная / СНГ") < labels.index("⭐ Stars")
-    assert labels.index("⭐ Stars") < labels.index("₿ Криптовалюта")
     assert labels[-1] == "◀️ Назад"
 
 
@@ -78,9 +83,9 @@ def test_reserve2_decorator_matches_production_flat_menu_order() -> None:
     assert _button_texts(markup) == [
         "↩️ Резерв · KASSA · карта",
         "↩️ Резерв · KASSA · СБП",
-        "🌍 Зарубежная / СНГ",
         "↩️ Резерв · карта (Lava)",
         "↩️ Резерв · СБП (Lava)",
+        "🌍 Зарубежная / СНГ",
         "🌐 Резерв · зарубежная карта",
         "🌐 Резерв · PayPal",
         "⭐ Stars",

@@ -565,39 +565,40 @@ try {
   await page.getByRole('button', { name: 'Тренды', exact: true }).click()
   await page.getByText('Curated Video', { exact: true }).waitFor()
 
-  // Payment E2E: Robokassa is primary, KASSA is reserve, Lava stays lower.
+  // Payment E2E: Lava.top is first, KASSA reserve; Robokassa stays hidden.
   await page.locator('header button').last().click()
+  assert.equal(await page.getByText('Robokassa · основной способ', { exact: true }).count(), 0)
+  assert.equal(await page.getByRole('button', { name: 'СБП / карта', exact: true }).count(), 0)
 
-  await page.getByRole('button', { name: 'СБП / карта', exact: true }).click()
+  const lavaHeading = page.getByText('Lava.top · основной способ', { exact: true })
+  await lavaHeading.waitFor()
+  await page.getByLabel('Почта для оплаты через Lava.top').fill('Buyer2026@Mail.ru')
+  await lavaHeading.locator('xpath=following-sibling::button[1]').click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 1
       && window.__openedLinks[0] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'robokassa')
-  assert.equal(paymentPayload?.customer_email, '')
+  assert.equal(paymentPayload?.provider, 'lava_card')
+  assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
 
-  await page.getByRole('button', { name: 'Картой', exact: true }).click()
+  await lavaHeading.locator('xpath=following-sibling::button[2]').click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 2
       && window.__openedLinks[1] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'freekassa_card')
-  assert.equal(paymentPayload?.customer_email, '')
+  assert.equal(paymentPayload?.provider, 'lava_sbp')
+  assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
 
-  await page.getByLabel('Почта для дополнительной оплаты через Lava').fill('Buyer2026@Mail.ru')
-  const lavaCardButton = page
-    .getByText('Lava · дополнительный способ', { exact: true })
-    .locator('xpath=following-sibling::button[1]')
-  await lavaCardButton.click()
+  await page.getByRole('button', { name: 'Картой', exact: true }).click()
   await page.waitForFunction(() => (
     Array.isArray(window.__openedLinks)
       && window.__openedLinks.length >= 3
       && window.__openedLinks[2] === 'https://pay.example/e2e'
   ))
-  assert.equal(paymentPayload?.provider, 'lava_card')
-  assert.equal(paymentPayload?.customer_email, 'buyer2026@mail.ru')
+  assert.equal(paymentPayload?.provider, 'freekassa_card')
+  assert.equal(paymentPayload?.customer_email, '')
   await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
 
   // Trends E2E: server-side tag query + client-side filtering.

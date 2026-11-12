@@ -1,4 +1,7 @@
-# NEUROMIX Media: Cloudflare Free + Nginx + `static/uploads`
+# NEUROMIX Media: legacy/local origin
+
+> Этот документ описывает local-storage topology. Для Selectel S3 и текущего
+> переходного процесса используйте [docs/selectel-s3-media.md](../../docs/selectel-s3-media.md).
 
 ## 1. Цель
 

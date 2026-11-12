@@ -1,9 +1,10 @@
-## Telegram delivery contract (2026-11-11)
+## Telegram delivery contract (2026-11-12)
 
-- «📜 Публичная оферта» sends the bundled `legal/public-offer.pdf` using Telegram `answer_document`.
-- «🔒 Политика конфиденциальности» sends the exact UTF-8 contents of `static/privacy_policy.md` as `privacy-policy.txt` using Telegram `answer_document`.
-- Both send one attachment per tap, including legacy public-offer callbacks and when HTTPS document URLs are configured. The «Юридические документы» menu remains an ordinary navigation message.
-- No legal document is sent as multipart chat messages; checkout UI is not edited. This is a transport-format change, not legal approval of the policy.
+- «📜 Публичная оферта» sends the exact bundled `legal/public-offer.txt` in ordered Telegram text messages, never as a PDF or external-link-only notice.
+- «🔒 Политика конфиденциальности» sends the exact UTF-8 contents of `static/privacy_policy.md` as Telegram text messages, never as a file.
+- Registered and legacy offer callbacks share the same text contract, even when an HTTPS legal URL is configured. Callback acknowledgement precedes the text stream.
+- The existing UTF-16-safe 3800-unit splitter, rate pacing, bounded `TelegramRetryAfter` retry, navigation and final-message keyboard are retained. These changes do not modify payments, Mini App, or the legal meaning/approval of the underlying documents.
+- `docs/legal/NEUROMIX_PRIVACY_POLICY_DRAFT.md` below remains an editorial draft, not a public-policy substitute. Verify published `static/privacy_policy.md` with the current legal operator.
 
 # ПРОЕКТ — Политика обработки персональных данных NEUROMIX
 

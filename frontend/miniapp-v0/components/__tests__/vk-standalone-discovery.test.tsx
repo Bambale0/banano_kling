@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
@@ -10,6 +10,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicFeedItem: jest.fn(),
   fetchVkNativeState: jest.fn(),
   fetchVkNativeCommerce: jest.fn(),
+  createVkInvoice: jest.fn(),
   fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
@@ -123,6 +124,69 @@ test('VK account shows its native payments and referral statistics without a Tel
   expect(fetchVkNativeCommerce).toHaveBeenCalled()
   expect(screen.queryByText('Telegram-кошелёк')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Купить|Оплатить сейчас/ })).not.toBeInTheDocument()
+})
+
+test('VK checkout stays invisible until both server gates are actually enabled', async () => {
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByText('Партнёрский доход: 95 ₽')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Получить ссылку на оплату' })).not.toBeInTheDocument()
+  expect(createVkInvoice).not.toHaveBeenCalled()
+})
+
+test('VK checkout uses only configured native Lava offers; duplicate submit reuses its idempotency key', async () => {
+  jest.mocked(fetchVkNativeCommerce).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5, payments_enabled: true,
+    payment_packages: [
+      { id: '250', price_rub: 250, credits: 25, lava_offer_id: 'live-offer-250', methods: ['lava_card', 'lava_sbp'] },
+      { id: '5000', price_rub: 5000, credits: 500, lava_offer_id: null, methods: [] },
+    ],
+    payments: [], referrals: { first_level_count: 0, second_level_count: 0, earned_rub: 0 },
+  })
+  jest.mocked(createVkInvoice).mockResolvedValue({
+    ok: true, status: 'ready', amount_rub: 250, credits: 25, payment_url: 'https://pay.lava.top/invoice/test',
+  })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByLabelText('Пакет пополнения')).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: /250 ₽/ })).toBeInTheDocument()
+  expect(screen.queryByRole('option', { name: /5000 ₽/ })).not.toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Email для чека'), { target: { value: 'BUYER@EXAMPLE.COM' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  const paymentLink = await screen.findByRole('link', { name: 'Перейти к оплате Lava' })
+  expect(paymentLink).toHaveAttribute('href', 'https://pay.lava.top/invoice/test')
+  expect(paymentLink).toHaveAttribute('rel', 'noopener noreferrer')
+  expect(createVkInvoice).toHaveBeenCalledTimes(1)
+  expect(createVkInvoice).toHaveBeenCalledWith(expect.objectContaining({
+    package_id: '250', payment_method: 'CARD', customer_email: 'buyer@example.com',
+    client_request_id: expect.stringMatching(/^[A-Za-z0-9_-]{16,80}$/),
+  }))
+  // Same form cannot create a second invoice by accident.
+  expect(screen.queryByRole('button', { name: 'Получить ссылку на оплату' })).not.toBeInTheDocument()
+})
+
+test('VK checkout timeout preserves its payload and idempotency key across tab navigation', async () => {
+  jest.mocked(fetchVkNativeCommerce).mockResolvedValue({
+    ok: true, registered: true, balance: 12.5, payments_enabled: true,
+    payment_packages: [{ id: '250', price_rub: 250, credits: 25, lava_offer_id: 'offer', methods: ['lava_card'] }],
+    payments: [], referrals: { first_level_count: 0, second_level_count: 0, earned_rub: 0 },
+  })
+  jest.mocked(createVkInvoice).mockRejectedValue(new Error('Статус выставленного счёта неизвестен.'))
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  fireEvent.change(await screen.findByLabelText('Email для чека'), { target: { value: 'user@example.com' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Статус выставленного счёта неизвестен.')
+  expect(createVkInvoice).toHaveBeenCalledTimes(1)
+  const firstAttempt = jest.mocked(createVkInvoice).mock.calls[0][0]
+  fireEvent.click(screen.getByRole('button', { name: 'Тренды' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Мои работы' }))
+  expect(await screen.findByLabelText('Email для чека')).toHaveValue('user@example.com')
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect(jest.mocked(createVkInvoice).mock.calls[1][0]).toEqual(firstAttempt)
+  expect(screen.queryByRole('link', { name: 'Перейти к оплате Lava' })).not.toBeInTheDocument()
 })
 
 test('VK commerce unavailable does not blank the trend catalog, balance, or history', async () => {

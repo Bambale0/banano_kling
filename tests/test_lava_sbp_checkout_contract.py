@@ -184,24 +184,27 @@ def test_miniapp_payment_ui_has_separate_card_and_sbp_actions() -> None:
     assert "'lava_foreign_paypal'" in types_source
 
 
-def test_text_bot_uses_robokassa_primary_kassa_reserve_and_lava_lower() -> None:
+def test_text_bot_uses_lava_first_robokassa_hidden_and_kassa_reserve() -> None:
     source = _read("bot/handlers/lava_checkout.py")
 
-    assert 'callback_data=f"freekassa_card_{package_id}"' in source
-    assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_card_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_sbp_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_foreign_card_{package_id}"' in source
-    assert 'callback_data=f"buy_lava_foreign_paypal_{package_id}"' in source
-    assert "💳 СБП / карта · Robokassa" in source
-    assert "↩️ Резерв · KASSA · карта" in source
-    assert "↩️ Резерв · KASSA · СБП" in source
-    assert "Карта · Lava" in source
-    assert "СБП · Lava" in source
-    assert source.index("💳 СБП / карта · Robokassa") < source.index(
+    for callback in (
+        'callback_data=f"buy_lava_card_{package_id}"',
+        'callback_data=f"buy_lava_sbp_{package_id}"',
+        'callback_data=f"freekassa_card_{package_id}"',
+        'callback_data=f"freekassa_sbp_{package_id}"',
+        'callback_data=f"buy_lava_foreign_card_{package_id}"',
+        'callback_data=f"buy_lava_foreign_paypal_{package_id}"',
+    ):
+        assert callback in source
+    assert "💳 Lava.top · карта" in source
+    assert "⚡ Lava.top · СБП" in source
+    assert "💳 СБП / карта · Robokassa" not in source
+    assert source.index("💳 Lava.top · карта") < source.index(
         "↩️ Резерв · KASSA · карта"
     )
-    assert source.index("↩️ Резерв · KASSA · СБП") < source.index("Карта · Lava")
+    assert source.index("⚡ Lava.top · СБП") < source.index(
+        "↩️ Резерв · KASSA · СБП"
+    )
     assert "Резерв · зарубежная оплата" in source
     assert "Резерв · зарубежная карта" in source
     assert "PayPal" in source
@@ -212,15 +215,17 @@ def test_text_bot_uses_robokassa_primary_kassa_reserve_and_lava_lower() -> None:
     assert "_allow_amount_fallback=False" in source
 
 
-def test_freekassa_legacy_provider_keyboard_marks_kassa_reserve_and_lava_last() -> None:
+def test_freekassa_legacy_provider_keyboard_prefers_lava_and_preserves_reserve() -> None:
     source = _read("bot/handlers/freekassa_payments.py")
     callback_block = source.split(
         "async def initiate_freekassa_payment", 1
     )[1].split("@router.callback_query(F.data.startswith(\"check_freekassa_\"))", 1)[0]
 
-    assert 'text="💳 Lava"' in source
+    assert 'text="💳 Lava.top"' in source
     assert 'text="↩️ Резерв · KASSA"' in source
-    assert source.index('text="↩️ Резерв · KASSA"') < source.index('text="💳 Lava"')
+    assert source.index('text="💳 Lava.top"') < source.index(
+        'text="↩️ Резерв · KASSA"'
+    )
     assert 'callback_data=f"freekassa_card_{package_id}"' in source
     assert 'callback_data=f"freekassa_sbp_{package_id}"' in source
     assert 'provider="freekassa"' in callback_block

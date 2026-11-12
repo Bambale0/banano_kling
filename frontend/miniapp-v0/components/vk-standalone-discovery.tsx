@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
   fetchVkPublicDiscovery,
@@ -81,6 +82,7 @@ export function VkStandaloneDiscovery() {
   const [native, setNative] = useState<VkNativeState | null>(null)
   const [commerce, setCommerce] = useState<VkNativeCommerce | null>(null)
   const [commerceError, setCommerceError] = useState('')
+  const [checkoutAttempt, setCheckoutAttempt] = useState<VkCheckoutAttempt | null>(null)
   const [repeatItem, setRepeatItem] = useState<VkPublicTrend | null>(null)
   const [linkedTrendId, setLinkedTrendId] = useState<number | null>(null)
   const [linkedTrend, setLinkedTrend] = useState<VkPublicTrend | null>(null)
@@ -394,6 +396,9 @@ export function VkStandaloneDiscovery() {
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
     </section> : null}
     {view === 'mine' ? <div className="space-y-3">
+      {commerce?.registered && commerce.payments_enabled === true &&
+        <VkNativeCheckout packages={commerce.payment_packages}
+          attempt={checkoutAttempt} onAttemptChange={setCheckoutAttempt} />}
       {commerce?.registered && <section aria-label="Мои оплаты и партнёрство ВКонтакте"
         className="space-y-2 rounded-xl border border-border/70 bg-card p-3 text-sm">
         <h3 className="text-base font-semibold">Оплаты и партнёрская программа</h3>

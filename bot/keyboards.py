@@ -843,13 +843,13 @@ def get_payment_packages_keyboard(packages: list, promo_active: bool = False):
 
 def get_payment_method_keyboard(package_id: str, has_crypto: bool = True, has_lava: bool = False, has_stars: bool = True, lava_price_usd: float | None = None) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    if has_lava:
+        lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
+        builder.button(text=f"💳 Lava.top · карта / СБП{lava_suffix}", callback_data=f"buy_lava_{package_id}")
     if has_stars:
         builder.button(text="⭐ Telegram Stars", callback_data=f"buy_stars_{package_id}")
     if has_crypto:
         builder.button(text="₿ Криптовалюта (CryptoBot)", callback_data=f"buy_crypto_{package_id}")
-    if has_lava:
-        lava_suffix = f" · ${lava_price_usd:g}" if lava_price_usd else ""
-        builder.button(text=f"Оплата картой {lava_suffix}", callback_data=f"buy_lava_{package_id}")
     builder.button(text="📄 Юридические документы", callback_data="legal_documents")
     builder.button(text="◀️ Назад", callback_data="menu_topup")
     builder.adjust(1)

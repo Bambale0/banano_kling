@@ -23,21 +23,16 @@ def test_exact_public_offer_assets_are_bundled_server_side_only():
     assert not (miniapp_legal / "public-offer.txt").exists()
 
 
-def test_backend_offer_uses_bundled_pdf_attachment_without_external_link():
+def test_backend_offer_uses_bundled_full_text_not_attachment():
     source = (
         ROOT / "bot" / "handlers" / "public_offer_compat.py"
     ).read_text(encoding="utf-8")
-    attachment_helper = (ROOT / "bot" / "legal_documents.py").read_text(
-        encoding="utf-8"
-    )
 
-    assert "legal_document_attachment" in source
-    assert "answer_document(" in source
-    assert '"public-offer.pdf"' in attachment_helper
-    assert "FSInputFile(" in attachment_helper
-    assert "telegram_text_parts" not in source
-
-
+    assert "PUBLIC_OFFER_TEXT_PATH" in source
+    assert "public-offer.txt" in source
+    assert "telegram_text_parts" in source
+    assert "send_legal_parts" in source
+    assert "answer_document(" not in source
 
 
 def test_miniapp_contains_no_public_offer_ui_or_assets():
@@ -68,9 +63,9 @@ def test_partner_offer_uses_full_local_document_before_legacy_handler():
     )
 
     assert '"partner_offer"' in offer_source
-    assert "legal_document_attachment" in offer_source
+    assert "PUBLIC_OFFER_TEXT_PATH" in offer_source
     assert '"full document"' not in offer_source
-    assert "answer_document(" in offer_source
+    assert "answer_document(" not in offer_source
     assert "Текст будет дополнен юристом" not in offer_source
     assert "Текст будет дополнен юристом" not in legacy_source
 
@@ -118,7 +113,7 @@ def test_telegram_offer_is_not_in_any_payment_keyboard():
         ROOT / "bot" / "handlers" / "public_offer_compat.py"
     ).read_text(encoding="utf-8")
     install_block = offer_source.split("def install_public_offer_compat", 1)[1].split(
-        "async def _send_offer_document", 1
+        "async def _send_offer_text", 1
     )[0]
 
     assert '"get_payment_packages_keyboard"' not in install_block

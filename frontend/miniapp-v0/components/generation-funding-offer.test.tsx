@@ -7,10 +7,10 @@ jest.mock('@/lib/app-context', () => ({ useOptionalApp: jest.fn() }))
 
 const openBalance = jest.fn()
 const packages = [
-  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, robokassa_enabled: true },
-  { id: 'start', name: 'Старт', credits: 25, price_rub: 250, robokassa_enabled: true },
-  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, robokassa_enabled: true },
-  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, robokassa_enabled: true },
+  { id: 'mini', name: 'Мини', credits: 15, price_rub: 150, lava_offer_id: 'configured-offer' },
+  { id: 'start', name: 'Старт', credits: 25, price_rub: 250, lava_offer_id: 'configured-offer' },
+  { id: 'optimal', name: 'Оптимальный', credits: 50, price_rub: 500, lava_offer_id: 'configured-offer' },
+  { id: 'pro', name: 'Про', credits: 100, price_rub: 1000, lava_offer_id: 'configured-offer' },
 ]
 
 beforeEach(() => {
@@ -123,6 +123,12 @@ it('VK funding recommends only a configured Lava bundle rather than an unavailab
 
 it('VK never offers an unsupported quick-checkout package when no Lava method exists', () => {
   process.env.NEXT_PUBLIC_MINIAPP_PLATFORM = 'vk'
+  ;(useOptionalApp as jest.Mock).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false, credits: 0 }, paymentPackages: [
+      { id: 'robokassa-only', name: 'Старый метод', credits: 50, price_rub: 500, robokassa_enabled: true },
+    ] },
+    openBalance,
+  })
   render(<GenerationFundingOffer cost={50} credits={0} />)
   expect(screen.queryByRole('button', { name: /Купить/ })).not.toBeInTheDocument()
   expect(screen.getByText(/Одного доступного пакета недостаточно/)).toBeInTheDocument()

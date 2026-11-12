@@ -105,15 +105,10 @@ def _is_binary_image_payload(result) -> bool:
 def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[str]:
     """Сохраняет загруженный файл в папку static/uploads и возвращает публичный URL."""
     try:
-        import os
         import uuid
         from datetime import datetime
 
-        from bot.config import config
-
         date_str = datetime.now().strftime("%Y%m%d")
-        upload_dir = os.path.join("static", "uploads", date_str)
-        os.makedirs(upload_dir, exist_ok=True)
 
         if not _is_binary_image_payload(file_bytes):
             logger.error(
@@ -123,14 +118,15 @@ def _save_uploaded_file(file_bytes: bytes, file_ext: str = "png") -> Optional[st
             return None
 
         file_id = str(uuid.uuid4())[:8]
-        filename = f"{file_id}.{file_ext}"
-        filepath = os.path.join(upload_dir, filename)
+        safe_ext = str(file_ext or "bin").lower().strip(".")
+        if not safe_ext.isalnum() or len(safe_ext) > 10:
+            safe_ext = "bin"
+        filename = f"{file_id}.{safe_ext}"
+        from bot.services.media_storage import persist_upload_bytes
 
-        with open(filepath, "wb") as f:
-            f.write(bytes(file_bytes))
-
-        base_url = config.static_base_url
-        public_url = f"{base_url}/uploads/{date_str}/{filename}"
+        public_url = persist_upload_bytes(
+            f"{date_str}/{filename}", bytes(file_bytes)
+        )
 
         logger.info(f"Saved batch upload: {public_url}")
         return public_url

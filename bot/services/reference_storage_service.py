@@ -2,10 +2,9 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 from datetime import UTC, datetime
-from pathlib import Path
 
-from bot.config import config
 from bot.database import (
     SavedReference,
     get_saved_reference_by_hash,
@@ -23,11 +22,9 @@ REFERENCE_ROOT = os.path.join("static", "uploads", "refs")
 
 
 def _build_reference_public_url(relative_path: str) -> str:
-    return f"{config.static_base_url.rstrip('/')}/uploads/{relative_path.replace(os.sep, '/')}"
+    from bot.services.media_storage import public_upload_url
 
-
-def _local_path_for_relative_upload(relative_path: str) -> str:
-    return os.path.join("static", "uploads", relative_path)
+    return public_upload_url(relative_path.replace(os.sep, "/"))
 
 
 def _provider_safe_reference_url(file_url: str, kind: str) -> str:
@@ -76,19 +73,25 @@ async def save_reference_file(
                 return public_url, existing
 
         safe_ext = (file_ext or "bin").lower().strip(".")
+        if not re.fullmatch(r"[a-z0-9]{1,10}", safe_ext):
+            safe_ext = "bin"
         month = datetime.now(UTC).strftime("%Y%m")
         relative_dir = os.path.join("refs", normalized_kind, str(telegram_id), month)
-        full_dir = _local_path_for_relative_upload(relative_dir)
-        os.makedirs(full_dir, exist_ok=True)
-
         filename = f"{file_hash[:32]}.{safe_ext}"
         relative_path = os.path.join(relative_dir, filename)
-        full_path = _local_path_for_relative_upload(relative_path)
+        from bot.services.media_storage import persist_upload_bytes, upload_exists
 
-        if not os.path.exists(full_path):
-            await asyncio.to_thread(Path(full_path).write_bytes, bytes(file_bytes))
-
-        original_public_url = _build_reference_public_url(relative_path)
+        normalized_relative_path = relative_path.replace(os.sep, "/")
+        if not await asyncio.to_thread(upload_exists, normalized_relative_path):
+            original_public_url = await asyncio.to_thread(
+                persist_upload_bytes,
+                normalized_relative_path,
+                bytes(file_bytes),
+                content_type=content_type,
+                cache_control="private, max-age=0",
+            )
+        else:
+            original_public_url = _build_reference_public_url(relative_path)
         public_url = _provider_safe_reference_url(original_public_url, normalized_kind)
         persisted_content_type = (
             "image/png"
