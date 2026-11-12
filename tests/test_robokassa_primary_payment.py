@@ -80,9 +80,10 @@ def test_text_bot_hides_robokassa_button_but_keeps_old_invoice_callbacks() -> No
 
 
 def test_text_bot_lava_is_first_and_robokassa_is_hidden() -> None:
+    from inspect import unwrap
     from bot.handlers.lava_checkout import _payment_options_keyboard
 
-    keyboard = _payment_options_keyboard(
+    keyboard = unwrap(_payment_options_keyboard)(
         "pro", stars=True, lava_card=True, lava_sbp=True,
         lava_foreign=False, lava_foreign_price_usd=None,
         crypto=True, freekassa=True, robokassa=True,
