@@ -60,9 +60,8 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
         # This must precede the feature-flag no-op: reverse proxies, logs and
         # browser history can otherwise persist a valid signed session.
         if request.path.startswith(base) and any(
-            value.startswith('vk_session:')
-            for key, value in request.query.items()
-            if key == 'init_data' and isinstance(value, str)
+            isinstance(value, str) and value.startswith('vk_session:')
+            for value in request.query.values()
         ):
             return web.json_response({
                 'ok': False, 'error': 'VK session must not be sent in the URL',

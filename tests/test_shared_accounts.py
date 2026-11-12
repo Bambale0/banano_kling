@@ -1542,6 +1542,14 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         )
         assert off_query.status == 400
         legacy.assert_not_awaited()
+        # Proxies and access logs capture every query key, not just init_data.
+        # Never let a bearer disguised as a different parameter through.
+        for query in ('session', 'token', 'next'):
+            leaked = await client.post(
+                '/mini-app/api/bootstrap?' + query + '=vk_session:' + token, json={},
+            )
+            assert leaked.status == 400
+        legacy.assert_not_awaited()
         fallback = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + token,
         })
