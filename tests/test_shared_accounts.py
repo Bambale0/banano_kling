@@ -1540,6 +1540,33 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         assert fallback.status == 200
         legacy.assert_awaited_once()
 
+@pytest.mark.asyncio
+async def test_full_vk_parity_flag_never_routes_linked_actor_to_legacy_without_adapter(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import gateway
+    from bot.shared_accounts.actor import PlatformActor
+
+    monkeypatch.setenv('VK_FULL_APP_PARITY_ENABLED', '1')
+    monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '0')
+    actor = PlatformActor(
+        platform='vk', external_id=2001, shared_account_id='linked-account',
+        linked_platforms=('vk', 'telegram'), linked_telegram_id=1001,
+    )
+    resolver = AsyncMock(return_value=actor)
+    monkeypatch.setattr(gateway, 'resolve_platform_actor', resolver)
+    legacy = AsyncMock(return_value=web.json_response({'legacy': True}))
+    app = web.Application(middlewares=[gateway.vk_miniapp_gateway('/mini-app')])
+    app.router.add_post('/mini-app/api/bootstrap', legacy)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post('/mini-app/api/bootstrap',
+                                     json={'init_data': 'vk_session:valid'})
+        assert response.status == 503
+        assert (await response.json())['error'] == 'VK studio integration unavailable'
+        legacy.assert_not_awaited()
+        resolver.assert_awaited_once_with('valid', expected_platform='vk')
+
+
 def test_actual_miniapp_setup_installs_single_shared_vk_gateway():
     from bot import miniapp
 
