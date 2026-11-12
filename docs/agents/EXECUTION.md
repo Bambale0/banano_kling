@@ -3211,3 +3211,13 @@ private references and browser-provided actor information fail closed.
   green. No provider, wallet, payment, schema or production configuration changed.
 - Next: consume this relay from owner-safe services/feed/repeat adapters, release
   native first, then common backend, then enable only after signed VK WebView E2E.
+
+
+## 2026-11-12 — VK shared BalanceSheet native checkout isolation (#451, review only)
+
+- Base: `tanyapi@f3d6fa915d81ef46ec86169bd57a82e06dce8be3`; separate review PR only. Do **not** merge, auto-merge, deploy or enable feature flags until explicitly requested.
+- Reproduced risk: shared `BalanceSheet` rendered Telegram-priced packages for VK and sent its Lava payment action through Telegram-owned `createPayment`. The payment UI must not obtain a TG actor, package, invoice or bootstrap email for an unlinked VK user.
+- Fix: VK shared balance panel consumes authenticated `account-preview/vk-commerce` and its native model-independent package/method list; it reuses native VK `VkNativeCheckout` with cryptographically strong and persistent idempotency claims. The old Telegram `createPayment` path and bootstrap email request are unreachable on VK; TG UI and providers are unchanged.
+- Fail-closed: native commerce errors/unregistered accounts and missing double payment flags cannot expose any payment action. The existing native BFF validates the verified actor and `VK_MINIAPP_CHECKOUT_ENABLED` plus native `VK_MINIAPP_PAYMENTS_ENABLED` before enabling checkout; no payment was actually created.
+- Tests: focused payment/VK scope 42/42, full Jest 105 suites/799 tests with two worker isolation, TypeScript, scoped ESLint and production VK static build all passed. A single-worker full run exposed order-dependent failures in unrelated reference-library tests; the same tests pass alone, and the complete suite passes with two workers. Fixed an independently reproduced test setup error by making the mocked Telegram property configurable, so auth-cache tests can delete it as intended.
+- Release: full VK parity **still blocked**, because native callable adapters only cover parts of the ten required domains. No native money operations, server configuration, pricing, deployment, master/tanyapi merge or actual VK WebView invoice/refund acceptance was performed.
