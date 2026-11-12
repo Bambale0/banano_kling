@@ -1641,8 +1641,10 @@ async def test_partial_native_vk_history_uses_same_route_without_opening_full_sh
         monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '0')
         print('TRACE_NATIVE_TASK_GATE',"        fallback = await client.post('/mini-app/",flush=True)
         fallback = await client.post('/mini-app/api/task-history', json=auth)
-        assert fallback.status == 200
-        assert legacy.await_count == 2
+        # Disabling the native task adapter must not silently project a
+        # signed VK actor into Telegram's legacy task history.
+        assert fallback.status == 503
+        assert legacy.await_count == 1
 
 
 async def test_native_vk_video_quote_signed_identity_contract(monkeypatch):
