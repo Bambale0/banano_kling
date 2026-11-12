@@ -44,10 +44,14 @@ if [[ ${CI_APT_TEST_ROOT:-} ]]; then
   exit 0
 fi
 
-# Both mirrors return the normal Ubuntu InRelease files (GPG verified by apt).
+# Only official/verified Ubuntu mirror paths; apt validates signed InRelease\n# metadata and package hashes. Try HTTPS and canonical HTTP in case 443 is\n# unreachable on a hosted runner; never disable apt signature verification.\n# The fixture test remains network-independent.
 # Check their DNS reachability before waiting for apt retries. Never mark the
 # CI dependency gate as passed if actual apt update or install fails.
-for mirror in 'https://mirrors.edge.kernel.org/ubuntu' 'https://mirror.hetzner.com/ubuntu/packages'; do
+for mirror in \
+  'https://archive.ubuntu.com/ubuntu' \
+  'http://archive.ubuntu.com/ubuntu' \
+  'https://mirrors.edge.kernel.org/ubuntu' \
+  'https://mirror.hetzner.com/ubuntu/packages'; do
   if ! curl -fsSL --connect-timeout 4 --max-time 10 -o /dev/null "${mirror}/dists/${codename}/InRelease" ||      ! curl -fsSL --connect-timeout 4 --max-time 10 -o /dev/null "${mirror}/dists/${codename}-security/InRelease"; then
     echo "Ubuntu mirror not reachable: $mirror" >&2
     continue
