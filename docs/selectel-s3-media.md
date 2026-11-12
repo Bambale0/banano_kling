@@ -67,8 +67,13 @@ MEDIA_S3_PRESIGN_TTL_SECONDS=900
 ```
 
 `MEDIA_S3_KEY_PREFIX=uploads` is a compatibility invariant. Changing it would
-invalidate ownership checks and historical URL identities. Secrets belong only
-in the root-owned production environment file.
+invalidate ownership checks and historical URL identities.
+
+For Docker Compose production, put **only** `MEDIA_S3_ACCESS_KEY_ID` and
+`MEDIA_S3_SECRET_ACCESS_KEY` in an untracked, root-owned `.env.s3` file
+beside `compose.backend.yml` (`chmod 600`). Compose loads this optional
+file after `.env` and `.env.postgres`; no credentials belong in the Git
+repository or deployment logs. Set non-secret settings in `.env`.
 
 ## Safe rollout
 

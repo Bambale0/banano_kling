@@ -19,6 +19,8 @@ services:
         required: true
       - path: .env.postgres
         required: false
+      - path: .env.s3
+        required: false
 
     environment:
       BANANO_SKIP_PROJECT_ENV: "1"
