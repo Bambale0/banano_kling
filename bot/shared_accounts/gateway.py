@@ -60,9 +60,8 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
         # This must precede the feature-flag no-op: reverse proxies, logs and
         # browser history can otherwise persist a valid signed session.
         if request.path.startswith(base) and any(
-            value.startswith('vk_session:')
-            for key, value in request.query.items()
-            if key == 'init_data' and isinstance(value, str)
+            isinstance(value, str) and value.startswith('vk_session:')
+            for value in request.query.values()
         ):
             return web.json_response({
                 'ok': False, 'error': 'VK session must not be sent in the URL',
@@ -134,6 +133,13 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
                 return web.json_response({'ok': False, 'error': 'Invalid JSON'}, status=400)
             if isinstance(value, dict):
                 parsed = value
+
+        # A VK header and a different body credential is an ambiguous actor.
+        # Do not pass mixed credentials to native adapters or legacy handlers.
+        if parsed and 'init_data' in parsed and parsed['init_data'] != init_data:
+            return web.json_response({
+                'ok': False, 'error': 'Conflicting session credentials',
+            }, status=400)
 
         if parsed and FORBIDDEN_ACTOR_CLAIMS.intersection(parsed):
             return web.json_response({'ok': False, 'error': 'Invalid account scope'}, status=400)

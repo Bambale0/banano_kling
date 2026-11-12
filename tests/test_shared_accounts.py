@@ -1611,6 +1611,14 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
             })
             assert denied.status == 400
         legacy.assert_not_awaited()
+        # Conflicting header and body credentials must not select one actor
+        # while passing the other credential to the native handler.
+        conflict = await client.post(
+            '/mini-app/api/bootstrap', json={'init_data': telegram_launch(1001)},
+            headers={'X-Telegram-Init-Data': 'vk_session:' + token},
+        )
+        assert conflict.status == 400
+        legacy.assert_not_awaited()
         header_spoof = await client.post(
             '/mini-app/api/bootstrap', json={'vk_user_id': 9999},
             headers={'X-Telegram-Init-Data': 'vk_session:' + token},
@@ -1632,6 +1640,14 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
             '/mini-app/api/bootstrap?init_data=vk_session:' + token, json={},
         )
         assert off_query.status == 400
+        legacy.assert_not_awaited()
+        # Proxies and access logs capture every query key, not just init_data.
+        # Never let a bearer disguised as a different parameter through.
+        for query in ('session', 'token', 'next'):
+            leaked = await client.post(
+                '/mini-app/api/bootstrap?' + query + '=vk_session:' + token, json={},
+            )
+            assert leaked.status == 400
         legacy.assert_not_awaited()
         fallback = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + token,
