@@ -91,13 +91,14 @@ def test_payment_menu_shows_card_and_sbp_separately() -> None:
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
+        "💳 Lava.top · карта",
+        "⚡ Lava.top · СБП",
         "🌍 Зарубежная / СНГ",
         "⭐ Stars",
         "₿ Криптовалюта",
-        "💳 Карта · Lava",
-        "⚡ СБП · Lava",
         "◀️ Назад",
     ]
+    assert all("Robokassa" not in label for label in labels)
     assert "buy_lava_card_studio" in callbacks
     assert "buy_lava_sbp_studio" in callbacks
 
@@ -118,9 +119,9 @@ def test_payment_menu_shows_foreign_card_and_paypal_separately() -> None:
     callbacks = [button.callback_data for button in buttons if button.callback_data]
 
     assert labels == [
+        "💳 Lava.top · карта",
+        "⚡ Lava.top · СБП",
         "🌍 Зарубежная / СНГ",
-        "💳 Карта · Lava",
-        "⚡ СБП · Lava",
         "🌐 Резерв · зарубежная карта",
         "🌐 Резерв · PayPal",
         "◀️ Назад",
