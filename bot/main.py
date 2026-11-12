@@ -5618,7 +5618,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         async def s3_upload_handler(request: web.Request) -> web.StreamResponse:
             relative = str(request.match_info.get("path") or "")
             try:
-                location = await asyncio.to_thread(presigned_upload_url, relative)
+                location = await asyncio.to_thread(presigned_upload_url, relative, method=request.method)
             except ValueError:
                 raise web.HTTPNotFound(text="Media not found")
             except Exception:

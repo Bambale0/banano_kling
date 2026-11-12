@@ -203,15 +203,18 @@ def public_upload_url(relative_path: str) -> str:
     return f"{config.static_base_url.rstrip('/')}/uploads/{relative}"
 
 
-def presigned_upload_url(relative_path: str) -> str:
-    """Return a short-lived direct S3 read URL without materializing to disk."""
+def presigned_upload_url(relative_path: str, *, method: str = "GET") -> str:
+    """Sign for the actual HTTP method; S3 rejects HEAD with a GET signature."""
     relative = _validate_relative_path(relative_path)
+    http_method = method.upper()
+    if http_method not in {"GET", "HEAD"}:
+        raise ValueError("Unsupported media request method")
     if not is_s3_enabled():
         return public_upload_url(relative)
     settings = S3Settings.from_config()
     return str(
         _s3_client(settings).generate_presigned_url(
-            "get_object",
+            "head_object" if http_method == "HEAD" else "get_object",
             Params={
                 "Bucket": settings.bucket,
                 "Key": object_key(relative, settings),

@@ -15,6 +15,7 @@ class FakeS3Client:
         self.metadata: dict[tuple[str, str], dict[str, str]] = {}
         self.put_calls: list[dict] = []
         self.deleted: list[tuple[str, str]] = []
+        self.presign_operations: list[str] = []
 
     def put_object(self, **kwargs):
         self.put_calls.append(kwargs)
@@ -45,7 +46,8 @@ class FakeS3Client:
         self.objects.pop((Bucket, Key), None)
 
     def generate_presigned_url(self, operation, *, Params, ExpiresIn):
-        assert operation == "get_object"
+        self.presign_operations.append(operation)
+        assert operation in {"get_object", "head_object"}
         return (
             "https://signed.storage.test/"
             f"{Params['Bucket']}/{Params['Key']}?expires={ExpiresIn}"
@@ -122,6 +124,19 @@ def test_s3_read_url_is_presigned_without_materializing_to_disk(monkeypatch, tmp
         "uploads/feed/result.mp4?expires=900"
     )
     assert not Path("static/uploads/feed/result.mp4").exists()
+
+
+def test_s3_head_url_is_signed_for_head_object_not_get(monkeypatch, tmp_path):
+    from bot.services import media_storage
+
+    monkeypatch.chdir(tmp_path)
+    fake = FakeS3Client()
+    configure_s3(monkeypatch, fake)
+
+    url = media_storage.presigned_upload_url("refs/image/42/face.png", method="HEAD")
+
+    assert url.startswith("https://signed.storage.test/")
+    assert fake.presign_operations == ["head_object"]
 
 
 def test_s3_storage_fails_closed_when_configuration_is_incomplete(monkeypatch):
