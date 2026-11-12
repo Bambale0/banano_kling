@@ -127,7 +127,13 @@ export function VkNativeCheckout({ packages, attempt, onAttemptChange }: {
         Перейти к оплате Lava
       </a>
     </div>}
-    {result?.status === 'paid' && <p role="status">Оплата подтверждена. Обновите баланс.</p>}
+    {result?.status === 'paid' && <div className="space-y-2">
+      <p role="status">Оплата подтверждена. Обновите баланс.</p>
+      <button type="button" onClick={resetRequest}
+        className="w-full rounded-lg border border-border p-3 text-sm font-semibold">
+        Начать новое пополнение
+      </button>
+    </div>}
     {(result?.status === 'unknown' || result?.status === 'creating') &&
       <p role="status">Статус счёта уточняется. Повторный запрос использует тот же номер, новый счёт не создаётся.</p>}
   </form>
