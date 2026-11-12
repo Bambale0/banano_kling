@@ -117,3 +117,35 @@ it('reopens a failed VK checkout with the identical idempotency claim, not a sec
   expect((createVkInvoice as jest.Mock).mock.calls[1][0].client_request_id).toBe(originalClaim)
   expect(createPayment).not.toHaveBeenCalled()
 })
+
+it('never exposes a Telegram balance or Telegram task statistics inside VK checkout', async () => {
+  // Until native bootstrap fully replaces legacy state, it may contain values
+  // belonging to a linked Telegram identity. The payment panel must not trust it.
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    state: {
+      ...fixture.state,
+      user: { credits: 999 },
+      recentTasks: [{ task_id: 'tg_legacy', type: 'image', cost: 777 }],
+    },
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByText('VK-баланс: 3🍌')).toBeInTheDocument()
+  expect(screen.queryByText('999')).not.toBeInTheDocument()
+  expect(screen.queryByText('999🍌')).not.toBeInTheDocument()
+  expect(screen.queryByText('777🍌')).not.toBeInTheDocument()
+  expect(screen.queryByText('Всего запусков')).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Пополнение для повтора' })).not.toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+it('refuses VK checkout if the native wallet snapshot is absent or malformed', async () => {
+  ;(fetchVkNativeCommerce as jest.Mock).mockResolvedValue({
+    ...vkCommerce, balance: null,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('alert'))
+    .toHaveTextContent('Не удалось подтвердить VK-баланс')
+  expect(screen.queryByRole('form', { name: 'Пополнение VK-баланса' })).not.toBeInTheDocument()
+  expect(createVkInvoice).not.toHaveBeenCalled()
+})
