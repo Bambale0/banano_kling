@@ -34,9 +34,10 @@ def test_unconfigured_lava_is_not_advertised():
 
 
 def test_direct_bot_checkout_hides_robokassa_even_when_provider_is_enabled():
+    from inspect import unwrap
     from bot.handlers.lava_checkout import _payment_options_keyboard
 
-    markup = _payment_options_keyboard(
+    markup = unwrap(_payment_options_keyboard)(
         "pro",
         stars=True,
         lava_card=True,
