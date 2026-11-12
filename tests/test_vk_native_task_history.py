@@ -143,3 +143,39 @@ async def test_native_vk_bridge_fails_closed_on_unexpected_payload(monkeypatch):
         monkeypatch.setenv('VK_NATIVE_INTERNAL_ORIGIN', f'http://127.0.0.1:{client.server.port}')
         with pytest.raises(RuntimeError, match='invalid'):
             await fetch_native_vk_task_history(123)
+
+@pytest.mark.asyncio
+async def test_linked_vk_session_native_tasks_never_fall_back_to_telegram(monkeypatch):
+    """Linking Telegram must not switch the owner of native VK task reads."""
+    from unittest.mock import AsyncMock
+
+    from bot.shared_accounts import gateway
+
+    linked_vk = PlatformActor(
+        platform='vk', external_id=123, shared_account_id='linked',
+        linked_platforms=('vk', 'telegram'), linked_telegram_id=987654,
+    )
+    resolver = AsyncMock(return_value=linked_vk)
+    monkeypatch.setattr(gateway, 'resolve_platform_actor', resolver)
+    monkeypatch.setenv('VK_NATIVE_TASKS_ENABLED', '1')
+    monkeypatch.delenv('VK_FULL_APP_PARITY_ENABLED', raising=False)
+    native = AsyncMock(return_value=web.json_response({'source': 'vk', 'tasks': []}))
+    legacy = AsyncMock(return_value=web.json_response({'source': 'telegram'}))
+
+    class Adapter:
+        ready_operations = frozenset({'tasks'})
+        handle = native
+
+    app = web.Application(middlewares=[gateway.vk_miniapp_gateway('/mini-app')])
+    app['vk_native_tasks_adapter'] = Adapter()
+    app.router.add_post('/mini-app/api/task-history', legacy)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post('/mini-app/api/task-history', json={
+            'init_data': 'vk_session:opaque-verified-token',
+        })
+        assert response.status == 200
+        assert (await response.json())['source'] == 'vk'
+    resolver.assert_awaited_once()
+    native.assert_awaited_once()
+    assert native.await_args.kwargs['actor'].external_id == 123
+    legacy.assert_not_awaited()

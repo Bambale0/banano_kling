@@ -5,12 +5,16 @@ import pathlib
 import urllib.parse
 
 from aiogram.exceptions import TelegramRetryAfter
+from aiogram.types import BufferedInputFile, FSInputFile
 
 _DOCUMENT_NAMES = {
     "offer": "ofert.md",
     "privacy": "privacy_policy.md",
 }
 _DOCUMENT_ROOT = pathlib.Path(__file__).resolve().parent.parent / "static"
+_OFFER_PDF_PATH = (
+    pathlib.Path(__file__).resolve().parent.parent / "legal" / "public-offer.pdf"
+)
 
 
 def document_text(kind: str) -> str:
@@ -21,6 +25,24 @@ def document_text(kind: str) -> str:
         raise ValueError(f"Empty legal document: {kind}")
     return text
 
+
+
+def legal_document_attachment(kind: str) -> FSInputFile | BufferedInputFile:
+    """Build a real Telegram document attachment, never a message or URL.
+
+    Preserve the original signed-off public-offer PDF. Publish the privacy
+    text from its bundled UTF-8 source; no runtime PDF generator or external
+    legal-document host is required.
+    """
+    if kind == "offer":
+        with _OFFER_PDF_PATH.open("rb") as handle:
+            if handle.read(5) != b"%PDF-":
+                raise ValueError("Invalid public offer PDF")
+        return FSInputFile(_OFFER_PDF_PATH, filename="public-offer.pdf")
+    if kind == "privacy":
+        payload = document_text("privacy").encode("utf-8")
+        return BufferedInputFile(payload, filename="privacy-policy.txt")
+    raise ValueError(f"Unsupported legal document kind: {kind}")
 
 def https_document_url(value: str | None) -> str | None:
     """Only expose valid HTTPS destinations in external legal links."""

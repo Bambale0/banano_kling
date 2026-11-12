@@ -98,36 +98,18 @@ def test_document_text_reads_utf8_and_rejects_empty(tmp_path: Path, monkeypatch)
         legal_documents.document_text("privacy")
 
 
+@pytest.mark.parametrize(
+    "callback_data",
+    ["public_offer", "more_public_offer", "partner_offer", "payment_public_offer"],
+)
 @pytest.mark.asyncio
-async def test_actual_compat_offer_callback_sends_plain_text_not_pdf(tmp_path, monkeypatch):
+async def test_offer_callbacks_send_pdf_attachment_even_if_url_configured(
+    callback_data, monkeypatch
+):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    from bot.handlers import public_offer_compat as offer
-
-    text_path = tmp_path / "offer.txt"
-    text_path.write_text("Оферта: <не HTML> 🎬", encoding="utf-8")
-    monkeypatch.setattr(offer, "PUBLIC_OFFER_TEXT_PATH", text_path)
-    monkeypatch.setattr(offer.config, "PARTNER_OFFER_URL", "")
-    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
-    callback = SimpleNamespace(
-        data="more_public_offer", message=message, answer=AsyncMock()
-    )
-
-    await offer.show_public_offer(callback)
-
-    message.answer_document.assert_not_awaited()
-    message.answer.assert_awaited_once()
-    args, kwargs = message.answer.await_args
-    assert args[0] == "Оферта: <не HTML> 🎬"
-    assert kwargs["parse_mode"] is None
-    callback.answer.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_actual_compat_offer_callback_links_https_when_configured(monkeypatch):
-    from types import SimpleNamespace
-    from unittest.mock import AsyncMock
+    from aiogram.types import FSInputFile
 
     from bot.handlers import public_offer_compat as offer
 
@@ -136,17 +118,19 @@ async def test_actual_compat_offer_callback_links_https_when_configured(monkeypa
     )
     message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
     callback = SimpleNamespace(
-        data="partner_offer", message=message, answer=AsyncMock()
+        data=callback_data, message=message, answer=AsyncMock()
     )
 
     await offer.show_public_offer(callback)
 
-    message.answer_document.assert_not_awaited()
-    markup = message.answer.await_args.kwargs["reply_markup"]
-    links = [
-        button.url for row in markup.inline_keyboard for button in row if button.url
-    ]
-    assert links == ["https://example.org/legal/offer"]
+    message.answer.assert_not_awaited()
+    message.answer_document.assert_awaited_once()
+    document = message.answer_document.await_args.args[0]
+    assert isinstance(document, FSInputFile)
+    assert document.path.name == "public-offer.pdf"
+    assert message.answer_document.await_args.kwargs["caption"] == "📜 Публичная оферта"
+    callback.answer.assert_awaited_once()
+
 
 
 def test_actual_offer_handler_precedes_legacy_router():
@@ -165,24 +149,39 @@ def test_actual_offer_handler_precedes_legacy_router():
 
 
 @pytest.mark.asyncio
-async def test_privacy_policy_prefers_configured_https_link(monkeypatch):
+async def test_privacy_policy_is_attached_as_file_even_if_url_configured(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
+    from aiogram.types import BufferedInputFile
 
     from bot.handlers import common
 
     monkeypatch.setattr(
         common.config, "PRIVACY_POLICY_URL", "https://example.org/legal/privacy"
     )
-    message = SimpleNamespace(answer=AsyncMock())
+    message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
     callback = SimpleNamespace(message=message, answer=AsyncMock())
 
     await common.show_privacy_policy(callback)
 
-    message.answer.assert_awaited_once()
-    markup = message.answer.await_args.kwargs["reply_markup"]
-    links = [button.url for row in markup.inline_keyboard for button in row if button.url]
-    assert links == ["https://example.org/legal/privacy"]
+    message.answer.assert_not_awaited()
+    message.answer_document.assert_awaited_once()
+    attachment = message.answer_document.await_args.args[0]
+    assert isinstance(attachment, BufferedInputFile)
+    assert attachment.filename == "privacy-policy.txt"
+    assert attachment.data == legal_documents.document_text("privacy").encode("utf-8")
+    callback.answer.assert_awaited_once()
+
+
+def test_legal_document_attachment_offer_fails_closed_on_invalid_pdf(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "public-offer.pdf"
+    path.write_text("not a pdf", encoding="utf-8")
+    monkeypatch.setattr(legal_documents, "_OFFER_PDF_PATH", path)
+    with pytest.raises(ValueError, match="PDF"):
+        legal_documents.legal_document_attachment("offer")
 
 
 @pytest.mark.asyncio
@@ -197,7 +196,7 @@ async def test_unpublished_policy_fails_closed_without_fake_document(monkeypatch
     def missing_policy(_kind):
         raise FileNotFoundError("privacy_policy.md")
 
-    monkeypatch.setattr(common, "document_text", missing_policy)
+    monkeypatch.setattr(common, "legal_document_attachment", missing_policy)
     message = SimpleNamespace(answer=AsyncMock(), answer_document=AsyncMock())
     callback = SimpleNamespace(message=message, answer=AsyncMock())
 
@@ -240,7 +239,9 @@ async def test_multi_part_legal_text_is_paced_with_markup_only_on_last(monkeypat
     monkeypatch.setattr(legal_documents.asyncio, "sleep", fake_sleep)
     message = SimpleNamespace(answer=AsyncMock())
     markup = object()
-    await legal_documents.send_legal_parts(message, ["часть 1", "часть 2", "конец"], markup)
+    await legal_documents.send_legal_parts(
+        message, ["часть 1", "часть 2", "конец"], markup
+    )
 
     assert message.answer.await_count == 3
     fake_sleep.assert_any_await(1.1)
@@ -279,28 +280,27 @@ async def test_telegram_retry_after_retries_same_part_once(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_offer_callback_acknowledges_before_long_delivery(tmp_path, monkeypatch):
+async def test_offer_callback_acknowledges_before_attachment(monkeypatch):
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
     from bot.handlers import public_offer_compat as offer
 
-    source = tmp_path / "offer.txt"
-    source.write_text("Условия \u26a1", encoding="utf-8")
-    monkeypatch.setattr(offer, "PUBLIC_OFFER_TEXT_PATH", source)
     monkeypatch.setattr(offer.config, "PARTNER_OFFER_URL", "")
     order = []
 
     async def on_ack(*args, **kwargs):
         order.append("ack")
 
-    async def on_send(*args, **kwargs):
-        order.append("send")
+    async def on_send_document(*args, **kwargs):
+        order.append("send_document")
 
     callback = SimpleNamespace(
         data="more_public_offer",
-        message=SimpleNamespace(answer=AsyncMock(side_effect=on_send)),
+        message=SimpleNamespace(
+            answer=AsyncMock(), answer_document=AsyncMock(side_effect=on_send_document)
+        ),
         answer=AsyncMock(side_effect=on_ack),
     )
     await offer.show_public_offer(callback)
-    assert order == ["ack", "send"]
+    assert order == ["ack", "send_document"]
