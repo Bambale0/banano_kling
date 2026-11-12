@@ -3185,3 +3185,20 @@ private references and browser-provided actor information fail closed.
 - Fail-closed decision: readiness is exactly `bootstrap,tasks`; registration alone cannot satisfy the ten-domain `full_vk_adapter` gate or expose the shared shell. Payment/write/full-parity flags remain OFF.
 - Test evidence: RED on missing service; shared-account/bootstrap suite `73 passed, 70 skipped`; focused initial run `2 passed`; scoped Ruff, compileall, and diff check passed.
 - Next: sync pending wallet relay/checkout merges, then implement photo/video write dispatch, public/private trends/feed, services, profile/referrals/payments, and signed WebView financial acceptance before advertising all readiness domains.
+
+# 2026-11-12 — VK shared-operation native wallet relay (#451)
+
+- Baseline: `tanyapi@8b4e9951e9a084d03ad7a7c075c38a831792907d`.
+- Goal: let upcoming platform-neutral service/social adapters reserve and settle
+  the authoritative VK wallet without a Telegram ID or browser-provided actor.
+- Dependency: native `Bambale0/tanyavk#82` implements the HMAC reserve/settle
+  ledger; both sides remain default-off until cross-repository release checks pass.
+- Contract: exact method/path/body HMAC, loopback-only origin, 32 KiB request
+  bound, actor only in the verified path, actionable 400/402/403/404/409 mapping,
+  bounded timeouts and strict success response validation.
+- Flag: `VK_NATIVE_SHARED_OPERATIONS_ENABLED` is immutable rollout configuration
+  and defaults off. It does not enable `VK_FULL_APP_PARITY_ENABLED`.
+- TDD: import/route contract failed before implementation; focused relay suite is
+  green. No provider, wallet, payment, schema or production configuration changed.
+- Next: consume this relay from owner-safe services/feed/repeat adapters, release
+  native first, then common backend, then enable only after signed VK WebView E2E.
