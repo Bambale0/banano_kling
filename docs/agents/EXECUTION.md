@@ -1,3 +1,13 @@
+## 2026-11-12 — Restore Telegram legal documents as full chat text (PR #441 regression)
+
+- Baseline `tanyapi@5188f123043e5b8426f1ce9e7ef53039d7b8d188`, task branch `fix/legal-text-delivery-20261112`. User explicitly requested reverting the file-only delivery from PR #463.
+- Evidence: PR #441 and commit `58f3cc1f` delivered full offer and privacy as UTF-16-safe chat text with HTTPS link fallback. PR #463 replaced offer/privacy callbacks with `answer_document` PDF/TXT attachments while leaving tested `send_legal_parts` helper intact.
+- Scope: restore `public_offer`, `more_public_offer`, `partner_offer`, `payment_public_offer`, `privacy_policy` to full in-chat text, even if a document URL is configured. Preserve signed callback registration precedence, legacy fallback, consent/back keyboard, character preservation, 3800 UTF-16 unit chunks, per-chat pace and bounded explicit flood retry. No financial, provider, schema or API changes.
+- TDD: in an isolated temporary git worktree, 9 newly specified regression tests initially failed and 26 passed. After code changes, `35 passed` in 4.28s, plus Python compilation. No production files changed during these tests.
+- CI/release: separate PR to `tanyapi`, auto-merge when four required gates green, exact post-merge SHA deployment and Telegram callback acceptance. Existing #480 signed Ubuntu apt-mirror recovery PR is an independent dependency for release; do not bypass CI or claim production from HTTP 200 alone.
+- Legal safety: restore existing underlying documents unchanged. The legal privacy-policy draft has unresolved owner/contact placeholders and requires separate legal verification; do not substitute the draft. No new billing enabled.
+- Rollback: revert the text-delivery PR, never alter payment balances or document contents.
+
 ## 2026-11-09 — NEUROMIX legal documents: offer as text/link and privacy entry
 - Baseline `tanyapi@cbf1a6199287e3917f971a27209b595422926edf`; task branch `fix/tanyapi-legal-documents-20261109`. Changes are isolated from `main`/`dev` and production; review PR remains draft until legal approval.
 - User intent: stop delivering `static/ofert.md` as Telegram file; provide readable offer and privacy policy on bot and before payment, including legacy buttons. No changes to billing, user balances or providers.

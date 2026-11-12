@@ -74,7 +74,7 @@ from bot.keyboards import (
     get_partner_program_keyboard,
     get_required_subscription_keyboard,
 )
-from bot.legal_documents import legal_document_attachment
+from bot.legal_documents import document_text, send_legal_parts, telegram_text_parts
 from bot.miniapp_links import (
     feed_bot_link as build_feed_bot_link,
 )
@@ -4212,16 +4212,20 @@ async def show_legal_documents(callback: types.CallbackQuery):
 async def _show_legal_document(
     callback: types.CallbackQuery, *, kind: str, title: str
 ) -> None:
-    """Send the requested legal text as one Telegram document attachment."""
+    """Show the full approved legal text in Telegram messages, not as a file."""
     if callback.message is None:
         await callback.answer("Документ недоступен в этом сообщении", show_alert=True)
         return
 
     try:
-        attachment = legal_document_attachment(kind)
+        parts = telegram_text_parts(document_text(kind))
+        if not parts:
+            raise ValueError(f"Empty legal document: {kind}")
     except (OSError, ValueError) as exc:
         logger.warning(
-            "Legal document unavailable: kind=%s type=%s", kind, type(exc).__name__
+            "Legal document text unavailable: kind=%s type=%s",
+            kind,
+            type(exc).__name__,
         )
         await callback.answer(
             "Документ пока недоступен. Обратитесь в поддержку.",
@@ -4231,23 +4235,20 @@ async def _show_legal_document(
 
     await _safe_callback_answer(callback)
     try:
-        await callback.message.answer_document(
-            attachment,
-            caption=title,
-            reply_markup=get_legal_document_view_keyboard(),
-            parse_mode=None,
+        await send_legal_parts(
+            callback.message, parts, get_legal_document_view_keyboard()
         )
     except Exception:
-        logger.exception("Failed to send legal document attachment: kind=%s", kind)
+        logger.exception("Failed to deliver legal document text: kind=%s", kind)
         await callback.message.answer(
-            "Не удалось отправить документ файлом. Повторите попытку позже.",
+            "Не удалось полностью показать документ. Повторите попытку позже.",
             reply_markup=get_legal_document_view_keyboard(),
         )
 
 
 @router.callback_query(F.data.in_({"partner_offer", "more_public_offer"}))
 async def show_partner_offer(callback: types.CallbackQuery):
-    """Send the public offer as an attachment on legacy routes."""
+    """Fallback legacy route; the higher-priority router handles the offer."""
     await _show_legal_document(
         callback,
         kind="offer",
@@ -4257,13 +4258,12 @@ async def show_partner_offer(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "privacy_policy")
 async def show_privacy_policy(callback: types.CallbackQuery):
-    """Send the privacy policy as a Telegram document."""
+    """Expose the approved full privacy policy as plain chat text."""
     await _show_legal_document(
         callback,
         kind="privacy",
         title="🔒 Политика конфиденциальности",
     )
-
 
 async def render_partner_program(target, user_id: int):
     """Рендерит экран партнёрской программы."""

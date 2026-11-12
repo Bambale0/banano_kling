@@ -1,8 +1,9 @@
-"""Public-offer attachment callbacks for Telegram More, payments and partners."""
+"""Public-offer text callbacks for Telegram More, payments and partners."""
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from aiogram import F, Router, types
@@ -10,7 +11,7 @@ from aiogram.types import InlineKeyboardMarkup
 
 from bot.config import config
 from bot.keyboards import get_back_keyboard, get_partner_consent_keyboard
-from bot.legal_documents import legal_document_attachment
+from bot.legal_documents import send_legal_parts, telegram_text_parts
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -23,6 +24,7 @@ PUBLIC_OFFER_CALLBACKS = {
     "partner_offer",
     "payment_public_offer",
 }
+PUBLIC_OFFER_TEXT_PATH = Path(__file__).resolve().parents[2] / "legal" / "public-offer.txt"
 
 
 def install_public_offer_compat(payments_module: Any) -> None:
@@ -30,23 +32,20 @@ def install_public_offer_compat(payments_module: Any) -> None:
     _ = payments_module
 
 
-async def _send_offer_document(
+async def _send_offer_text(
     callback: types.CallbackQuery,
     reply_markup: InlineKeyboardMarkup,
 ) -> None:
-    """Deliver the bundled public-offer PDF as a Telegram document."""
-    attachment = legal_document_attachment("offer")
-    await callback.message.answer_document(
-        attachment,
-        caption="📜 Публичная оферта",
-        reply_markup=reply_markup,
-        parse_mode=None,
-    )
+    """Deliver the complete approved offer in ordered UTF-16-safe text parts."""
+    chunks = telegram_text_parts(PUBLIC_OFFER_TEXT_PATH.read_text(encoding="utf-8"))
+    if not chunks:
+        raise ValueError("Bundled public offer is empty")
+    await send_legal_parts(callback.message, chunks, reply_markup)
 
 
 @router.callback_query(F.data.in_(PUBLIC_OFFER_CALLBACKS))
 async def show_public_offer(callback: types.CallbackQuery):
-    """Serve the offer as a file, even if an HTTPS URL was configured."""
+    """Show the full bundled offer in chat instead of sending a PDF or a URL."""
     if callback.message is None:
         await callback.answer("Оферта недоступна в этом сообщении", show_alert=True)
         return
@@ -59,19 +58,19 @@ async def show_public_offer(callback: types.CallbackQuery):
         reply_markup = get_back_keyboard("menu_topup")
 
     if config.PARTNER_OFFER_URL:
-        logger.debug("Telegram offer attachment takes precedence over configured URL")
+        logger.debug("Telegram offer uses full local text regardless of configured URL")
 
-    # Acknowledge the callback before uploading the PDF.
+    # Acknowledge the callback before streaming the multi-message legal text.
     await callback.answer()
     try:
-        await _send_offer_document(callback, reply_markup)
+        await _send_offer_text(callback, reply_markup)
     except (OSError, ValueError):
-        logger.exception("The public-offer PDF is missing or invalid")
+        logger.exception("Bundled public offer text is missing or invalid")
         await callback.message.answer(
             "Не удалось открыть оферту. Обратитесь в поддержку."
         )
     except Exception:
-        logger.exception("Failed to send public offer document")
+        logger.exception("Failed to deliver full public offer text")
         await callback.message.answer(
-            "Не удалось отправить оферту файлом. Попробуйте снова."
+            "Не удалось полностью показать оферту. Попробуйте снова."
         )
