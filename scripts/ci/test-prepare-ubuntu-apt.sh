@@ -16,7 +16,7 @@ grep -q 'https://mirrors.edge.kernel.org/ubuntu' "$root/etc/apt/sources.list.d/s
 CI_APT_TEST_ROOT="$root" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"
 echo 'Ubuntu apt mirror fallback source fixture PASS'
 
-# Exercise real mirror candidate selection with signed apt update mocked.
+# Exercise real mirror candidate selection with all network and apt calls mocked.
 probe_root=$(mktemp -d)
 backup_root=$(mktemp -d)
 fail_root=$(mktemp -d)
@@ -50,23 +50,14 @@ grep -q 'https://azure.archive.ubuntu.com/ubuntu' "$probe_root/etc/apt/apt-mirro
 ! grep -q 'https://mirrors.edge.kernel.org/ubuntu' "$probe_root/curl.log"
 grep -q 'https://azure.archive.ubuntu.com/ubuntu/dists/noble-security/InRelease' "$probe_root/curl.log"
 grep -q 'APT::Update::Error-Mode=any' "$probe_root/apt.log"
-grep -q '^Acquire::ForceIPv4 "true";
-if CI_APT_TEST_ROOT="$fail_root" CI_APT_TEST_RUN_FULL=1 CI_APT_TEST_FAIL_ALL=1 CI_APT_TEST_BACKUP=0 \
-CI_APT_TEST_CURL_LOG="$fail_root/curl.log" CI_APT_TEST_APT_LOG="$fail_root/apt.log" \
-PATH="$probe_root/bin:$PATH" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"; then
- echo 'CI apt gate unexpectedly passed with all mirrors inaccessible' >&2
- exit 1
-fi
-[[ ! -s "$fail_root/apt.log" ]]
-echo 'Ubuntu apt mirror selection and fail-closed fallback PASS'
- "$probe_root/etc/apt/apt.conf.d/99neuromix-ci-ipv4"
+grep -q '^Acquire::ForceIPv4 "true";$' "$probe_root/etc/apt/apt.conf.d/99neuromix-ci-ipv4"
 CI_APT_TEST_ROOT="$backup_root" CI_APT_TEST_RUN_FULL=1 CI_APT_TEST_FAIL_ALL=0 CI_APT_TEST_BACKUP=1 \
 CI_APT_TEST_CURL_LOG="$backup_root/curl.log" CI_APT_TEST_APT_LOG="$backup_root/apt.log" \
 PATH="$probe_root/bin:$PATH" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"
 grep -q 'https://archive.ubuntu.com/ubuntu' "$backup_root/etc/apt/apt-mirrors.txt"
 grep -q 'https://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease' "$backup_root/curl.log"
 grep -q 'APT::Update::Error-Mode=any' "$backup_root/apt.log"
-if CI_APT_TEST_ROOT="$fail_root" CI_APT_TEST_RUN_FULL=1 CI_APT_TEST_FAIL_ALL=1 \
+if CI_APT_TEST_ROOT="$fail_root" CI_APT_TEST_RUN_FULL=1 CI_APT_TEST_FAIL_ALL=1 CI_APT_TEST_BACKUP=0 \
 CI_APT_TEST_CURL_LOG="$fail_root/curl.log" CI_APT_TEST_APT_LOG="$fail_root/apt.log" \
 PATH="$probe_root/bin:$PATH" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"; then
  echo 'CI apt gate unexpectedly passed with all mirrors inaccessible' >&2
