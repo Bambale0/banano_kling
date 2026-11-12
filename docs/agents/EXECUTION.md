@@ -3220,3 +3220,14 @@ private references and browser-provided actor information fail closed.
   green. No provider, wallet, payment, schema or production configuration changed.
 - Next: consume this relay from owner-safe services/feed/repeat adapters, release
   native first, then common backend, then enable only after signed VK WebView E2E.
+
+## 2026-11-12 — #451 full release continuation
+
+- User authorized completion and release of the full issue, not only review. Shared production checkout and runtime data remain untouched; work is in `/root/vk451-release`, native inspection in `/root/vk451-native`.
+- Baseline shared production checkout: de526040211abf825feec0686e1d75b1d8a331af; native: 0536bb51356ef02a97277efbfd2b64e41fa1514a. These are disk revisions, not yet proven running image revisions.
+- Existing: signed actor, native photo/video RPC, native ledger reserve/settle, commerce, tasks, shared shell readiness contract. Partial: bootstrap PR #479, checkout isolation #483, linked readiness fixes. Missing: complete domain routing and actual embedded VK/payment/refund acceptance.
+- First slice: finish #479 review findings (blocked actors, malformed upstream, concurrent wallet snapshots, redacted failures), run isolated Python 3.12 regression and update PR without bypassing required CI.
+- Follow-up slices: linked actor isolation; shared checkout; photo/video/reference execution; feed/private repeats and services; profile/referrals/delivery. Keep full parity/money gates OFF until all operations and acceptance are verified.
+- No ledger migration, fake TG identity, price hardcoding, or production wallet mutation. Native wallet remains authoritative. No new configuration for the bootstrap fix.
+- Tests use synthetic actors, temporary DB and mocked upstream; production read-only health/SHA/flag checks later. Requested owner availability for genuine embedded VK acceptance; no credentials requested in chat.
+- Initial local test attempt failed at fixture setup under Python 3.10 (`datetime.UTC`); preparing isolated 3.12 to match CI. Required tool repositories updated; implement, clean-code, PR checklist and webapp-testing guidance consulted.

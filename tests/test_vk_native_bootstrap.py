@@ -46,13 +46,13 @@ async def test_bootstrap_uses_native_wallet_models_tasks_and_packages(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_fails_closed_on_wallet_mismatch_or_non_vk_actor():
+async def test_bootstrap_fails_closed_on_invalid_wallet_or_non_vk_actor():
     async def state(_): return {"registered": True, "is_blocked": False, "balance": 10, "tasks": []}
     async def models(_): return {"ok": True, "photo_models": [], "video_models": []}
-    async def commerce(_): return {"ok": True, "registered": True, "balance": 9,
+    async def commerce(_): return {"ok": True, "registered": True, "balance": float("nan"),
         "payment_packages": [], "payments": [], "referrals": {}}
     service = VkNativeBootstrapService(state_reader=state, model_reader=models, commerce_reader=commerce)
-    with pytest.raises(RuntimeError, match="wallet"):
+    with pytest.raises(RuntimeError, match="price"):
         await service.bootstrap(ACTOR)
     with pytest.raises(PermissionError):
         await service.bootstrap(PlatformActor("telegram", 2001, "b" * 32, ("telegram",), 2001))
@@ -60,3 +60,89 @@ async def test_bootstrap_fails_closed_on_wallet_mismatch_or_non_vk_actor():
 
 def test_incremental_adapter_does_not_claim_full_vk_readiness():
     assert VkNativeAppAdapter.ready_operations == frozenset({"bootstrap", "tasks"})
+
+
+@pytest.mark.asyncio
+async def test_blocked_bootstrap_stops_before_catalogue_or_commerce():
+    from unittest.mock import AsyncMock
+
+    state = AsyncMock(return_value={"registered": True, "is_blocked": True, "balance": 10, "tasks": []})
+    downstream = AsyncMock()
+    service = VkNativeBootstrapService(state_reader=state, model_reader=downstream, commerce_reader=downstream)
+    with pytest.raises(PermissionError):
+        await service.bootstrap(ACTOR)
+    downstream.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field,value", [("state", None), ("models", []), ("commerce", None)])
+async def test_bootstrap_rejects_malformed_upstream_with_stable_error(field, value):
+    from unittest.mock import AsyncMock
+
+    responses = {
+        "state": {"registered": True, "is_blocked": False, "balance": 10, "tasks": []},
+        "models": {"ok": True, "photo_models": [], "video_models": []},
+        "commerce": {"ok": True, "registered": True, "balance": 10, "payment_packages": []},
+    }
+    responses[field] = value
+    service = VkNativeBootstrapService(**{
+        name: AsyncMock(return_value=responses[key])
+        for name, key in (("state_reader", "state"), ("model_reader", "models"), ("commerce_reader", "commerce"))
+    })
+    with pytest.raises(RuntimeError, match="Invalid native VK"):
+        await service.bootstrap(ACTOR)
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_uses_latest_native_commerce_balance_during_concurrent_debit():
+    from unittest.mock import AsyncMock
+
+    service = VkNativeBootstrapService(
+        state_reader=AsyncMock(return_value={"registered": True, "is_blocked": False, "balance": 10, "tasks": []}),
+        model_reader=AsyncMock(return_value={"ok": True, "photo_models": [], "video_models": []}),
+        commerce_reader=AsyncMock(return_value={"ok": True, "registered": True, "balance": 9, "payment_packages": []}),
+    )
+    assert (await service.bootstrap(ACTOR))["credits"] == 9
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection", ["photo_models", "video_models", "payment_packages"])
+async def test_bootstrap_rejects_incomplete_catalogue_items(collection):
+    from unittest.mock import AsyncMock
+
+    models = {"ok": True, "photo_models": [], "video_models": []}
+    commerce = {"ok": True, "registered": True, "balance": 10, "payment_packages": []}
+    (commerce if collection == "payment_packages" else models)[collection] = [{}]
+    service = VkNativeBootstrapService(
+        state_reader=AsyncMock(return_value={"registered": True, "is_blocked": False, "balance": 10, "tasks": []}),
+        model_reader=AsyncMock(return_value=models), commerce_reader=AsyncMock(return_value=commerce),
+    )
+    with pytest.raises(RuntimeError, match="Invalid native VK"):
+        await service.bootstrap(ACTOR)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [TimeoutError("private upstream endpoint"), RuntimeError("private payload")])
+async def test_gateway_redacts_bootstrap_upstream_failures(monkeypatch, failure):
+    from unittest.mock import AsyncMock
+
+    from aiohttp import web
+    from aiohttp.test_utils import TestClient, TestServer
+
+    from bot.shared_accounts import gateway
+
+    monkeypatch.setenv("VK_FULL_APP_PARITY_ENABLED", "1")
+    monkeypatch.setattr(gateway, "resolve_platform_actor", AsyncMock(return_value=ACTOR))
+    service = VkNativeBootstrapService(state_reader=AsyncMock(side_effect=failure))
+    adapter = VkNativeAppAdapter(bootstrap=service)
+    # Test the gateway's error boundary in isolation, without advertising the
+    # incomplete production adapter as fully ready.
+    monkeypatch.setattr(gateway, "full_vk_adapter", lambda app: adapter)
+    app = web.Application(middlewares=[gateway.vk_miniapp_gateway()])
+    legacy = AsyncMock()
+    app.router.add_post('/mini-app/api/bootstrap', legacy)
+    async with TestClient(TestServer(app)) as client:
+        result = await client.post('/mini-app/api/bootstrap', json={"init_data": "vk_session:test"})
+        assert result.status == 503
+        assert await result.json() == {"ok": False, "error": "Service temporarily unavailable"}
+    legacy.assert_not_awaited()

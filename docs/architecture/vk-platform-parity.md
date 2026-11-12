@@ -73,3 +73,14 @@ Partial photo generation is production-enabled. The product is NOT 1:1 yet:
 video/services/payments/publishing and the full seven-tab VK-only shell are
 outstanding. Do not claim completion merely because a backend HMAC endpoint
 exists or UI components can be rendered.
+
+## Bootstrap readiness review (2026-11-12)
+
+The incremental native bootstrap adapter rejects blocked/unregistered actors and
+malformed upstream state, model and package data before exposing a shared view.
+Balances from separate HTTP reads are not an atomic snapshot: a native payment
+or debit may legitimately occur between them. Bootstrap displays the later
+native commerce balance; it never compares two readings as a readiness gate.
+Generation and checkout must still revalidate native funds and prices at write
+time. Upstream errors fail closed through the gateway without private details.
+This adapter still advertises only bootstrap/tasks, not full parity readiness.
