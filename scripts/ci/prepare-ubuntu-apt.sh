@@ -39,21 +39,21 @@ apply_mirror() {
 }
 
 # Fixture mode asserts correct rewriting without touching the host or apt.
-if [[ ${CI_APT_TEST_ROOT:-} ]]; then
+if [[ ${CI_APT_TEST_ROOT:-} && ${CI_APT_TEST_RUN_FULL:-} != 1 ]]; then
   apply_mirror 'https://mirrors.edge.kernel.org/ubuntu'
   exit 0
 fi
 
-# Both mirrors return the normal Ubuntu InRelease files (GPG verified by apt).
+# Candidate mirrors provide standard Ubuntu InRelease metadata (GPG verified by apt).
 # Check their DNS reachability before waiting for apt retries. Never mark the
 # CI dependency gate as passed if actual apt update or install fails.
-for mirror in 'https://mirrors.edge.kernel.org/ubuntu' 'https://mirror.hetzner.com/ubuntu/packages'; do
+for mirror in 'https://mirrors.edge.kernel.org/ubuntu' 'https://mirror.hetzner.com/ubuntu/packages' 'https://azure.archive.ubuntu.com/ubuntu' 'https://archive.ubuntu.com/ubuntu' 'https://ubuntu.osuosl.org/ubuntu' 'https://mirrors.ocf.berkeley.edu/ubuntu'; do
   if ! curl -fsSL --connect-timeout 4 --max-time 10 -o /dev/null "${mirror}/dists/${codename}/InRelease" ||      ! curl -fsSL --connect-timeout 4 --max-time 10 -o /dev/null "${mirror}/dists/${codename}-security/InRelease"; then
     echo "Ubuntu mirror not reachable: $mirror" >&2
     continue
   fi
   apply_mirror "$mirror"
-  if sudo timeout 105 apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update; then
+  if "${sudo_cmd[@]}" timeout 105 apt-get -o APT::Update::Error-Mode=any -o Acquire::Retries=1 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update; then
     echo "Ubuntu signed apt index ready from $mirror"
     exit 0
   fi
