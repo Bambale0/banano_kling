@@ -387,7 +387,7 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
-              {requiredCredits > 0 ? (
+              {requiredCredits > 0 && !vkPaymentsOnly ? (
                 <section role="region" aria-label="Пополнение для повтора" className="rounded-2xl border border-gold/30 bg-gold/5 p-4">
                   <p className="text-sm font-semibold text-foreground">Пополнение для вашего видео</p>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
@@ -450,7 +450,7 @@ export function BalanceSheet() {
                   )}
                 </section>
               ) : null}
-              {manualPaymentUrl && !readyPayment ? (
+              {!vkPaymentsOnly && manualPaymentUrl && !readyPayment ? (
                 <section ref={manualPaymentRef} role="region" aria-label="Ссылка на оплату"
                   className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="text-sm text-muted-foreground">
@@ -473,7 +473,7 @@ export function BalanceSheet() {
                   </Button>
                 </section>
               ) : null}
-              {readyPayment ? (
+              {!vkPaymentsOnly && readyPayment ? (
                 <section ref={paymentReadyRef} aria-label="Готовый счёт" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="font-medium text-foreground">Счёт готов: {readyPayment.amountRub !== null ? `${readyPayment.amountRub} ₽ · ` : ''}{readyPayment.credits}🍌</p>
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -501,6 +501,7 @@ export function BalanceSheet() {
                   </Button>
                 </section>
               ) : null}
+              {!vkPaymentsOnly ? (<>
               <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div>
@@ -524,6 +525,8 @@ export function BalanceSheet() {
                 <StatCard icon={Gift} label="Фото" value={`${imageTasks}`} />
                 <StatCard icon={CreditCard} label="Видео" value={`${videoTasks}`} />
               </div>
+
+              </>) : null}
 
               {!vkPaymentsOnly ? <label className="block space-y-2" htmlFor="payment-customer-email">
                 <span className="text-sm font-medium text-foreground">Почта для оплаты через Lava.top</span>
