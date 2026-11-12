@@ -77,7 +77,10 @@ exists or UI components can be rendered.
 ## Bootstrap readiness review (2026-11-12)
 
 The incremental native bootstrap adapter rejects blocked/unregistered actors and
-malformed upstream state, model and package data before exposing a shared view.
+malformed mandatory state envelopes, model and package data before exposing a shared view.
+Historical task cards retain the existing tolerant projection: unsupported or
+unrenderable rows are omitted from recent_tasks, never removed from the native
+ledger, so one legacy task cannot hide the wallet or other valid tasks.
 Balances from separate HTTP reads are not an atomic snapshot: a native payment
 or debit may legitimately occur between them. Bootstrap displays the later
 native commerce balance; it never compares two readings as a readiness gate.
