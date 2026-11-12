@@ -92,3 +92,16 @@ for the ten-domain shared shell, including services, feed writes, complete
 video/references, referral/payout reconciliation and result delivery. The
 shared-shell readiness must remain false until live VK WebView and financial
 acceptance proves those end-to-end paths.
+
+
+### Wallet snapshot and invoice immutability follow-up (review-only)
+
+The shared VK BalanceSheet does not display balances, repeat deficits, or task
+statistics from the legacy Telegram application state. It renders the signed
+native VK commerce balance only after validating a finite, nonnegative numeric
+snapshot. Invalid/missing native balances fail closed without an invoice action.
+Once a native invoice request has been issued, the form freezes its package,
+method and email for that checkout attempt: ambiguous timeouts and native
+`creating`/`unknown` states may be retried **only with the exact original
+payload and idempotency claim**. This prevents a second invoice being created
+by editing the terms while the first provider result is unresolved.
