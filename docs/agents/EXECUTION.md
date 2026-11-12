@@ -3221,3 +3221,14 @@ private references and browser-provided actor information fail closed.
 - Fail-closed: native commerce errors/unregistered accounts and missing double payment flags cannot expose any payment action. The existing native BFF validates the verified actor and `VK_MINIAPP_CHECKOUT_ENABLED` plus native `VK_MINIAPP_PAYMENTS_ENABLED` before enabling checkout; no payment was actually created.
 - Tests: focused payment/VK scope 42/42, full Jest 105 suites/799 tests with two worker isolation, TypeScript, scoped ESLint and production VK static build all passed. A single-worker full run exposed order-dependent failures in unrelated reference-library tests; the same tests pass alone, and the complete suite passes with two workers. Fixed an independently reproduced test setup error by making the mocked Telegram property configurable, so auth-cache tests can delete it as intended.
 - Release: full VK parity **still blocked**, because native callable adapters only cover parts of the ten required domains. No native money operations, server configuration, pricing, deployment, master/tanyapi merge or actual VK WebView invoice/refund acceptance was performed.
+
+- Follow-up on the same Draft PR (review-only): replicated and guarded against
+  showing legacy Telegram `user.credits`, task statistics and repeat deficits
+  on the shared VK balance sheet before native bootstrap is complete. Native
+  `vk-commerce` balance is now the sole displayed amount, strictly validated.
+  Added regression tests for wrong-platform credit leakage and malformed native
+  snapshots. A second regression reproduces editable invoice terms after an
+  ambiguous provider outcome; package, method and email now freeze after the
+  first native invoice request, with exact-payload retries. No payment or live
+  wallet operation was initiated. Await exact-head GitHub CI before reporting
+  the review branch ready.
