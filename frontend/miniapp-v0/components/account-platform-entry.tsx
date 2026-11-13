@@ -55,11 +55,9 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       {message !== 'Подтверждаем вход…' && <VkLoginLink />}
     </main>
   }
-  // The shared shell is selected by a trusted backend capability contract,
-  // never simply because VK happened to be linked to Telegram. A legacy
-  // backend without this field preserves the existing linked-account path.
-  if (access.full_app_ready === true
-    || (access.full_app_ready === undefined && access.telegram_linked)) return children
+  // Only an explicit server capability permits mounting the shared shell.
+  // Missing readiness on older backends must fail closed, even if linked.
+  if (access.full_app_ready === true) return children
 
   // A VK-only visitor already has a working native VK bot. Telegram linking
   // is optional; never spoof Telegram identity or imply shared wallet funds.
