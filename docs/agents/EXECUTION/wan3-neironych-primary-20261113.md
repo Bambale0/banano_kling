@@ -25,14 +25,23 @@ and `wan-3-prime` on 2026-11-13. No `wan-2.7` model was listed, so
   Wan 3 reconciler; `/content` is downloaded using authorization to a
   bounded local file and stored via the existing S3 media persistence path.
   Native callbacks are not assumed to exist.
-- An uncertain paid native POST is **not** retried through KIE. Recovery uses
-  the stable idempotency key; do not make a new paid request without provider
-  acceptance reconciliation.
+- Before the paid POST, `generation_tasks.request_data` commits
+  `provider_submission_route=neironych`. Native requests send the stable
+  `Idempotency-Key`, `X-Client-Request-Id`, and `X-Submission-Receipt: v1`.
+- A lost POST acknowledgement is reconciled by authenticated
+  `GET /api/v1/generations/by-client-request-id/{internal_task_id}`,
+  followed by `GET /v1/videos/{request_id}`. The client identity,
+  idempotency key and model must match the reserved intent before binding.
+  Manual candidate recovery has the same verification.
+- Never automatically retry an uncertain paid POST on a new provider.
+  If upstream cannot prove lineage, keep the reservation marked
+  `unknown` for operator reconciliation rather than risking double charge.
 - Failure, reserve/refund, trend and delivery remain in the current Wan 3
   lifecycle, with the actual provider recorded in generation task metadata.
 
 ## Contract gaps / preserved KIE compatibility
-Native **Wan 3 Standard** supports text, references, frames and edit.
+Native **Wan 3 Standard** routes text, references and frames. **Edit remains
+on KIE** until the native API can preserve selected duration/ratio.
 Native **Wan 3 Prime** supports text/reference but **not** edit, frames,
 adaptive ratio, seed, silent video, or auto-duration. The Prime native
 contract also requires duration >= 4 and ratios 16:9, 1:1 or 9:16.
