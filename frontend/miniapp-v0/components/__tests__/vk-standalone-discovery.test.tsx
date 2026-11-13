@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
@@ -14,6 +14,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
+  generateVkVideo: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
   uploadVkImage: jest.fn(),
 }))
@@ -402,4 +403,32 @@ test('missing VK feed publication reports its own error instead of opening a num
   const detail = await screen.findByRole('region', { name: 'Публикация из ленты' })
   expect(await within(detail).findByRole('alert')).toHaveTextContent('Публикация не найдена')
   expect(fetchVkPublicTrend).not.toHaveBeenCalled()
+})
+
+
+test('native VK-only video action is hidden until signed server readiness is true', async () => {
+  render(<VkStandaloneDiscovery />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Создать видео' })).not.toBeInTheDocument()
+})
+
+test('VK-only video action uses the existing studio panel when backend is ready', async () => {
+  jest.mocked(fetchVkNativeState).mockResolvedValue({
+    ok: true, registered: true, is_blocked: false, balance: 50,
+    tasks: [], video_generation_enabled: true,
+  })
+  jest.mocked(fetchVkModelCatalog).mockResolvedValue({
+    ok: true, photo_models: [],
+    video_models: [{
+      id: 'v3_std', label: 'Kling Standard', ratios: ['16:9'],
+      duration_min: 5, duration_max: 5, durations: [5],
+      scenarios: ['text'], max_image_references: 0,
+    }],
+  })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать видео' }))
+  expect(await screen.findByRole('option', { name: 'Kling Standard' })).toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Создание видео' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Фото-референсы')).toBeDisabled()
+  expect(generateVkVideo).not.toHaveBeenCalled()
 })
