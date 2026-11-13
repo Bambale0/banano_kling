@@ -174,7 +174,7 @@ class Wan3NeironychRuntimeTransport:
 
     @staticmethod
     async def _configured_provider() -> str:
-        from bot.services.admin_settings import get_bot_setting
+        from bot.database import get_bot_setting
 
         default = os.getenv("WAN3_PRIMARY_PROVIDER", "neironych")
         return str(await get_bot_setting("wan3_primary_provider", default)).strip().lower()
