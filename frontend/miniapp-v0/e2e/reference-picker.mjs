@@ -50,10 +50,19 @@ try {
       }
       let payload = { ok: true, items: [], feed: [], prompts: [], notifications: [], categories: [] }
       if (url.pathname.endsWith('/account-preview/session')) payload = { ok: true, session_token: 's'.repeat(43), account: { id: 'picker-account' } }
-      if (url.pathname.endsWith('/account-preview/me')) payload = { ok: true, account: { id: 'picker-account' }, preview: { telegram_linked: true, revision: 1, vk_app_id: 123, telegram_bot_username: 'fixture_bot' } }
+      if (url.pathname.endsWith('/account-preview/me')) payload = { ok: true, account: { id: 'picker-account' }, preview: {
+        // Positive VK-only picker scenario needs explicit signed native readiness.
+        full_app_ready: platform === 'vk', telegram_linked: false,
+        linked_platforms: platform === 'vk' ? ['vk'] : ['telegram'],
+        revision: 1, vk_app_id: 123, telegram_bot_username: 'fixture_bot',
+      } }
       if (url.pathname.endsWith('/bootstrap')) payload = {
-        ...payload, telegram_id: 1001, first_name: 'Fixture', is_admin: false, credits: 10,
-        telegram_chat_available: true, telegram_bot_start_required: false, bot_username: 'fixture_bot',
+        ...payload,
+        // A native VK bootstrap must never fabricate a Telegram identity.
+        ...(platform === 'telegram' ? { telegram_id: 1001 } : {}),
+        first_name: 'Fixture', is_admin: false, credits: 10,
+        telegram_chat_available: platform === 'telegram', telegram_bot_start_required: false,
+        bot_username: 'fixture_bot',
         actions: [], payment_packages: [], recent_tasks: [], saved_references: [], video_models: [],
         image_models: [{ id: 'banana_pro', label: 'Nano Banana Pro', cost: 1, ratios: ['9:16'], max_references: 8, requires_reference: false }],
       }
