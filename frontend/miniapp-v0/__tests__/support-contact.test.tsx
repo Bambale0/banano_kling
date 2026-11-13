@@ -11,8 +11,6 @@ jest.mock('@/lib/clipboard', () => ({ copyTextToClipboard: jest.fn() }))
 const mockedUseApp = jest.mocked(useApp)
 const mockedCopy = jest.mocked(copyTextToClipboard)
 const originalTelegram = window.Telegram
-const originalSuccess = toast.success
-const originalError = toast.error
 
 beforeEach(() => {
   mockedUseApp.mockReturnValue({
