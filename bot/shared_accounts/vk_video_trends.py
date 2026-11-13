@@ -77,7 +77,7 @@ def build_native_video_trend_request(
         raise ValueError("Native VK model catalog is unavailable")
     native_models = native_catalog.get("video_models")
     if not isinstance(native_models, list):
-        raise ValueError("Native VK video model catalog is invalid")
+        raise TypeError("Native VK video model catalog is invalid")
     model = next((
         item for item in native_models
         if isinstance(item, Mapping) and item.get("id") == trusted.model
