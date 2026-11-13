@@ -93,6 +93,14 @@ def native_payload_for_recipe(recipe: Wan3PrimeRecipe) -> dict[str, Any] | None:
     return body
 
 
+def native_download_attempt_budget(*, timeout_seconds: int, deadline: float, now: float) -> float:
+    """Keep every retry within the reconciler's task lease."""
+    remaining = deadline - now
+    if remaining <= 1:
+        raise TimeoutError("Wan native download exceeded lease-safe retry budget")
+    return min(timeout_seconds, remaining)
+
+
 class NeironychWan3RuntimeService(NeironychWan3AdminService):
     """Enable both real models; keep admin lab's historic narrow catalog intact."""
 
@@ -169,10 +177,12 @@ class NeironychWan3RuntimeService(NeironychWan3AdminService):
             for attempt in range(3):
                 total = 0
                 try:
-                    remaining = overall_deadline - asyncio.get_running_loop().time()
-                    if remaining <= 1:
-                        raise TimeoutError("Wan native download exceeded lease-safe retry budget")
-                    timeout = aiohttp.ClientTimeout(total=min(timeout_seconds, remaining))
+                    attempt_timeout = native_download_attempt_budget(
+                        timeout_seconds=timeout_seconds,
+                        deadline=overall_deadline,
+                        now=asyncio.get_running_loop().time(),
+                    )
+                    timeout = aiohttp.ClientTimeout(total=attempt_timeout)
                     async with (
                         aiohttp.ClientSession(timeout=timeout) as session,
                         session.get(
