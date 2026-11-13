@@ -53,6 +53,24 @@ export function VkNativeWorkspace() {
     }
   }, [])
 
+  const selectTab = (nextTab: number) => {
+    if (nextTab !== activeTab && typeof window !== 'undefined') {
+      const start = startParamFromLocation(window.location.search, window.location.hash)
+      const target = parseMiniAppStartParam(start)
+      // The signed VK launch query is preserved. Only an already-consumed
+      // public navigation fragment is removed; never remove a link invite.
+      const hasPublicFragment = /^#(?:prompt|feed|remix|profile|posts|task|genjutsu_recipe)_/.test(
+        window.location.hash,
+      )
+      if (target && hasPublicFragment) {
+        window.history.replaceState(
+          window.history.state, '', window.location.pathname + window.location.search,
+        )
+      }
+    }
+    setActiveTab(nextTab)
+  }
+
   const surface = vkSurfaces[activeTab]
 
   return <section aria-label="Разделы NEUROMIX ВКонтакте" className="min-w-0 space-y-4 pb-[calc(7rem+env(safe-area-inset-bottom))]">
@@ -71,6 +89,6 @@ export function VkNativeWorkspace() {
         <p>Telegram для доступа к своему VK-аккаунту не требуется.</p>
       </section>
     )}
-    <AppTabBar activeTab={activeTab} onTabChange={setActiveTab} isVk />
+    <AppTabBar activeTab={activeTab} onTabChange={selectTab} isVk />
   </section>
 }
