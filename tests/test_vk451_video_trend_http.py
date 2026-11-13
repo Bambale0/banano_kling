@@ -117,13 +117,51 @@ async def test_native_video_trend_flag_disabled_cannot_execute_paid_request(monk
 def test_video_trend_public_card_advertised_only_when_native_flag_enabled(monkeypatch):
     monkeypatch.delenv("VK_MINIAPP_WRITES_ENABLED", raising=False)
     monkeypatch.delenv("VK_MINIAPP_VIDEO_WRITES_ENABLED", raising=False)
-    card = {**PROMPT, "title": "Foxes", "description": "",
-            "generation_settings": dict(PROMPT["generation_settings"])}
+    # The public catalogue only carries a boolean computed from the private
+    # editor recipe. It must not leak model, prompt or provider inputs.
+    card = {
+        "id": 31, "title": "Foxes", "description": "",
+        "generation_settings": {"kind": "video", "ratio": "16:9"},
+        "vk_native_video_repeat_supported": True,
+        "prompt_text": "",
+    }
     closed = api._vk_public_trend_card(card, vk_app_id=54880352)
     assert closed["can_repeat_in_app"] is False
     monkeypatch.setenv("VK_MINIAPP_VIDEO_WRITES_ENABLED", "1")
     allowed = api._vk_public_trend_card(card, vk_app_id=54880352)
     assert allowed["can_repeat_in_app"] is True
     assert "prompt_text" not in allowed
-    card["generation_settings"]["reference_contract"] = "hidden"
+    assert "model" not in allowed
+    card["vk_native_video_repeat_supported"] = False
     assert api._vk_public_trend_card(card, vk_app_id=54880352)["can_repeat_in_app"] is False
+
+
+@pytest.mark.asyncio
+async def test_native_video_catalog_card_is_sanitized_but_preserves_server_eligibility():
+    user = await database.get_or_create_user(991001)
+    prompt = await database.create_prompt(
+        author_id=user.id,
+        prompt_text="PRIVATE EDITOR VIDEO PROMPT WITH SECRET REFS",
+        title="Published VK-Compatible Video",
+        category="video",
+        model="v3_std",
+        generation_settings={
+            "kind": "video", "model": "v3_std",
+            "user_input": "photo", "scenario": "imgtxt",
+            "ratio": "16:9", "duration": 5, "count": 1,
+        },
+        tags=["trend", "trend-video"],
+        is_public=True,
+    )
+    await database.approve_prompt(prompt["id"])
+    catalog = await trend_catalog.list_catalog(is_admin=False, per_category=12)
+    card = next(
+        (item for group in catalog for item in group["items"]
+         if item["id"] == prompt["id"]), None,
+    )
+    assert card is not None
+    assert card["vk_native_video_repeat_supported"] is True
+    assert card["prompt_text"] == ""
+    assert card.get("model") is None
+    assert "PRIVATE EDITOR" not in str(card)
+    assert "v3_std" not in str(card)
