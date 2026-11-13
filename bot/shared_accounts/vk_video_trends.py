@@ -46,7 +46,7 @@ def build_native_video_trend_request(
     *,
     key: str | None,
     quote_only: bool,
-    expected_cost: int | float | None,
+    expected_cost: float | None,
 ) -> dict[str, Any]:
     """Create a native VK submission using only the trusted server-side recipe.
 
@@ -54,7 +54,9 @@ def build_native_video_trend_request(
     override model/prompt/duration/price. Caller verifies ownership of photo
     URLs before this function. No paid call occurs until validation passes.
     """
-    if not isinstance(trusted, TrustedTrendRun) or trusted.kind != "video":
+    if not isinstance(trusted, TrustedTrendRun):
+        raise TypeError("Unsupported VK trend object")
+    if trusted.kind != "video":
         raise ValueError("Unsupported VK trend type")
     settings = trusted.settings
     if not supports_native_vk_video_trend({"generation_settings": settings}):
