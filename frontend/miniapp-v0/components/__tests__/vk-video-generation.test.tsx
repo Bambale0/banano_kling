@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkGenerationPanel } from '../vk-generation-panel'
 import {
   fetchVkGenerationClaim, fetchVkModelCatalog, generateVkVideo, uploadVkImage,
+  fetchVkSavedReferences,
 } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
@@ -14,6 +15,7 @@ jest.mock('@/lib/shared-account-api', () => ({
 }))
 
 beforeEach(() => {
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.resetAllMocks()
   jest.mocked(fetchVkModelCatalog).mockResolvedValue({
     ok: true, photo_models: [],
