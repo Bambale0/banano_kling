@@ -45,12 +45,11 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     WEBHOOK_BIND_HOST=0.0.0.0 \
     WEBHOOK_PORT=1888
 
+# PGDG signing-key downloads can fail with curl (18) on HTTP/2.
+# Preserve signed APT and the PostgreSQL 16 version check; retry only transport.
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates curl \
     && install -d /usr/share/postgresql-common/pgdg \
-    # The PGDG key endpoint intermittently breaks HTTP/2 streams (curl 18).
-    # Keep the signed repository and exact PostgreSQL 16 contract; only
-    # retry bounded transient network failures over HTTP/1.1.
     && curl --fail --silent --show-error --location --http1.1 \
         --retry 5 --retry-all-errors --retry-delay 2 \
         --connect-timeout 15 --max-time 60 \
