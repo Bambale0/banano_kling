@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
@@ -9,6 +9,7 @@ import {
   fetchVkPublicDiscovery,
   fetchVkPublicTrend,
   fetchVkPublicFeedItem,
+  likeVkFeed,
   fetchVkNativeState,
   fetchVkNativeCommerce,
   type VkNativeState,
@@ -64,7 +65,12 @@ function TrendCard({ item, onRepeat, onShare }: {
   </article>
 }
 
-function FeedCard({ item }: { item: VkPublicFeedItem }) {
+function FeedCard({ item, onLike, liking, liked }: {
+  item: VkPublicFeedItem
+  onLike: (id: number) => void
+  liking: boolean
+  liked: boolean
+}) {
   return <article className="min-w-0 rounded-2xl border border-border/70 bg-card p-2">
     <Preview
       image={item.preview_url || (item.generation_type === 'image' ? item.result_url : null)}
@@ -74,6 +80,12 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
     <p className="px-1 py-2 text-xs text-muted-foreground">
       {item.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · ❤ {item.likes_count}
     </p>
+    {item.can_like_in_app && <button type="button"
+      disabled={liking || liked}
+      onClick={() => onLike(item.id)}
+      className="w-full rounded-lg border border-border px-2 py-2 text-xs">
+      {liked ? 'Вам нравится' : liking ? 'Сохраняем…' : 'Нравится'}
+    </button>}
   </article>
 }
 
@@ -92,6 +104,10 @@ export function VkStandaloneDiscovery() {
   const [linkedFeed, setLinkedFeed] = useState<VkPublicFeedLink['item'] | null>(null)
   const [linkedFeedError, setLinkedFeedError] = useState('')
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
+  const [likeBusyId, setLikeBusyId] = useState<number | null>(null)
+  const [likedIds, setLikedIds] = useState<Set<number>>(() => new Set())
+  const [likeError, setLikeError] = useState('')
+  const likeInFlight = useRef<Set<number>>(new Set())
   const [shareLink, setShareLink] = useState('')
   const [shareTitle, setShareTitle] = useState('')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
@@ -179,6 +195,32 @@ export function VkStandaloneDiscovery() {
     })
     return () => controller.abort()
   }, [linkedFeedTarget])
+
+  const likeFeed = async (id: number) => {
+    if (likeInFlight.current.has(id) || likedIds.has(id)) return
+    likeInFlight.current.add(id)
+    setLikeBusyId(id)
+    setLikeError('')
+    try {
+      const result = await likeVkFeed(id)
+      if (!result.ok || !result.liked || !Number.isSafeInteger(result.likes_count)
+        || result.likes_count < 0) {
+        throw new Error('Не удалось подтвердить реакцию на публикацию.')
+      }
+      setLikedIds(current => new Set(current).add(id))
+      setLinkedFeed(current => current?.id === id
+        ? { ...current, likes_count: result.likes_count } : current)
+      setDiscovery(current => current && 'items' in current
+        ? { ...current, items: current.items.map(item => item.id === id
+          ? { ...item, likes_count: result.likes_count } : item) }
+        : current)
+    } catch (failure) {
+      setLikeError(failure instanceof Error ? failure.message : 'Не удалось сохранить реакцию.')
+    } finally {
+      likeInFlight.current.delete(id)
+      setLikeBusyId(value => value === id ? null : value)
+    }
+  }
 
   const closeLinkedFeed = () => {
     if (/^#(?:feed|remix)_/.test(window.location.hash)) {
@@ -396,6 +438,12 @@ export function VkStandaloneDiscovery() {
           {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
           {' · ❤ '}{linkedFeed.likes_count}
         </p>
+        {linkedFeed.can_like_in_app && <button type="button"
+          disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
+          onClick={() => void likeFeed(linkedFeed.id)}
+          className="rounded-lg border border-border px-3 py-2 text-sm">
+          {likedIds.has(linkedFeed.id) ? 'Вам нравится' : 'Нравится'}
+        </button>}
         {linkedFeedTarget.kind === 'remix'
           ? <p className="text-sm text-muted-foreground">
               Повтор этой публикации в VK Mini App пока не подключён к защищённому VK-балансу.
@@ -447,6 +495,7 @@ export function VkStandaloneDiscovery() {
         setCategoryId(null); setCategory(null); setPage(1)
       }}>← Ко всем трендам</button>
     ) : null}
+    {likeError && <p role="alert" className="text-sm text-destructive">{likeError}</p>}
     {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && error ? <div role="alert" className="space-y-2 text-sm">
       <p>{error}</p>
       <button type="button" className="underline" onClick={() => setRetry(x => x + 1)}>Повторить загрузку</button>
@@ -481,7 +530,10 @@ export function VkStandaloneDiscovery() {
     )) : null}
     {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
-        {discovery.items.map(item => <FeedCard key={item.id} item={item} />)}
+        {discovery.items.map(item => <FeedCard key={item.id} item={item}
+          onLike={id => void likeFeed(id)}
+          liking={likeBusyId === item.id}
+          liked={likedIds.has(item.id)} />)}
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">
