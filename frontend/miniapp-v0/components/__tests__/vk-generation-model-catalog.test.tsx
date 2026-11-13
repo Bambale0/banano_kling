@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { VkGenerationPanel } from '../vk-generation-panel'
-import { fetchVkGenerationClaim, fetchVkModelCatalog, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkSavedReferences, fetchVkGenerationClaim, fetchVkModelCatalog, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
@@ -13,6 +13,7 @@ jest.mock('@/lib/shared-account-api', () => ({
 }))
 
 beforeEach(() => {
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.resetAllMocks()
   jest.mocked(fetchVkModelCatalog).mockResolvedValue({
     ok: true,
