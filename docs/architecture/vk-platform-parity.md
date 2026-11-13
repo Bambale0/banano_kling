@@ -160,3 +160,25 @@ trigger an automatic second charge; a manual retry preserves the original
 request key. Valid media ownership, recipe eligibility, worker capabilities
 and pricing are checked by the native BFF from the companion #496 backend.
 No full VK shared-shell gate or payment flag changes are made.
+
+## 2026-11-13 — basic native VK video-trend repeat bridge (review-only)
+
+A signed VK-only user may quote/repeat **basic** curator-approved image-to-video
+trends through the existing `vk-trend` BFF. Exact editor prompt, model,
+duration and ratio are read server-side from the approved and publicly visible
+recipe. The worker's own dynamic model catalog validates the model, image
+reference limits, duration, supported scenario and aspect, and computes the
+native wallet cost. User references must be verified as owned by the signed
+VK actor; the source ID never authorizes another user's media. A native
+idempotency key protects repeat charging; the browser sees task ID and cost,
+not the hidden recipe. This does not copy TG credits, create a second wallet,
+or modify payments.
+
+Only simple image-to-video recipes with one output and no fixed private assets
+qualify. Any stored fixed trend_reference_assets rows, reference_contract,
+video/audio assets, Genjutsu and Seedance editing recipes fail closed. Full
+video/audio reference recipes and author-approved feed remixes still require
+separate actor/media adapters. `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains
+OFF by default, on both BFF and native worker. A public repeat affordance is
+only preliminary; native catalog validation and quote are authoritative.
+No expanded full `VK_FULL_APP_OPERATIONS` readiness is claimed.
