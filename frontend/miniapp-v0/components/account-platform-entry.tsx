@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
-import { VkStandaloneDiscovery } from '@/components/vk-standalone-discovery'
+import { VkNativeWorkspace } from '@/components/vk-native-workspace'
 import { hasVkLaunchData, incomingAccountLink } from '@/lib/account-platform'
 import { reportVkLaunchStage } from '@/lib/vk-launch-telemetry'
 import {
@@ -67,13 +67,13 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     ? `https://vk.com/im?sel=-${communityId}`
     : null
 
-  return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-4" aria-label="Студия ВКонтакте">
+  return <main className="mx-auto min-h-dvh w-full max-w-[1180px] space-y-5 px-3 py-4 sm:px-4" aria-label="Студия ВКонтакте">
     <h1 className="text-xl font-semibold">Создавайте в ВКонтакте</h1>
     <p className="text-sm text-muted-foreground">
       Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
       Единая Mini App станет доступна после подтверждения полной совместимости сервером.
     </p>
-    <VkStandaloneDiscovery />
+    <VkNativeWorkspace />
     {nativeBotUrl
       ? <a className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
           href={nativeBotUrl} target="_blank" rel="noopener noreferrer">
@@ -82,7 +82,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       : <p role="status" className="text-sm text-muted-foreground">
           Диалог с ботом сейчас недоступен по прямой ссылке. Вернитесь в сообщения сообщества ВКонтакте.
         </p>}
-    <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
+    <details className="rounded-xl border border-border p-4 mb-[calc(7rem+env(safe-area-inset-bottom))]" open={Boolean(incomingAccountLink())}>
       <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
       <p className="my-3 text-sm text-muted-foreground">
         Привязка аккаунтов добровольная. Средства из прежнего VK-бота автоматически не переносятся.
