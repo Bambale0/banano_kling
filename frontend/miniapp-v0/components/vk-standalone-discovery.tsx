@@ -87,7 +87,7 @@ function FeedCard({ item, onOpen, onLike, liking, liked }: {
     {item.can_like_in_app && <button type="button" disabled={liking || liked}
       onClick={() => onLike(item.id)} className="mt-2 w-full rounded-lg border border-border p-2 text-xs">
       {liked ? 'Вам нравится' : liking ? 'Сохраняем…' : 'Нравится'}
-    </button>
+    </button>}
   </article>
 }
 
