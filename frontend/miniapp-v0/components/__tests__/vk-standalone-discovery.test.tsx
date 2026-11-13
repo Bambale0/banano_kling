@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage, likeVkFeed } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkPublicDiscovery: jest.fn(),
@@ -17,6 +17,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   generateVkVideo: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
   uploadVkImage: jest.fn(),
+  likeVkFeed: jest.fn(),
 }))
 
 const card = (id: number, title: string) => ({
@@ -29,6 +30,7 @@ const card = (id: number, title: string) => ({
 beforeEach(() => {
   window.history.replaceState({}, '', '/')
   jest.resetAllMocks()
+  jest.mocked(likeVkFeed).mockResolvedValue({ ok: true, liked: true, likes_count: 5 })
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, is_blocked: false,
     tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
@@ -431,4 +433,49 @@ test('VK-only video action uses the existing studio panel when backend is ready'
   expect(screen.getByRole('region', { name: 'Создание видео' })).toBeInTheDocument()
   expect(screen.getByLabelText('Фото-референсы')).toBeDisabled()
   expect(generateVkVideo).not.toHaveBeenCalled()
+})
+
+test('VK native feed like is sent once by signed actor and updates the visible counter', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 19, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/19.jpg', likes_count: 4, can_like_in_app: true,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Нравится' }))
+  await waitFor(() => expect(likeVkFeed).toHaveBeenCalledWith(19))
+  expect(await screen.findByText(/❤ 5/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Вам нравится' })).toBeDisabled()
+  expect(likeVkFeed).toHaveBeenCalledTimes(1)
+})
+
+test('native VK feed never offers a reaction when the server write flag is absent', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 20, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/20.jpg', likes_count: 0,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  expect(await screen.findByText(/❤ 0/)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Нравится' })).not.toBeInTheDocument()
+  expect(likeVkFeed).not.toHaveBeenCalled()
+})
+
+test('native VK reaction failure does not claim a successful social write', async () => {
+  jest.mocked(likeVkFeed).mockRejectedValueOnce(new Error('Сеть недоступна'))
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 21, generation_type: 'video', preview_url: null,
+      result_url: 'https://example.test/21.mp4', likes_count: 7, can_like_in_app: true,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Нравится' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Сеть недоступна')
+  expect(screen.getByText(/❤ 7/)).toBeInTheDocument()
 })
