@@ -157,6 +157,10 @@ class NeironychWan3RuntimeService(NeironychWan3AdminService):
             raise ValueError("Invalid internal Wan task_id")
         max_bytes = max(1, int(os.getenv("WAN3_RESULT_MAX_BYTES", str(250 * 1024 * 1024))))
         timeout_seconds = max(5, int(os.getenv("WAN3_RESULT_DOWNLOAD_TIMEOUT_SECONDS", "180")))
+        # The reconciler holds a lease for download_timeout + 120 seconds.
+        # All retries together must finish well before that lease expires,
+        # otherwise another worker may open the same temporary path.
+        overall_deadline = asyncio.get_running_loop().time() + timeout_seconds + 60
         root = Path("static/uploads/wan3_prime/results")
         root.mkdir(parents=True, exist_ok=True)
         destination = root / (task_id + ".mp4")
@@ -165,7 +169,10 @@ class NeironychWan3RuntimeService(NeironychWan3AdminService):
             for attempt in range(3):
                 total = 0
                 try:
-                    timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+                    remaining = overall_deadline - asyncio.get_running_loop().time()
+                    if remaining <= 1:
+                        raise TimeoutError("Wan native download exceeded lease-safe retry budget")
+                    timeout = aiohttp.ClientTimeout(total=min(timeout_seconds, remaining))
                     async with (
                         aiohttp.ClientSession(timeout=timeout) as session,
                         session.get(
