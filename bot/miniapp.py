@@ -70,6 +70,7 @@ from bot.database import (
     get_feed_generations,
     get_generation_task_payload,
     get_or_create_user,
+    get_miniapp_prompt_repeat_snapshot,
     get_partner_overview,
     get_popular_prompts,
     get_profile_generation_card,
@@ -3504,21 +3505,34 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
 
 
 async def miniapp_bootstrap(request: web.Request) -> web.Response:
+    started_at = time.monotonic()
+    stages_ms: dict[str, float] = {}
+
+    async def measured(stage: str, pending):
+        stage_started = time.monotonic()
+        try:
+            return await pending
+        finally:
+            stages_ms[stage] = round(
+                (time.monotonic() - stage_started) * 1000, 1
+            )
+
     try:
-        body = await _miniapp_payload(request)
+        body = await measured("payload", _miniapp_payload(request))
         init_data = body.get("init_data", "")
-        telegram_id, ctx = await _get_user_context(
-            request.app,
-            init_data,
-            body.get("start_param_fallback"),
+        telegram_id, ctx = await measured(
+            "actor_context",
+            _get_user_context(request.app, init_data, body.get("start_param_fallback")),
         )
         # Private request state comes only from the authenticated actor. Later
         # model metadata wrappers reuse it without a shared per-user cache.
-        tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+        tariff = await measured(
+            "tariff", creator_tariff_display.get_actor_tariff(telegram_id)
+        )
         request._creator_tariff = tariff
         user = ctx["user"]
         telegram_user = ctx["payload"]["user"]
-        me = await _cached_bot_me(request.app)
+        me = await measured("bot_identity", _cached_bot_me(request.app))
         link_kwargs = _miniapp_link_kwargs(ctx)
         can_build_platform_link = bool(me.username) or link_kwargs["platform"] == "vk"
         profile_link = (
@@ -3531,8 +3545,12 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             if user.referral_code and can_build_platform_link
             else config.mini_app_url
         )
-        recent_tasks = await _fetch_recent_tasks(telegram_id)
-        partner_stats = await get_partner_overview(telegram_id)
+        recent_tasks = await measured(
+            "recent_tasks", _fetch_recent_tasks(telegram_id)
+        )
+        prompt_repeat_stats = await measured(
+            "repeat_balance", get_miniapp_prompt_repeat_snapshot(user)
+        )
         data = {
             "ok": True,
             "telegram_id": telegram_id,
@@ -3546,16 +3564,20 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "referral_link": referral_link,
             "channel_url": user.channel_url or "",
             "prompt_repeat_balance_rub": float(
-                partner_stats.get("prompt_repeat_balance_rub", 0) or 0
+                prompt_repeat_stats.get("prompt_repeat_balance_rub", 0) or 0
             ),
             "prompt_repeat_total_rub": float(
-                partner_stats.get("prompt_repeat_total_rub", 0) or 0
+                prompt_repeat_stats.get("prompt_repeat_total_rub", 0) or 0
             ),
             "bot_username": me.username,
             "support_contact": str(preset_manager.get_price_config().get("support_contact") or "").strip(),
             "username": me.username,
-            "telegram_chat_available": await can_attempt_telegram_delivery(telegram_id),
-            "telegram_bot_start_required": await needs_telegram_bot_start(telegram_id),
+            "telegram_chat_available": await measured(
+                "delivery_status", can_attempt_telegram_delivery(telegram_id)
+            ),
+            "telegram_bot_start_required": await measured(
+                "bot_start_status", needs_telegram_bot_start(telegram_id)
+            ),
             "mini_app_url": config.mini_app_url,
             "is_admin": config.is_admin(telegram_id),
             "actions": sorted(ACTIONS.keys()),
@@ -3604,15 +3626,34 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
             "recent_tasks": recent_tasks,
             "saved_references": [
                 _saved_reference_payload(item)
-                for item in await list_saved_references(telegram_id, limit=24)
+                for item in await measured(
+                    "saved_references", list_saved_references(telegram_id, limit=24)
+                )
             ],
-            "notifications": await get_and_clear_miniapp_notifications(telegram_id),
+            "notifications": await measured(
+                "notifications", get_and_clear_miniapp_notifications(telegram_id)
+            ),
         }
         # Telegram-authenticated bootstrap bypasses browser-auth middleware.
         # Apply the same recipe boundary to its recent task history as detail.
         from .trend_task_privacy import sanitize_task_api_payload
 
-        return web.json_response(await sanitize_task_api_payload(data), headers={"Cache-Control": "no-store"})
+        safe_data = await measured("task_privacy", sanitize_task_api_payload(data))
+        total_ms = round((time.monotonic() - started_at) * 1000, 1)
+        try:
+            slow_ms = max(
+                0.0, float(os.getenv("MINIAPP_BOOTSTRAP_SLOW_LOG_MS", "2500"))
+            )
+        except (TypeError, ValueError):
+            slow_ms = 2500.0
+        if total_ms >= slow_ms:
+            logger.warning(
+                "Mini App bootstrap slow: platform=%s total_ms=%.1f stages_ms=%s",
+                str(ctx.get("platform") or "telegram"),
+                total_ms,
+                stages_ms,
+            )
+        return web.json_response(safe_data, headers={"Cache-Control": "no-store"})
     except Exception as e:
         return _miniapp_error_response(
             e,
