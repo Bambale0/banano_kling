@@ -2707,12 +2707,52 @@ async def accept_partner_agreement(telegram_id: int) -> bool:
         return True
 
 
+def _calculate_prompt_repeat_balances(
+    user: User, pending_rub: float
+) -> tuple[float, float]:
+    """Keep repeat funds bounded by the withdrawable partner balance."""
+    raw_balance = float(user.partner_balance_rub or 0)
+    available_balance = round(max(0.0, raw_balance - pending_rub), 2)
+    prompt_repeat_balance = round(
+        min(
+            max(0.0, float(user.prompt_repeat_balance_rub or 0)),
+            available_balance,
+        ),
+        2,
+    )
+    return available_balance, prompt_repeat_balance
+
+
+async def get_miniapp_prompt_repeat_snapshot(user: User) -> dict[str, float]:
+    """Read only the repeat balances bootstrap needs, without partner analytics.
+
+    The actor is already authenticated and loaded by bootstrap. A single
+    aggregate read preserves the same pending-withdrawal cap as the full
+    partner overview, without creating another user lookup or a nested checkout.
+    """
+    async with db_backend.connect(DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        cursor = await db.execute(
+            "SELECT COALESCE(SUM(amount_rub), 0) AS pending "
+            "FROM partner_withdrawals WHERE user_id = ? AND status = 'requested'",
+            (user.id,),
+        )
+        row = await cursor.fetchone()
+    pending = float(row["pending"] or 0)
+    _, repeat_balance = _calculate_prompt_repeat_balances(user, pending)
+    return {
+        "prompt_repeat_balance_rub": repeat_balance,
+        "prompt_repeat_total_rub": round(float(user.prompt_repeat_total_rub or 0), 2),
+    }
+
+
 async def get_partner_overview(telegram_id: int) -> dict:
     """Возвращает данные партнёрского кабинета."""
+    # Fetch the actor before reserving a second connection for analytics.
+    target_user = await get_or_create_user(telegram_id)
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
 
-        target_user = await get_or_create_user(telegram_id)
         target_user_id = target_user.id
 
         ref_cursor = await db.execute(
@@ -2760,13 +2800,8 @@ async def get_partner_overview(telegram_id: int) -> dict:
         pending_row = await pending_cur.fetchone()
         pending_rub = float(pending_row["pending"] or 0)
         raw_balance = float(target_user.partner_balance_rub or 0)
-        available_balance = round(max(0.0, raw_balance - pending_rub), 2)
-        prompt_repeat_balance = round(
-            min(
-                max(0.0, float(target_user.prompt_repeat_balance_rub or 0)),
-                available_balance,
-            ),
-            2,
+        available_balance, prompt_repeat_balance = _calculate_prompt_repeat_balances(
+            target_user, pending_rub
         )
 
         tier = get_partner_tier_by_total(target_user.partner_total_revenue_rub or 0)
@@ -4218,8 +4253,16 @@ def _saved_reference_is_available(reference: SavedReference) -> bool:
             is_local_upload_source,
             resolve_local_upload_path,
         )
+        from bot.services.media_storage import is_s3_enabled
 
         if is_local_upload_source(reference.file_url):
+            # Saved-reference listing is a read-only UI operation. Resolving
+            # local paths in S3 mode downloads every missing cached object
+            # synchronously, blocking bootstrap and the aiohttp event loop.
+            # Trust the persisted URL here; materialize only when the user
+            # actually submits the reference for generation.
+            if is_s3_enabled():
+                return True
             return bool(resolve_local_upload_path(reference.file_url))
     except Exception:
         logger.exception("Failed to validate saved reference file: %s", reference.file_url)
@@ -5256,9 +5299,19 @@ async def get_and_clear_miniapp_notifications(telegram_id: int) -> list:
         )
         notes = await cursor.fetchall()
         messages = [n["message"] for n in notes]
-        # Удаляем выбранные
-        await db.execute("DELETE FROM miniapp_notifications WHERE user_id = ?", (uid,))
-        await db.commit()
+        # Only acknowledge what we actually returned. A new notification
+        # inserted after SELECT must remain available for the next bootstrap.
+        if notes:
+            ids = tuple(n["id"] for n in notes)
+            # Bound SQLite placeholder counts for accounts with many notices.
+            for offset in range(0, len(ids), 900):
+                chunk = ids[offset : offset + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                await db.execute(
+                    f"DELETE FROM miniapp_notifications WHERE id IN ({placeholders}) AND user_id = ?",
+                    (*chunk, uid),
+                )
+            await db.commit()
         return messages
 
 

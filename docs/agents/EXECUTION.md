@@ -3232,3 +3232,23 @@ private references and browser-provided actor information fail closed.
   first native invoice request, with exact-payload retries. No payment or live
   wallet operation was initiated. Await exact-head GitHub CI before reporting
   the review branch ready.
+
+
+## 2026-11-13 — Mini App bootstrap latency and PostgreSQL pool pressure
+
+- Baseline: production image SHA 8d7b0313 at diagnosis; shared tanyapi branch baseline 58727096.
+- Symptoms: Telegram Mini App took seconds/tens of seconds to open. Live bootstrap p50 2.18s, p95 10.61s (570 requests/20min); 533 pool-exhaustion warnings in the earlier incident window.
+- Contributors: bootstrap fetched full partner analytics for two repeat-balance fields; partner overview nested another DB connection; notification drain issued a DELETE/COMMIT on every bootstrap and could remove concurrently inserted notifications.
+- Fix: authenticated actor + a single pending-withdrawal aggregate preserving available-balance cap; full partner overview no longer nests connections. Notification drain deletes only observed IDs, batches large lists and skips writes when no notices.
+- Observability: slow bootstrap phase timings, configurable MINIAPP_BOOTSTRAP_SLOW_LOG_MS (default 2500 ms). Never log credentials, user profile or request payload. No schema, payment or frontend contract changes.
+- TDD: regression tests first reproduced the missing fast snapshot and over-deletion/no-op writes; rerun tests after changes.
+- Release: Python compile, DB/Mini App/partner tests, lint diff review, protected PR to tanyapi, exact-SHA CI + deploy, production health and latency sample. Do not claim production deployment before verification.
+- Rollback: revert this task PR only if a regression is observed.
+
+
+### Additional root cause: synchronous S3 cache materialization in bootstrap
+
+- Saved-reference availability filter invoked resolve_local_upload_path for each persisted /uploads URL. In S3 mode, this calls materialize_upload, which downloads missing media and blocks the event loop while building the Mini App initial payload.
+- Fix: in S3 mode, do not materialize media during read-only list filtering. The existing generation-time resolver still checks/downloads inputs when they are actually needed. Local mode retains missing-file filtering.
+- Regression: a 24-reference S3 fixture first failed because it caused 24 eager materializations; after the fix it causes zero. The local-mode fallback still performs file availability checks.
+- Risk: genuinely missing objects can remain visible as saved references until a generation uses them or a separate reconciliation detects them. Avoid trading bootstrap latency for eager S3 HEAD checks inside this route.
