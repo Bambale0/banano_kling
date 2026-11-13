@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.abc
 import importlib.machinery
 import json
@@ -8,6 +9,7 @@ import sys
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 router = Router(name="publication_scope_compat")
 
 _SCHEMA_READY_PATHS: set[str] = set()
+_SCHEMA_READY_LOCKS: WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = WeakKeyDictionary()
 _INSTALLED = False
 _MINIAPP_HOOK_INSTALLED = False
 _COMMON_PATCHED = False
@@ -65,24 +68,62 @@ def _generation_row_to_card_scoped(*args, **kwargs):
     return _with_publication_scope(_ORIGINAL_GENERATION_ROW_TO_CARD(*args, **kwargs), row)
 
 
+def _schema_ready_lock() -> asyncio.Lock:
+    """Only one request per loop may initialize publication schema."""
+    loop = asyncio.get_running_loop()
+    lock = _SCHEMA_READY_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _SCHEMA_READY_LOCKS[loop] = lock
+    return lock
+
+
 async def _ensure_publication_scope_schema() -> None:
     database_path = str(database.DATABASE_PATH)
     if database_path in _SCHEMA_READY_PATHS:
         return
 
+    async with _schema_ready_lock():
+        if database_path in _SCHEMA_READY_PATHS:
+            return
+        await _prepare_publication_scope_schema(database_path)
+
+
+async def _prepare_publication_scope_schema(database_path: str) -> None:
     async with db_backend.connect(database.DATABASE_PATH, timeout=15) as db:
         migrations = (
-            "ALTER TABLE generation_tasks ADD COLUMN is_profile_visible BOOLEAN DEFAULT FALSE",
-            "ALTER TABLE generation_tasks ADD COLUMN profile_published_at TIMESTAMP",
-            "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT",
-            "ALTER TABLE generation_tasks ADD COLUMN feed_repeat_reference_selection TEXT",
+            ("is_profile_visible", "ALTER TABLE generation_tasks ADD COLUMN is_profile_visible BOOLEAN DEFAULT FALSE"),
+            ("profile_published_at", "ALTER TABLE generation_tasks ADD COLUMN profile_published_at TIMESTAMP"),
+            ("feed_reference_selection", "ALTER TABLE generation_tasks ADD COLUMN feed_reference_selection TEXT"),
+            ("feed_repeat_reference_selection", "ALTER TABLE generation_tasks ADD COLUMN feed_repeat_reference_selection TEXT"),
         )
-        for statement in migrations:
-            if db_backend.is_postgres():
-                # The PostgreSQL compatibility adapter intentionally skips
-                # top-level ALTER TABLE SQL. Execute it inside a DO block so
-                # fresh PG databases really receive the publication columns.
-                # Keep duplicate_column idempotent for old production schemas.
+        existing: set[str] = set()
+        postgres = db_backend.is_postgres()
+        if postgres:
+            # Avoid AccessExclusiveLock convoys: concurrent authenticated Mini App
+            # requests must never repeat ALTER TABLE against an existing schema.
+            cursor = await db.execute(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'generation_tasks'
+                  AND column_name IN (
+                      'is_profile_visible', 'profile_published_at',
+                      'feed_reference_selection', 'feed_repeat_reference_selection'
+                  )
+                """
+            )
+            existing = {str(row[0]) for row in await cursor.fetchall()}
+            if all(name in existing for name, _ in migrations):
+                _SCHEMA_READY_PATHS.add(database_path)
+                return
+
+        for column, statement in migrations:
+            if postgres:
+                if column in existing:
+                    continue
+                # New installs still receive the required columns, but only
+                # genuinely missing columns require an exclusive DDL lock.
                 await db.execute(
                     "DO $$ BEGIN " + statement
                     + "; EXCEPTION WHEN duplicate_column THEN NULL; END $$;"
@@ -91,8 +132,6 @@ async def _ensure_publication_scope_schema() -> None:
                 try:
                     await db.execute(statement)
                 except db_backend.OperationalError:
-                    # The compatibility layer is loaded on every start.
-                    # Existing SQLite columns are expected.
                     logger.debug("Publication scope column already exists: %s", statement)
 
         await db.execute(
