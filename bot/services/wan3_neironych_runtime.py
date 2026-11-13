@@ -239,7 +239,8 @@ class Wan3NeironychRuntimeTransport:
             row = await cursor.fetchone()
             if row is None:
                 raise RuntimeError("Wan generation task was not persisted before submission")
-            metadata = json.loads(row["request_data"] or "{}")
+            raw_metadata = row["request_data"]
+            metadata = raw_metadata if isinstance(raw_metadata, dict) else json.loads(raw_metadata or "{}")
             if not isinstance(metadata, dict):
                 raise RuntimeError("Wan generation task metadata is malformed")
             metadata["provider_submission_route"] = "neironych"
