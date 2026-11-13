@@ -5,9 +5,11 @@ import {
   fetchVkGenerationClaim,
   fetchVkModelCatalog,
   generateVkImage,
+  generateVkVideo,
   repeatVkTrend,
   uploadVkImage,
   type VkImageRequest,
+  type VkVideoRequest,
   type VkNativeModelCatalog,
   type VkTrendRequest,
   type VkPublicTrend,
@@ -16,6 +18,7 @@ import {
 type QuotePayload =
   | { mode: 'trend'; data: VkTrendRequest }
   | { mode: 'image'; data: VkImageRequest }
+  | { mode: 'video'; data: VkVideoRequest }
 
 function newClientRequestId(): string {
   const bytes = new Uint8Array(16)
@@ -28,8 +31,9 @@ function newClientRequestId(): string {
 }
 
 export function VkGenerationPanel({
-  trend, onFinished, onClose,
+  trend, onFinished, onClose, kind = 'photo',
 }: {
+  kind?: 'photo' | 'video'
   trend?: VkPublicTrend
   onFinished?: () => void
   onClose: () => void
@@ -38,6 +42,7 @@ export function VkGenerationPanel({
   const [prompt, setPrompt] = useState('')
   const [aspect, setAspect] = useState('')
   const [resolution, setResolution] = useState('')
+  const [duration, setDuration] = useState('')
   const [userValues, setUserValues] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<File[]>([])
   const [cost, setCost] = useState<number | null>(null)
@@ -56,15 +61,30 @@ export function VkGenerationPanel({
     const controller = new AbortController()
     fetchVkModelCatalog(controller.signal).then(data => {
       if (controller.signal.aborted) return
-      const first = data.photo_models[0]
-      if (!first || !first.ratios.length || !first.resolutions.length) {
-        setCatalogError('ВК-генератор пока не предоставляет доступных моделей.')
-        return
+      if (kind === 'video') {
+        const first = data.video_models.find(item =>
+          item.ratios.length > 0 && Array.isArray(item.durations)
+          && item.durations.length > 0 && item.scenarios.length > 0,
+        )
+        if (!first) {
+          setCatalogError('ВК-генератор пока не предоставляет доступных моделей видео.')
+          return
+        }
+        setCatalog(data)
+        setModel(first.id)
+        setAspect(first.ratios[0])
+        setDuration(String(first.durations![0]))
+      } else {
+        const first = data.photo_models[0]
+        if (!first || !first.ratios.length || !first.resolutions.length) {
+          setCatalogError('ВК-генератор пока не предоставляет доступных моделей.')
+          return
+        }
+        setCatalog(data)
+        setModel(first.id)
+        setAspect(first.ratios[0])
+        setResolution(first.resolutions[0])
       }
-      setCatalog(data)
-      setModel(first.id)
-      setAspect(first.ratios[0])
-      setResolution(first.resolutions[0])
     }).catch(cause => {
       if (!controller.signal.aborted) setCatalogError(
         cause instanceof Error ? cause.message : 'Не удалось загрузить модели ВКонтакте.',
@@ -73,10 +93,14 @@ export function VkGenerationPanel({
       if (!controller.signal.aborted) setCatalogLoading(false)
     })
     return () => controller.abort()
-  }, [trend])
+  }, [trend, kind])
 
-  const selectedModel = catalog?.photo_models.find(item => item.id === model)
-  const photoLimit = trend ? 4 : selectedModel?.max_references ?? 0
+  const selectedPhotoModel = catalog?.photo_models.find(item => item.id === model)
+  const selectedVideoModel = catalog?.video_models.find(item => item.id === model)
+  const selectedModel = kind === 'video' ? selectedVideoModel : selectedPhotoModel
+  const referenceLimit = trend ? 4 : kind === 'video'
+    ? selectedVideoModel?.scenarios.includes('imgtxt') ? selectedVideoModel.max_image_references : 0
+    : selectedPhotoModel?.max_references ?? 0
 
   const invalidate = () => {
     epoch.current += 1
@@ -99,7 +123,11 @@ export function VkGenerationPanel({
       if (!trend && (!selectedModel || catalogLoading)) {
         throw new Error('Нет подтверждённых моделей ВКонтакте.')
       }
-      if (files.length > photoLimit) throw new Error('Выберите не более ' + photoLimit + ' фотографий.')
+      if (files.length > referenceLimit) throw new Error('Выберите не более ' + referenceLimit + ' фотографий.')
+      if (kind === 'video' && !trend && (
+        !selectedVideoModel?.durations?.includes(Number(duration))
+        || !selectedVideoModel.ratios.includes(aspect)
+      )) throw new Error('Выберите доступные параметры видео.')
       if (trend && !files.length) throw new Error('Для повтора тренда загрузите своё фото.')
       if (!trend && !prompt.trim()) throw new Error('Введите промпт для создания изображения.')
       const references: string[] = []
@@ -111,12 +139,18 @@ export function VkGenerationPanel({
         ? { mode: 'trend', data: {
           trend_id: trend.id, reference_urls: references, user_values: userValues,
         }}
-        : { mode: 'image', data: {
-          model, prompt: prompt.trim(), aspect, resolution, reference_photos: references,
-        }}
+        : kind === 'video'
+          ? { mode: 'video', data: {
+            model, prompt: prompt.trim(), aspect, duration: Number(duration), reference_photos: references,
+          }}
+          : { mode: 'image', data: {
+            model, prompt: prompt.trim(), aspect, resolution, reference_photos: references,
+          }}
       const result = request.mode === 'trend'
         ? await repeatVkTrend({ ...request.data, quote_only: true })
-        : await generateVkImage({ ...request.data, quote_only: true })
+        : request.mode === 'video'
+          ? await generateVkVideo({ ...request.data, quote_only: true })
+          : await generateVkImage({ ...request.data, quote_only: true })
       if (runId !== epoch.current) return
       if (!Number.isFinite(result.cost) || result.cost <= 0) {
         throw new Error('Сервер не смог рассчитать стоимость.')
@@ -141,7 +175,9 @@ export function VkGenerationPanel({
     try {
       const result = quoted.mode === 'trend'
         ? await repeatVkTrend({ ...quoted.data, client_request_id: clientRequestId, expected_cost: cost })
-        : await generateVkImage({ ...quoted.data, client_request_id: clientRequestId, expected_cost: cost })
+        : quoted.mode === 'video'
+          ? await generateVkVideo({ ...quoted.data, client_request_id: clientRequestId, expected_cost: cost })
+          : await generateVkImage({ ...quoted.data, client_request_id: clientRequestId, expected_cost: cost })
       if (runId !== epoch.current) return
       if (!Number.isSafeInteger(result.task_id) || result.task_id <= 0) {
         throw new Error('Сервер не подтвердил создание задачи. Проверьте историю.')
@@ -156,7 +192,7 @@ export function VkGenerationPanel({
       try {
         const claim = await fetchVkGenerationClaim(clientRequestId)
         if (runId !== epoch.current) return
-        if (claim.found && claim.task_type === 'photo'
+        if (claim.found && claim.task_type === (quoted.mode === 'video' ? 'video' : 'photo')
           && Number.isSafeInteger(claim.task_id) && (claim.task_id || 0) > 0) {
           setTaskId(claim.task_id!)
           setCost(null)
@@ -175,22 +211,32 @@ export function VkGenerationPanel({
     }
   }
 
-  return <section aria-label={trend ? 'Повтор тренда' : 'Создание фото'} className="space-y-3 rounded-2xl border border-primary/30 bg-card p-4">
+  return <section aria-label={trend ? 'Повтор тренда' : kind === 'video' ? 'Создание видео' : 'Создание фото'} className="space-y-3 rounded-2xl border border-primary/30 bg-card p-4">
     <div className="flex items-start justify-between gap-2">
-      <h3 className="text-base font-semibold">{trend ? 'Повтор «' + trend.title + '»' : 'Создать фото во ВКонтакте'}</h3>
+      <h3 className="text-base font-semibold">{trend ? 'Повтор «' + trend.title + '»' : kind === 'video' ? 'Создать видео во ВКонтакте' : 'Создать фото во ВКонтакте'}</h3>
       <button type="button" onClick={onClose} disabled={busy} className="text-sm underline">Закрыть</button>
     </div>
     {!trend ? <>
       <label className="block space-y-1 text-sm">Модель
         <select aria-label="Модель" value={model} disabled={busy} onChange={event => {
           invalidate()
-          const item = catalog?.photo_models.find(value => value.id === event.target.value)
           setModel(event.target.value)
-          setAspect(item?.ratios[0] ?? '')
-          setResolution(item?.resolutions[0] ?? '')
+          if (kind === 'video') {
+            const item = catalog?.video_models.find(value => value.id === event.target.value)
+            setAspect(item?.ratios[0] ?? '')
+            setDuration(String(item?.durations?.[0] ?? ''))
+          } else {
+            const item = catalog?.photo_models.find(value => value.id === event.target.value)
+            setAspect(item?.ratios[0] ?? '')
+            setResolution(item?.resolutions[0] ?? '')
+          }
         }}
           className="w-full rounded-lg border border-border bg-background p-2">
-          {catalog?.photo_models.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
+          {(kind === 'video' ? catalog?.video_models.filter(item =>
+            item.ratios.length > 0 && Array.isArray(item.durations)
+            && item.durations.length > 0 && item.scenarios.length > 0,
+          ) : catalog?.photo_models)?.map(item =>
+            <option value={item.id} key={item.id}>{item.label}</option>)}
         </select>
       </label>
       <label className="block space-y-1 text-sm">Промпт
@@ -204,12 +250,21 @@ export function VkGenerationPanel({
             {selectedModel?.ratios.map(value => <option key={value}>{value}</option>)}
           </select>
         </label>
-        <label className="block space-y-1 text-sm">Качество
-          <select aria-label="Качество" value={resolution} disabled={busy} onChange={event => { invalidate(); setResolution(event.target.value) }}
-            className="w-full rounded-lg border border-border bg-background p-2">
-            {selectedModel?.resolutions.map(value => <option key={value}>{value}</option>)}
-          </select>
-        </label>
+        {kind === 'video'
+          ? <label className="block space-y-1 text-sm">Длительность
+            <select aria-label="Длительность" value={duration} disabled={busy}
+              onChange={event => { invalidate(); setDuration(event.target.value) }}
+              className="w-full rounded-lg border border-border bg-background p-2">
+              {selectedVideoModel?.durations?.map(value => <option key={value} value={String(value)}>{value} с</option>)}
+            </select>
+          </label>
+          : <label className="block space-y-1 text-sm">Качество
+            <select aria-label="Качество" value={resolution} disabled={busy}
+              onChange={event => { invalidate(); setResolution(event.target.value) }}
+              className="w-full rounded-lg border border-border bg-background p-2">
+              {selectedPhotoModel?.resolutions.map(value => <option key={value}>{value}</option>)}
+            </select>
+          </label>}
       </div>
     </> : <>
       <p className="text-sm text-muted-foreground">Промпт автора сохраняется приватным. Изменяются только выбранные вами поля и фотографии.</p>
@@ -225,12 +280,13 @@ export function VkGenerationPanel({
     </>}
     {catalogError && !trend ? <p role="alert" className="text-sm text-destructive">{catalogError}</p> : null}
     <label className="block space-y-1 text-sm">Фото-референсы
-      <input aria-label="Фото-референсы" type="file" disabled={busy} multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+      <input aria-label="Фото-референсы" type="file" disabled={busy || referenceLimit === 0} multiple accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
         onChange={event => { invalidate(); setFiles(Array.from(event.target.files || [])) }}
         className="block w-full text-xs" />
     </label>
     <p className="text-xs text-muted-foreground">
-      До {photoLimit} фото, каждое до 12 МБ. Стоимость рассчитывает VK-сервер перед списанием.
+      До {referenceLimit} фото, каждое до 12 МБ. Стоимость рассчитывает VK-сервер перед списанием.
+      {kind === 'video' ? ' Видеофайлы пока нельзя использовать как референсы.' : ''}
     </p>
     {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
     {taskId !== null ? <p role="status" className="text-sm font-semibold">Задача #{taskId} создана. Следите за результатом в «Мои работы».</p>
