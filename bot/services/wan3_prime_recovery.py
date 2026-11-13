@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services.wan3_models import wan3_model_spec
+from bot.services.wan3_neironych_runtime import NEIRONYCH_TASK_PREFIX, _SAFE_REQUEST_ID
 from bot.services.wan3_prime_schema import execute_wan_ddl
 
 logger = logging.getLogger(__name__)
@@ -100,8 +101,6 @@ def verified_native_candidate(row, generation: dict | None) -> str | None:
             or generation.get("model_slug") != expected_model):
         return None
     request_id = generation.get("id")
-    from bot.services.wan3_neironych_runtime import _SAFE_REQUEST_ID, NEIRONYCH_TASK_PREFIX
-
     if not isinstance(request_id, str) or not _SAFE_REQUEST_ID.fullmatch(request_id):
         return None
     return NEIRONYCH_TASK_PREFIX + request_id
