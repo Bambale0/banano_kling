@@ -161,6 +161,17 @@ async def recover_candidates(lifecycle, *, limit: int = 20) -> int:
     return recovered
 
 
+def native_recovery_route_filter(*, postgres: bool) -> str:
+    """Filter before LIMIT so legacy unknown jobs cannot starve native recovery."""
+    if postgres:
+        return "(CAST(task.request_data AS JSONB) ->> 'provider_submission_route') = 'neironych'"
+    return (
+        "CASE WHEN json_valid(task.request_data) "
+        "THEN json_extract(task.request_data, '$.provider_submission_route') "
+        "ELSE NULL END = 'neironych'"
+    )
+
+
 async def recover_unknown_native_submissions(lifecycle, *, limit: int = 20) -> int:
     """Find accepted native requests after a lost acknowledgement or crash.
 
@@ -170,14 +181,18 @@ async def recover_unknown_native_submissions(lifecycle, *, limit: int = 20) -> i
     lookup = getattr(lifecycle.transport, "lookup_native_submission", None)
     if lookup is None:
         return 0
+    route_filter = native_recovery_route_filter(
+        postgres=bool(getattr(db_backend, "is_postgres", lambda: False)()),
+    )
     async with db_backend.connect(database.DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
-        rows = await (await db.execute("""
+        rows = await (await db.execute(f"""
             SELECT intent.*, task.request_data AS task_request_data
             FROM wan3_prime_intents AS intent
             JOIN generation_tasks AS task ON task.task_id = intent.internal_task_id
             WHERE intent.provider_task_id IS NULL AND intent.settled = 0
               AND intent.status = 'unknown'
+              AND ({route_filter})
               AND (intent.next_attempt_at IS NULL OR intent.next_attempt_at <= CURRENT_TIMESTAMP)
               AND (intent.lease_until IS NULL OR intent.lease_until <= CURRENT_TIMESTAMP)
             ORDER BY intent.updated_at, intent.id LIMIT ?
