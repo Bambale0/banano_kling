@@ -139,12 +139,20 @@ def _bearer(request: web.Request) -> str:
 def _vk_full_app_ready(request: web.Request, *, platform: str, telegram_linked: bool) -> bool:
     if platform != 'vk':
         return True
-    # Retain the established linked-account studio until native VK adapters
-    # are ready, without making Telegram linking a requirement for VK-only
-    # accounts once the full platform implementation is registered.
-    if telegram_linked:
-        return True
+    # Account linking never proves that all native VK domains are ready.
+    # A full shell with Telegram-owned money would violate actor isolation.
     return full_vk_adapter(request.app) is not None
+
+
+def _vk_legacy_linked_studio_available(*, platform: str, telegram_linked: bool) -> bool:
+    """Keep the voluntary, already-linked TG studio until native VK parity ships.
+
+    This is an explicit legacy capability, NOT native VK full-app readiness.
+    Never allow it while an incomplete native parity/tasks gateway is enabled.
+    """
+    return (platform == 'vk' and telegram_linked
+            and os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1'
+            and os.getenv('VK_NATIVE_TASKS_ENABLED') != '1')
 
 
 async def profile(request: web.Request) -> web.Response:
@@ -157,6 +165,9 @@ async def profile(request: web.Request) -> web.Response:
         'revision': policy.revision, 'vk_app_id': policy.vk_app_id,
         'full_app_ready': _vk_full_app_ready(
             request, platform=actor.platform, telegram_linked=is_linked,
+        ),
+        'legacy_linked_studio_available': _vk_legacy_linked_studio_available(
+            platform=actor.platform, telegram_linked=is_linked,
         ),
         'telegram_bot_username': os.getenv('TELEGRAM_BOT_USERNAME', '').strip().lstrip('@'),
         'vk_community_id': policy.vk_community_id if actor.platform == 'vk' else None,

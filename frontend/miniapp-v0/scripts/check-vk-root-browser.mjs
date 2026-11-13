@@ -7,7 +7,7 @@ import { chromium } from 'playwright'
 
 // Run after npm run build:vk. Signed-auth responses are mocked here; backend
 // signature and public/admin authorization remain covered by the HTTP matrix.
-test('VK root offers native chat for signed VK-only visitors and opens linked studio', async () => {
+test('VK root keeps linked and unlinked actors outside incomplete full shell', async () => {
   const root = resolve('out')
   assert.ok(existsSync(join(root, 'index.html')), 'Build the VK root export first')
   const types = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png' }
@@ -70,6 +70,8 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
           payload = { ok: true, account: { id: 'test-account' }, preview: {
             revision: 1, vk_app_id: 123, vk_community_id: 239915802, telegram_bot_username: 'Neuromixx_bot',
             telegram_linked: linked, linked_platforms: linked ? ['telegram', 'vk'] : ['vk'],
+            // The true ten-domain native gateway is not registered in this test.
+            full_app_ready: false,
           } }
         } else if (path.endsWith('/vk-native-state')) {
           payload = { ok: true, registered: true, balance: 13, is_blocked: false, tasks: [
@@ -98,13 +100,10 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
         } else if (path.endsWith('/logout')) {
           payload = { ok: true }
         } else if (path.endsWith('/bootstrap')) {
+          // A signed VK actor must never receive a fabricated Telegram ID.
           const body = req.postDataJSON(); appCredentials.push(body.init_data)
-          payload = {
-            ...payload, telegram_id: 1001, first_name: 'VK', last_name: 'User', telegram_username: 'linked_user',
-            credits: 301, is_admin: false, bot_username: 'Neuromixx_bot', referral_code: 'VKUSER',
-            telegram_chat_available: false, telegram_bot_start_required: true,
-            actions: [], payment_packages: [], image_models: [], video_models: [], recent_tasks: [], saved_references: [],
-          }
+          status = 503
+          payload = { ok: false, error: 'VK native full adapter incomplete' }
         } else if (req.method() === 'POST') {
           const body = req.postDataJSON()
           if (body && 'init_data' in body) appCredentials.push(body.init_data)
@@ -130,21 +129,13 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
       await page.getByText('🖼 Фото · ❤ 4', { exact: true }).waitFor()
       assert.equal(appCredentials.length, 0, 'Unlinked VK entry must not initialize the Telegram studio')
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=2001&sign=browser-test', { waitUntil: 'networkidle' })
-      try {
-        await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
-      } catch (error) {
-        console.error('VK root diagnostic', { requests, body: (await page.locator('body').innerText()).slice(0, 4000) })
-        throw error
-      }
+      await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
       assert.ok(logins.length >= 2)
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Лента', 'Сервисы', 'Профиль']) {
-        assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
-      }
-      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0, 'Motion remains Telegram-only')
-      assert.equal(await page.getByRole('heading', { name: 'Общие аккаунты ТГ и ВК' }).count(), 0)
-      assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
-      assert.ok(appCredentials.length >= 1)
-      assert.ok(appCredentials.every(value => value === 'vk_session:' + 's'.repeat(43)))
+      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0,
+        'Telegram linking without a complete VK adapter must not unlock the shared wallet shell')
+      const linkedNativeChat = page.getByRole('link', { name: 'Генерировать в боте ВКонтакте', exact: true })
+      assert.equal(await linkedNativeChat.getAttribute('href'), 'https://vk.com/im?sel=-239915802')
+      assert.equal(appCredentials.length, 0, 'No VK actor may bootstrap the Telegram legacy wallet')
       assert.ok(!requests.some(url => /telegram-web-app/.test(url)))
       assert.deepEqual(failedAssets, [])
       assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
@@ -158,7 +149,7 @@ test('VK root offers native chat for signed VK-only visitors and opens linked st
       assert.ok(logins.at(-1).launch_data.includes('sign=browser-test'))
       assert.equal(await page.evaluate(() => sessionStorage.getItem('__banano_initial_search')), null)
       await context.close()
-      console.log(`VK root ${width}px: VK-only native bot and linked ordinary user passed`)
+      console.log(`VK root ${width}px: native fallback and linked readiness isolation passed`)
     }
   } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)) }
 })

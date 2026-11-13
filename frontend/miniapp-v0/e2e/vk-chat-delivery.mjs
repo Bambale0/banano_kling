@@ -62,7 +62,10 @@ try {
         const token = request.headers().authorization?.replace(/^Bearer /, '')
         assert.ok(tokens.has(token), 'Operation session is required')
         if (path.endsWith('/me')) payload = { ok: true, account: { id: 'owned-vk-account' }, preview: {
-          telegram_linked: true, linked_platforms: ['telegram', 'vk'], revision: 1, vk_app_id: 123, telegram_bot_username: 'fixture_bot',
+          // This fixture models a future fully ready native VK adapter,
+          // independently of Telegram links or legacy wallet ownership.
+          full_app_ready: true, telegram_linked: false, linked_platforms: ['vk'],
+          revision: 1, vk_app_id: 123, telegram_bot_username: 'fixture_bot',
         } }
         else if (path.includes('/vk-deliveries/')) {
           // VK operations may safely reuse the active signed app session.
@@ -85,8 +88,9 @@ try {
       } else {
         const body = request.method() === 'POST' ? request.postDataJSON() : {}
         if ('init_data' in body) assert.equal(body.init_data, 'vk_session:' + appToken)
-        if (path.endsWith('/bootstrap')) payload = { ...payload, telegram_id: 1001, first_name: 'Fixture', is_admin: false, credits: 10,
-          telegram_chat_available: false, telegram_bot_start_required: true, bot_username: 'fixture_bot',
+        if (path.endsWith('/bootstrap')) payload = { ...payload, first_name: 'Fixture VK', is_admin: false, credits: 10,
+          // Native VK bootstrap must not invent a Telegram account.
+          telegram_chat_available: false, telegram_bot_start_required: false, bot_username: 'fixture_bot',
           actions: [], payment_packages: [], recent_tasks: [task], saved_references: [], video_models: [], image_models: [] }
         else if (path.endsWith('/task-detail')) payload = { ok: true, task }
         else if (/generate|payment|upload/.test(path)) throw new Error('No paid or generation mutation is part of delivery smoke')
