@@ -27,13 +27,14 @@ SETTINGS = {
 def _trusted(**patch):
     settings = dict(SETTINGS)
     settings.update(patch.pop("settings", {}))
-    return TrustedTrendRun(
-        trend_id=31, kind="video", model="v3_std",
-        ratio="16:9", prompt="Two friendly foxes wave",
-        reference_urls=("https://example.invalid/personal.jpg",),
-        settings=settings,
-        **patch,
-    )
+    values = {
+        "trend_id": 31, "kind": "video", "model": "v3_std",
+        "ratio": "16:9", "prompt": "Two friendly foxes wave",
+        "reference_urls": ("https://example.invalid/personal.jpg",),
+        "settings": settings,
+    }
+    values.update(patch)
+    return TrustedTrendRun(**values)
 
 
 def _public_trend(settings=None):
