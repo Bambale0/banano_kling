@@ -11,10 +11,11 @@ type NativeServiceId = 'edit-photo' | 'animate' | 'partners' | 'support'
  * signed VK actor can be clicked. Never instantiate Telegram AppProvider.
  */
 export function VkNativeServices({
-  onNavigate, verifiedVkCommunityId,
+  onNavigate, verifiedVkCommunityId, linkedTelegram = false,
 }: {
   onNavigate: (tab: number) => void
   verifiedVkCommunityId?: number | null
+  linkedTelegram?: boolean
 }) {
   const [active, setActive] = useState('')
   const [enabled, setEnabled] = useState<ReadonlySet<string>>(
@@ -28,6 +29,12 @@ export function VkNativeServices({
 
   useEffect(() => {
     const controller = new AbortController()
+    if (linkedTelegram) {
+      // Until both wallets have an audited shared write contract, linking
+      // Telegram must never enable the VK-native paid service actions.
+      setEnabled(new Set(supportUrl ? ['partners', 'support'] : ['partners']))
+      return () => controller.abort()
+    }
     Promise.allSettled([
       fetchVkNativeState(controller.signal),
       fetchVkPublicDiscovery('trends', controller.signal),
@@ -49,7 +56,7 @@ export function VkNativeServices({
       setEnabled(new Set(allowed))
     })
     return () => controller.abort()
-  }, [supportUrl])
+  }, [supportUrl, linkedTelegram])
 
   function chooseService(serviceId: string) {
     if (!enabled.has(serviceId)) return
