@@ -23,6 +23,7 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
+from .vk_feed_likes import like_public_vk_feed
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     create_native_vk_invoice,
@@ -320,6 +321,23 @@ async def vk_native_image(request: web.Request) -> web.Response:
     return response({'ok': True, **result})
 
 
+async def vk_public_feed_like(request: web.Request) -> web.Response:
+    """Idempotent public reaction by the signed VK actor, no TG user or money."""
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    if os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK feed likes unavailable'}, 404)
+    data = await _body(request)
+    if set(data) != {'feed_gen_id'}:
+        raise ValueError('Invalid VK feed like request')
+    gen_id = data.get('feed_gen_id')
+    if type(gen_id) is not int or not 0 < gen_id < 2**63:
+        raise ValueError('Invalid public feed ID')
+    total = await like_public_vk_feed(actor.external_id, gen_id)
+    if total is None:
+        return response({'ok': False, 'error': 'Publication unavailable'}, 404)
+    return response({'ok': True, 'liked': True, 'likes_count': total})
+
+
 async def vk_generation_claim(request: web.Request) -> web.Response:
     """Look up a verified VK owner's native generation after an uncertain POST.
 
@@ -464,6 +482,7 @@ def _vk_public_feed_card(card: dict, *, vk_app_id: int,
         'preview_poster_url': card.get('preview_poster_url'),
         'result_url': card.get('result_url'),
         'likes_count': int(card.get('likes_count') or 0),
+        'can_like_in_app': os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') == '1',
         'shares_count': int(card.get('shares_count') or 0),
         'comments_count': int(card.get('comments_count') or 0),
         'aspect_ratio': str(card.get('aspect_ratio') or ''),
@@ -579,6 +598,7 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'preview_url': card.get('preview_url'),
                 'result_url': card.get('result_url'),
                 'likes_count': int(card.get('likes_count') or 0),
+                'can_like_in_app': os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') == '1',
             }
             for card in cards if card.get('gen_type') in {'image', 'video'}
         ]
@@ -740,6 +760,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
+    app.router.add_post(root + '/vk-feed-like', _guard(vk_public_feed_like))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
     app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
     app.router.add_post(root + '/vk-invoice', _guard(vk_native_invoice))
