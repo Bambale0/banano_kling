@@ -432,3 +432,40 @@ test('VK-only video action uses the existing studio panel when backend is ready'
   expect(screen.getByLabelText('Фото-референсы')).toBeDisabled()
   expect(generateVkVideo).not.toHaveBeenCalled()
 })
+
+test('VK-only feed publication has a verified native share link, not a trend/remix URL', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 145, generation_type: 'video', preview_url: null, result_url: null,
+      likes_count: 4, share_link: 'https://vk.com/app54880352_-239915802#feed_145',
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ссылка на публикацию #145' }))
+  expect(screen.getByRole('dialog', { name: 'Поделиться публикацией' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(
+    'https://vk.com/app54880352_-239915802#feed_145',
+  )
+  expect(screen.getByText('Ссылка на «Публикация #145»')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Повторить|Оплатить/ })).not.toBeInTheDocument()
+  expect(repeatVkTrend).not.toHaveBeenCalled()
+})
+
+test.each([
+  'https://t.me/fake_bot?startapp=feed_145',
+  'https://evil.example/steal#feed_145',
+  'https://vk.com/app54880352#prompt_145',
+  'https://vk.com/app54880352#feed_146',
+])('VK feed sharing refuses unexpected or cross-namespace link %s', async share_link => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 145, generation_type: 'image', preview_url: null, result_url: null,
+      likes_count: 0, share_link,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ссылка на публикацию #145' }))
+  expect(screen.queryByRole('dialog', { name: 'Поделиться публикацией' })).not.toBeInTheDocument()
+})
