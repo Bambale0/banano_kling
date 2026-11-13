@@ -17,6 +17,7 @@ from bot.services.wan3_prime_storage_policy import lock_storage, positive_settin
 
 logger = logging.getLogger(__name__)
 RESULT_ROOT = Path('static/uploads/wan3_prime/results')
+_PG_RESULT_SCAN_DEFER_LOGGED = False
 
 
 def _result_bytes() -> int:
@@ -53,6 +54,18 @@ async def assert_result_capacity(db) -> None:
 
 
 async def cleanup_results(*, limit: int = 100) -> int:
+    # A broad LIKE on generation_tasks.request_data scans gigabytes on PostgreSQL.
+    # Until reference ownership is indexed, preserve old files rather than hold
+    # the storage lock during an unbounded scan and degrade paid generations.
+    # Operators can explicitly opt into the legacy scan on a provisioned DB.
+    if db_backend.is_postgres() and os.getenv("WAN3_PG_RESULT_FULL_SCAN_ENABLED", "0") != "1":
+        global _PG_RESULT_SCAN_DEFER_LOGGED
+        if not _PG_RESULT_SCAN_DEFER_LOGGED:
+            logger.warning(
+                "Wan3 result expiry deferred: PostgreSQL unindexed generation_tasks reference scan disabled"
+            )
+            _PG_RESULT_SCAN_DEFER_LOGGED = True
+        return 0
     cutoff = (datetime.now(UTC) - timedelta(seconds=positive_setting('WAN3_RESULT_RETENTION_SECONDS', 30 * 86400))).replace(tzinfo=None).isoformat(' ')
     removed = 0
     async with db_backend.connect(database.DATABASE_PATH) as db:
