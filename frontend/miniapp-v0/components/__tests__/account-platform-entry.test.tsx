@@ -3,7 +3,7 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
 import { AccountPlatformEntry } from '../account-platform-entry'
-import { fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { fetchVkSavedReferences, fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
@@ -19,6 +19,7 @@ jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: (
   <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
 beforeEach(() => {
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: false, balance: null, is_blocked: false, tasks: [],
   })
