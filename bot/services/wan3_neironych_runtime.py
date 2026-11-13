@@ -279,9 +279,19 @@ class Wan3NeironychRuntimeTransport:
         return str(await get_bot_setting("wan3_primary_provider", default)).strip().lower()
 
     async def create_task(self, recipe: Wan3PrimeRecipe, *, callback_url: str | None) -> dict[str, Any]:
-        provider = self.primary_provider()
-        if inspect.isawaitable(provider):
-            provider = await provider
+        try:
+            provider = self.primary_provider()
+            if inspect.isawaitable(provider):
+                provider = await provider
+        except Exception as exc:  # noqa: BLE001 - no paid provider call has started
+            logger.error("Wan3 provider selection failed error_type=%s", type(exc).__name__)
+            return {
+                "success": False,
+                "error": "api_error",
+                "status_code": 503,
+                "definitive_pre_submission_failure": True,
+                "message": "Provider selection failed before submission",
+            }
         payload = native_payload_for_recipe(recipe) if provider == "neironych" else None
         if payload and self.neironych.enabled:
             try:
