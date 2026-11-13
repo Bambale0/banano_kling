@@ -115,6 +115,7 @@ class Wan3PrimeRecipe:
 
     def safe_summary(self) -> dict[str, Any]:
         data = asdict(self)
+        data.pop("provider_submission_id", None)
         data["media"] = {
             key: [
                 {
