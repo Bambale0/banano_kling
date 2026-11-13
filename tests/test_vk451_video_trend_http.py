@@ -1,4 +1,5 @@
 """A signed VK-only actor may repeat only editor-approved simple video trends."""
+
 import json
 from unittest.mock import AsyncMock
 
