@@ -1,4 +1,5 @@
 """TDD for VK-only video trend repeat using native VK execution and wallet."""
+
 import pytest
 
 from bot.shared_accounts.vk_video_trends import (
