@@ -1,4 +1,6 @@
 """Wan 3 production routing regression: native Neironych with safe KIE compatibility."""
+import json
+import sqlite3
 from unittest.mock import AsyncMock
 
 import pytest
@@ -250,3 +252,42 @@ async def test_native_never_posts_or_reserves_on_failed_route_persistence():
     assert result["success"] is False
     native.submit.assert_not_awaited()
     kie.create_task.assert_not_awaited()
+
+
+def test_native_recovery_batch_finds_new_job_behind_legacy_unknown_jobs():
+    # Reproduces >50 historical KIE unknowns starving a newer native job.
+    db = sqlite3.connect(":memory:")
+    try:
+        db.execute("CREATE TABLE generation_tasks (request_data TEXT)")
+        db.executemany(
+            "INSERT INTO generation_tasks VALUES (?)",
+            [(json.dumps({"provider_submission_route": "kie"}),) for _ in range(70)]
+            + [('not a valid json document',)]
+            + [(json.dumps({"provider_submission_route": "neironych"}),)],
+        )
+        route_filter = recovery.native_recovery_route_filter(postgres=False)
+        selected = db.execute(
+            f"SELECT request_data FROM generation_tasks AS task WHERE {route_filter} LIMIT 1",
+        ).fetchall()
+        assert len(selected) == 1
+        assert json.loads(selected[0][0])["provider_submission_route"] == "neironych"
+        assert "JSONB" in recovery.native_recovery_route_filter(postgres=True)
+    finally:
+        db.close()
+
+
+def test_native_download_retries_share_one_lease_safe_deadline():
+    timeout = 180
+    started = 1000.0
+    deadline = started + timeout + 60
+    assert native_runtime.native_download_attempt_budget(
+        timeout_seconds=timeout, deadline=deadline, now=started,
+    ) == timeout
+    assert native_runtime.native_download_attempt_budget(
+        timeout_seconds=timeout, deadline=deadline, now=started + 190,
+    ) == 50
+    assert deadline - started < timeout + 120  # reconciler's lease
+    with pytest.raises(TimeoutError):
+        native_runtime.native_download_attempt_budget(
+            timeout_seconds=timeout, deadline=deadline, now=started + 240,
+        )
