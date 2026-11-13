@@ -28,9 +28,9 @@ const card = (id: number, title: string) => ({
 })
 
 beforeEach(() => {
-  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   window.history.replaceState({}, '', '/')
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, is_blocked: false,
     tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
