@@ -35,6 +35,10 @@ from .vk_native import (
 )
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .vk_feed_repeat import build_vk_feed_repeat, native_vk_feed_repeat_model
+from .vk_video_trends import (
+    build_native_video_trend_request,
+    supports_native_vk_video_trend,
+)
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
@@ -197,8 +201,11 @@ def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None,
         'preview_poster_url': card.get('preview_poster_url'),
         'generation_type': 'video' if settings.get('kind') == 'video' else 'image',
         'can_repeat_in_app': (
-            os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
-            and card.get('vk_native_image_repeat_supported') is True
+            (os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+             and card.get('vk_native_image_repeat_supported') is True)
+            or
+            (os.getenv('VK_MINIAPP_VIDEO_WRITES_ENABLED') == '1'
+             and card.get('vk_native_video_repeat_supported') is True)
         ),
         'user_fields': safe.get('user_fields', []),
     }
@@ -396,60 +403,87 @@ async def vk_native_video(request: web.Request) -> web.Response:
 
 
 async def vk_native_trend(request: web.Request) -> web.Response:
-    """Run only approved image trends using a server-owned hidden recipe.
+    """Repeat a public trusted trend with native VK tasks and VK-owned money.
 
-    Reference-dependent or video trends remain fail-closed until their
-    platform-specific asset ownership and pricing contracts are implemented.
+    Basic image and image-to-video recipes only. The full TG video recipe,
+    media templates and private fixed assets never cross the VK boundary.
     """
     actor_id = await _vk_writer_actor(request)
-    if os.getenv('VK_MINIAPP_WRITES_ENABLED') != '1':
+    image_enabled = os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+    video_enabled = os.getenv('VK_MINIAPP_VIDEO_WRITES_ENABLED') == '1'
+    if not image_enabled and not video_enabled:
         return response({'ok': False, 'error': 'VK repeat unavailable'}, 404)
     body = await _body(request)
-    if set(body) - {'trend_id', 'user_values', 'reference_urls', 'client_request_id', 'quote_only', 'expected_cost'}:
+    if set(body) - {
+        'trend_id', 'user_values', 'reference_urls',
+        'client_request_id', 'quote_only', 'expected_cost',
+    }:
         raise ValueError('Invalid trend request')
     from bot import trend_api, trend_catalog
-    from bot.database import get_prompt_by_id
+    from bot.database import get_prompt_by_id, list_trend_reference_assets
     try:
         parsed = trend_api.parse_trend_run_request(body)
-        # A guessed trend ID must not bypass the same editorial visibility
-        # rules as public VK deep links. Hidden-category/unlisted recipes
-        # must never be executable, even when approved in the database.
+        # No private, unlisted or hidden-category recipe may be run by
+        # guessing its numeric ID, even if its underlying row is approved.
         if not await trend_catalog.public_trend_by_id(parsed.trend_id):
             raise ValueError('Trend unavailable')
         prompt = await get_prompt_by_id(parsed.trend_id, approved_public_only=True)
         if not prompt:
             raise ValueError('Trend unavailable')
-        if not supports_native_vk_image_trend(prompt):
-            raise ValueError('Trend is not supported by VK generation')
         trusted = trend_api.trusted_trend_run(
             prompt, parsed.reference_urls, parsed.user_values,
         )
     except trend_api.TrendRunValidationError as exc:
         raise ValueError('Invalid or unavailable trend') from exc
-    if (trusted.kind != 'image'
-        or trusted.template_image_urls or trusted.provider_video_urls
-        or trusted.provider_audio_urls
-        or trusted.reference_contract
-        or int(trusted.settings.get('count') or 1) != 1):
-        raise ValueError('Trend requires a different generation workflow')
-    model = NATIVE_IMAGE_MODELS.get(trusted.model)
-    quality = str(trusted.settings.get('quality') or '2K')
-    if not model or quality not in {'2K', '4K'}:
-        raise ValueError('Trend is not supported by VK generation')
+
     key = parsed.client_request_id
-    if body.get('quote_only') is not True and (not key or len(key) < 16 or len(key) > 80):
+    quote_only = body.get('quote_only') is True
+    if not quote_only and (not key or len(key) < 16 or len(key) > 80):
         raise ValueError('Missing idempotent request key')
+    # Every uploaded reference is verified against the signed VK actor.
+    # Never send Telegram-owned media or user-supplied provider URL upstream.
     references = verified_image_urls(actor_id, list(parsed.reference_urls))
-    payload = {'model': model, 'prompt': trusted.prompt, 'aspect': trusted.ratio,
-               'resolution': quality, 'reference_photos': references}
-    if key:
-        payload['client_request_id'] = key
-    if body.get('quote_only') is True:
-        payload['quote_only'] = True
+
+    if trusted.kind == 'video':
+        if not video_enabled or not supports_native_vk_video_trend(prompt):
+            raise ValueError('Video trend is not available for native VK')
+        # Template reference assets are stored separately from the visible
+        # trend payload. Never silently omit or leak those fixed assets.
+        if await list_trend_reference_assets(parsed.trend_id):
+            raise ValueError('Protected video trend requires a different workflow')
+        catalog = await fetch_native_vk_models(actor_id)
+        payload = build_native_video_trend_request(
+            trusted, catalog, references,
+            key=key, quote_only=quote_only,
+            expected_cost=body.get('expected_cost'),
+        )
+        result = await submit_native_vk_video(actor_id, payload)
+    elif trusted.kind == 'image':
+        if not image_enabled or not supports_native_vk_image_trend(prompt):
+            raise ValueError('Image trend is not available for native VK')
+        if (trusted.template_image_urls or trusted.provider_video_urls
+            or trusted.provider_audio_urls or trusted.reference_contract
+            or int(trusted.settings.get('count') or 1) != 1):
+            raise ValueError('Trend requires a different generation workflow')
+        model = NATIVE_IMAGE_MODELS.get(trusted.model)
+        quality = str(trusted.settings.get('quality') or '2K')
+        if not model or quality not in {'2K', '4K'}:
+            raise ValueError('Trend is not supported by VK generation')
+        payload = {
+            'model': model, 'prompt': trusted.prompt, 'aspect': trusted.ratio,
+            'resolution': quality, 'reference_photos': references,
+        }
+        if key:
+            payload['client_request_id'] = key
+        if quote_only:
+            payload['quote_only'] = True
+        else:
+            payload['expected_cost'] = body.get('expected_cost')
+        result = await submit_native_vk_image(actor_id, payload)
     else:
-        payload['expected_cost'] = body.get('expected_cost')
-    result = await submit_native_vk_image(actor_id, payload)
-    # Never send the secret prompt or effective provider inputs to VK browser.
+        raise ValueError('Invalid VK trend kind')
+    # No hidden prompt, source media list, provider settings or prices from
+    # the editor are returned to the VK browser.
     return response({'ok': True, **result})
 
 
