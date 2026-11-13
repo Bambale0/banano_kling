@@ -1,8 +1,8 @@
 """Idempotent public feed likes by a verified native VK actor, not a TG user."""
 from __future__ import annotations
 
-from bot import db as db_backend
 from bot import database
+from bot import db as db_backend
 
 
 async def like_public_vk_feed(vk_actor_id: int, gen_id: int) -> int | None:
