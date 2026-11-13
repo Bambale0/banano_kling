@@ -77,6 +77,8 @@ def test_native_frames_and_reference_mapping():
     {"model": "wan_3_prime", "aspect_ratio": "adaptive"},
     {"model": "wan_3_prime", "audio": False},
     {"model": "wan_3_prime", "seed": 12},
+    {"scenario": "edit", "duration": 20, "aspect_ratio": "9:16"},
+    {"scenario": "edit", "duration": 5, "aspect_ratio": "16:9"},
     {"duration": -1},
     {"reference_file_urls": ["https://media.example.org/a.pdf"]},
     {"nsfw_checker": True},
