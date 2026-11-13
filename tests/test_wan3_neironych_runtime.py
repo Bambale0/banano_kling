@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-import bot.services.wan3_neironych_runtime as native
+import bot.services.wan3_neironych_runtime as native_runtime
 import bot.services.wan3_prime_recovery as recovery
 from bot.services.wan3_prime_media import Wan3PrimeRecipe
 
@@ -32,7 +32,7 @@ def recipe(*, model="wan_3", scenario="text", **overrides):
 
 
 def test_native_text_payload_is_not_kie_wire_format():
-    assert native.native_payload_for_recipe(recipe()) == {
+    assert native_runtime.native_payload_for_recipe(recipe()) == {
         "model": "wan-3",
         "prompt": "A small red tram moves through the city",
         "duration": 5,
@@ -40,7 +40,7 @@ def test_native_text_payload_is_not_kie_wire_format():
         "aspect_ratio": "16:9",
         "generate_audio": True,
     }
-    assert native.native_payload_for_recipe(recipe(model="wan_3_prime"))["model"] == "wan-3-prime"
+    assert native_runtime.native_payload_for_recipe(recipe(model="wan_3_prime"))["model"] == "wan-3-prime"
 
 
 def test_native_frames_and_reference_mapping():
@@ -54,7 +54,7 @@ def test_native_frames_and_reference_mapping():
             "first_frame_url": url, "audio": True, "nsfw_checker": False,
         },
     )
-    assert native.native_payload_for_recipe(first)["start_image"] == {"url": url}
+    assert native_runtime.native_payload_for_recipe(first)["start_image"] == {"url": url}
 
     references = recipe(
         scenario="reference",
@@ -65,7 +65,7 @@ def test_native_frames_and_reference_mapping():
             "reference_image_urls": [url], "audio": True, "nsfw_checker": False,
         },
     )
-    assert native.native_payload_for_recipe(references)["reference_images"] == [{"url": url}]
+    assert native_runtime.native_payload_for_recipe(references)["reference_images"] == [{"url": url}]
 
 
 @pytest.mark.parametrize("changes", [
@@ -82,7 +82,7 @@ def test_native_frames_and_reference_mapping():
 ])
 def test_unsupported_native_contract_is_not_silently_degraded(changes):
     original = recipe(**changes)
-    assert native.native_payload_for_recipe(original) is None
+    assert native_runtime.native_payload_for_recipe(original) is None
 
 
 @pytest.mark.asyncio
@@ -93,12 +93,12 @@ async def test_native_acceptance_is_idempotent_and_status_is_persistently_routab
     native.submit.return_value = {"request_id": "req123abc", "status": "pending"}
     native.get_status.return_value = {"request_id": "req123abc", "model": "wan-3", "status": "done"}
     kie = AsyncMock()
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie, neironych=native, primary_provider=lambda: "neironych",
         record_attempt=AsyncMock(),
     )
     result = await transport.create_task(recipe(), callback_url="https://example.org/callback")
-    assert result["task_id"] == native.NEIRONYCH_TASK_PREFIX + "req123abc"
+    assert result["task_id"] == native_runtime.NEIRONYCH_TASK_PREFIX + "req123abc"
     assert native.submit.await_args.kwargs["idempotency_key"] == "wan3_1234567890abcdef"
     assert native.submit.await_args.args[0]["model"] == "wan-3"
     kie.create_task.assert_not_awaited()
@@ -117,7 +117,7 @@ async def test_native_transport_preserves_old_kie_tasks_and_unsupported_prime():
     kie = AsyncMock()
     kie.create_task.return_value = {"task_id": "legacy123"}
     kie.get_task_status.return_value = {"taskId": "legacy123", "state": "success"}
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie, neironych=native, primary_provider=lambda: "neironych",
         record_attempt=AsyncMock(),
     )
@@ -135,7 +135,7 @@ async def test_uncertain_native_submit_never_starts_second_paid_kie_task():
     native.list_enabled_wan_models.return_value = {"wan-3", "wan-3-prime"}
     native.submit.side_effect = TimeoutError("request may have been accepted")
     kie = AsyncMock()
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie, neironych=native, primary_provider=lambda: "neironych",
         record_attempt=AsyncMock(),
     )
@@ -154,7 +154,7 @@ async def test_definitive_native_rejection_reports_failure_for_exactly_once_refu
     native.list_enabled_wan_models.return_value = {"wan-3"}
     native.submit.side_effect = NeironychAPIError("definitive validation rejection", status=code)
     kie = AsyncMock()
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie, neironych=native, primary_provider=lambda: "neironych",
         record_attempt=AsyncMock(),
     )
@@ -175,7 +175,7 @@ async def test_uncertain_native_response_does_not_switch_provider_or_refund(code
     native.list_enabled_wan_models.return_value = {"wan-3"}
     native.submit.side_effect = NeironychAPIError("ambiguous upstream response", status=code)
     kie = AsyncMock()
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie, neironych=native, primary_provider=lambda: "neironych",
         record_attempt=AsyncMock(),
     )
@@ -186,7 +186,7 @@ async def test_uncertain_native_response_does_not_switch_provider_or_refund(code
 
 @pytest.mark.asyncio
 async def test_native_admission_sets_stable_client_lineage_and_idempotency():
-    client = native.NeironychWan3RuntimeService(api_key="test-only")
+    client = native_runtime.NeironychWan3RuntimeService(api_key="test-only")
     client._request_json = AsyncMock(return_value=(202, {
         "request_id": "req_123", "client_request_id": "wan3_1234567890abcdef",
     }))
@@ -204,7 +204,7 @@ async def test_native_admission_sets_stable_client_lineage_and_idempotency():
 async def test_native_lookup_returns_authenticated_lineage_and_404_is_ambiguous():
     from bot.services.neironych_seedance_admin_service import NeironychAPIError
 
-    client = native.NeironychWan3RuntimeService(api_key="test-only")
+    client = native_runtime.NeironychWan3RuntimeService(api_key="test-only")
     client._request_json = AsyncMock(return_value=(200, {
         "id": "req_123", "client_request_id": "wan3_test",
         "idempotency_key": "wan3_test", "model_slug": "wan-3",
@@ -239,7 +239,7 @@ async def test_native_never_posts_or_reserves_on_failed_route_persistence():
     native.list_enabled_wan_models.return_value = {"wan-3"}
     attempted = AsyncMock(side_effect=RuntimeError("database temporarily unavailable"))
     kie = AsyncMock()
-    transport = native.Wan3NeironychRuntimeTransport(
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
         kie=kie,
         neironych=native,
         primary_provider=lambda: "neironych",
