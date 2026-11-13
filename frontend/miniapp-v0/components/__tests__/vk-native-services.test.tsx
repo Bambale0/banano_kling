@@ -86,3 +86,13 @@ test('existing Telegram ServiceGrid remains unrestricted without actor-specific 
   fireEvent.click(normalButton)
   expect(click).toHaveBeenCalledWith('prompt-by-photo')
 })
+
+test('linked VK/TG identity keeps native paid services disabled before ledger parity', async () => {
+  render(<VkNativeServices onNavigate={jest.fn()} linkedTelegram verifiedVkCommunityId={239915802} />)
+  expect(fetchVkNativeState).not.toHaveBeenCalled()
+  expect(fetchVkPublicDiscovery).not.toHaveBeenCalled()
+  expect(screen.getByRole('button', { name: /Изменить фото/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Оживить фото/ })).toBeDisabled()
+  expect(screen.getByRole('button', { name: /Партнёрам/ })).toBeEnabled()
+  await waitFor(() => expect(screen.getByRole('button', { name: /Поддержка/ })).toBeEnabled())
+})
