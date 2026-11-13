@@ -48,7 +48,9 @@ def native_payload_for_recipe(recipe: Wan3PrimeRecipe) -> dict[str, Any] | None:
         return None
     if source.get("audio", True) != recipe.audio:
         return None
-    if recipe.scenario in {"file", "link"}:
+    # Native edit derives duration/ratio from the input video. KIE accepts
+    # explicit output controls, so do not silently drop what the user chose.
+    if recipe.scenario in {"file", "link", "edit"}:
         return None
     if recipe.scenario not in {"text", "reference", "first_frame", "first_last", "edit"}:
         return None
