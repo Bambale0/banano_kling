@@ -88,9 +88,11 @@ const toneClass: Record<string, string> = {
 interface ServiceGridProps {
   activeServiceId: string
   onServiceClick: (serviceId: string) => void
+  /** Actor-specific capabilities; omitted in Telegram. */
+  enabledServiceIds?: ReadonlySet<string>
 }
 
-export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProps) {
+export function ServiceGrid({ activeServiceId, onServiceClick, enabledServiceIds }: ServiceGridProps) {
   return (
     <div className="space-y-5">
       <div className="relative overflow-hidden rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
@@ -120,6 +122,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
           {primaryServices.map((service, index) => {
             const Icon = service.icon
             const selected = activeServiceId === service.id
+            const available = enabledServiceIds?.has(service.id) ?? true
 
             return (
               <motion.button
@@ -128,10 +131,12 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.04 }}
+                disabled={!available}
                 onClick={() => onServiceClick(service.id)}
                 className={cn(
                   'group relative overflow-hidden rounded-[1.5rem] border p-4 text-left',
                   'transition-all duration-300 active:scale-[0.99]',
+                  !available && 'cursor-not-allowed opacity-55',
                   selected
                     ? 'border-gold/45 bg-card/80'
                     : 'border-border/55 bg-card/45 hover:border-border hover:bg-card/70'
@@ -166,7 +171,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                     </div>
 
                     <span className="mt-3 inline-flex rounded-full border border-border/50 bg-background/45 px-3 py-1 text-[11px] text-muted-foreground">
-                      {service.badge}
+                      {available ? service.badge : 'Недоступно в ВКонтакте'}
                     </span>
                   </div>
                 </div>
@@ -182,14 +187,17 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
         <div className="rounded-[1.5rem] border border-border/55 bg-card/40">
           {secondaryServices.map((service, index) => {
             const Icon = service.icon
+            const available = enabledServiceIds?.has(service.id) ?? true
 
             return (
               <button
                 key={service.id}
                 type="button"
+                disabled={!available}
                 onClick={() => onServiceClick(service.id)}
                 className={cn(
                   'flex w-full items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-secondary/30',
+                  !available && 'cursor-not-allowed opacity-55',
                   index !== secondaryServices.length - 1 && 'border-b border-border/45'
                 )}
               >
@@ -198,7 +206,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">{service.title}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{service.description}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{available ? service.description : 'Недоступно в ВКонтакте'}</p>
                 </div>
                 <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
               </button>
