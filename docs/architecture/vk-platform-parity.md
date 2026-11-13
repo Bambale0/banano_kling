@@ -109,3 +109,8 @@ by editing the terms while the first provider result is unresolved.
 A fresh invoice with a new idempotency key is available only after the
 previous attempt has been **confirmed paid**; ambiguous and pending attempts
 remain immutable until a verified status is returned.
+
+
+## 2026-11-13 — Incremental VK native shared-shell bootstrap (#451)
+
+`VkNativeAppAdapter` is registered only as an incomplete adapter (`bootstrap`, `tasks`). Its signed VK actor reads the authoritative native VK state, dynamic model catalogue and commerce wallet, not the Telegram account. The existing 10-domain `full_vk_adapter()` gate rejects it until the remaining native domains are implemented and verified. `VK_FULL_APP_PARITY_ENABLED` and the money/write gates remain OFF by default; no ledger migration or new paid action is introduced. This release slice does **not** constitute full seven-tab VK parity.
