@@ -77,8 +77,12 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
   </article>
 }
 
-export function VkStandaloneDiscovery() {
-  const [view, setView] = useState<'trends' | 'feed' | 'mine'>('trends')
+export type VkNativeSurface = 'studio' | 'photo' | 'video' | 'feed' | 'trends' | 'profile'
+
+export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface } = {}) {
+  const [view, setView] = useState<'trends' | 'feed' | 'mine'>(
+    surface === 'feed' ? 'feed' : surface === 'profile' ? 'mine' : 'trends',
+  )
   const [native, setNative] = useState<VkNativeState | null>(null)
   const [commerce, setCommerce] = useState<VkNativeCommerce | null>(null)
   const [commerceError, setCommerceError] = useState('')
@@ -95,8 +99,8 @@ export function VkStandaloneDiscovery() {
   const [shareLink, setShareLink] = useState('')
   const [shareTitle, setShareTitle] = useState('')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
-  const [createPhoto, setCreatePhoto] = useState(false)
-  const [createVideo, setCreateVideo] = useState(false)
+  const [createPhoto, setCreatePhoto] = useState(surface === 'photo')
+  const [createVideo, setCreateVideo] = useState(surface === 'video')
   const [nativeError, setNativeError] = useState('')
   const [nativeRetry, setNativeRetry] = useState(0)
   const [categoryId, setCategoryId] = useState<string | number | null>(null)
@@ -280,6 +284,16 @@ export function VkStandaloneDiscovery() {
     return () => controller.abort()
   }, [view, categoryId, page, retry])
 
+  // When the caller supplies a shared tab, keep the native content scoped
+  // to that tab. Its requests always use VK sessions and VK-owned resources.
+  const nativeComposerOnly = surface === 'photo' || surface === 'video'
+  const photoEnabled = (
+    (discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app)
+    || category?.can_generate_in_app
+  ) === true
+  const videoEnabled = native?.video_generation_enabled === true
+    && native.registered && !native.is_blocked
+
   const switchView = (next: 'trends' | 'feed' | 'mine') => {
     closeLinkedTrend()
     closeLinkedFeed()
@@ -305,22 +319,27 @@ export function VkStandaloneDiscovery() {
           : native ? <span>Вы ещё не начинали работу в VK-боте.</span>
             : <span>Загружаем VK-баланс…</span>}
     </div>
-    {((discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app)
-      || category?.can_generate_in_app) && <button type="button"
+    {(surface !== 'video' && surface !== 'feed' && surface !== 'profile' && photoEnabled) && <button type="button"
         className="w-full rounded-xl bg-primary p-3 font-semibold text-primary-foreground"
         onClick={() => { setRepeatItem(null); setCreateVideo(false); setCreatePhoto(true) }}>Создать фото</button>}
-    {native?.video_generation_enabled === true && native.registered && !native.is_blocked
+    {surface !== 'photo' && surface !== 'feed' && surface !== 'trends' && surface !== 'profile' && videoEnabled
       ? <button type="button" className="w-full rounded-xl bg-primary p-3 font-semibold text-primary-foreground"
         onClick={() => { setRepeatItem(null); setCreatePhoto(false); setCreateVideo(true) }}>Создать видео</button>
       : null}
-    {(createPhoto || repeatItem || createVideo) ? <VkGenerationPanel
+    {surface === 'photo' && discovery && !photoEnabled && <p role="status"
+      className="text-sm text-muted-foreground">Создание фото через Mini App пока недоступно для этого VK-аккаунта.</p>}
+    {surface === 'video' && native && !videoEnabled && <p role="status"
+      className="text-sm text-muted-foreground">Создание видео через Mini App пока недоступно для этого VK-аккаунта.</p>}
+    {((createPhoto && (!nativeComposerOnly || photoEnabled))
+      || repeatItem
+      || (createVideo && (!nativeComposerOnly || videoEnabled))) ? <VkGenerationPanel
       key={repeatItem?.id ?? (createVideo ? 'video' : 'new')}
       kind={createVideo ? 'video' : 'photo'}
       trend={repeatItem ?? undefined} onClose={() => {
         setCreatePhoto(false); setCreateVideo(false); setRepeatItem(null)
       }}
       onFinished={() => setNativeRetry(v => v + 1)} /> : null}
-    <div className="flex flex-wrap gap-2">
+    {(!surface || surface === 'studio') && <div className="flex flex-wrap gap-2">
       <button type="button" aria-pressed={view === 'trends'}
         onClick={() => switchView('trends')}
         className={'rounded-xl px-4 py-2 text-sm font-medium ' + (view === 'trends' ? 'bg-primary text-primary-foreground' : 'border border-border')}>
@@ -336,7 +355,7 @@ export function VkStandaloneDiscovery() {
         className={'rounded-xl px-4 py-2 text-sm font-medium ' + (view === 'mine' ? 'bg-primary text-primary-foreground' : 'border border-border')}>
         Мои работы
       </button>
-    </div>
+    </div>}
     {shareLink ? <div role="dialog" aria-label="Поделиться трендом"
       className="space-y-3 rounded-xl border border-border bg-card p-3">
       <h3 className="text-sm font-semibold">Ссылка на «{shareTitle}»</h3>
@@ -442,17 +461,17 @@ export function VkStandaloneDiscovery() {
         </article>
       ))}
     </div> : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null ? (
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null ? (
       <button type="button" className="text-sm underline" onClick={() => {
         setCategoryId(null); setCategory(null); setPage(1)
       }}>← Ко всем трендам</button>
     ) : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && error ? <div role="alert" className="space-y-2 text-sm">
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && error ? <div role="alert" className="space-y-2 text-sm">
       <p>{error}</p>
       <button type="button" className="underline" onClick={() => setRetry(x => x + 1)}>Повторить загрузку</button>
     </div> : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null && category ? <>
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && busy && !discovery && !category ? <p role="status" className="text-sm text-muted-foreground">Загружаем тренды…</p> : null}
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId !== null && category ? <>
       <h3 className="text-lg font-semibold">{category.category.emoji} {category.category.title}</h3>
       <div className="grid grid-cols-2 gap-3">
         {category.items.map(item => <TrendCard key={item.id} item={item}
@@ -463,7 +482,7 @@ export function VkStandaloneDiscovery() {
         {busy ? 'Загрузка…' : 'Показать ещё'}
       </button> : null}
     </> : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'categories' in discovery ? discovery.categories.map(group => (
       <div key={group.id} className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-base font-semibold">{group.emoji} {group.title}</h3>
@@ -479,7 +498,7 @@ export function VkStandaloneDiscovery() {
         </div>
       </div>
     )) : null}
-    {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
+    {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
         {discovery.items.map(item => <FeedCard key={item.id} item={item} />)}
       </div>
