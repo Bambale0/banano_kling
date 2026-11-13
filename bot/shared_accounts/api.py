@@ -23,7 +23,6 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
-from .vk_saved_refs import forget_vk_reference, list_vk_references, save_vk_reference
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     create_native_vk_invoice,
@@ -34,6 +33,7 @@ from .vk_native import (
     submit_native_vk_image,
     submit_native_vk_video,
 )
+from .vk_saved_refs import forget_vk_reference, list_vk_references, save_vk_reference
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .vk_video_trends import (
     build_native_video_trend_request,
