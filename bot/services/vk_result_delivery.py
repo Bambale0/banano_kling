@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import secrets
 import time
@@ -122,19 +123,32 @@ class VKDeliveryQueue:
             return
         platform = "request_data::jsonb ->> 'origin_platform'" if db_backend.is_postgres() else "json_extract(request_data, '$.origin_platform')"
         recipient = "request_data::jsonb ->> 'origin_vk_user_id'" if db_backend.is_postgres() else "json_extract(request_data, '$.origin_vk_user_id')"
+        try:
+            batch_size = max(1, min(int(os.getenv("VK_RESULT_RECONCILE_SCAN_BATCH", "500")), 5000))
+        except (TypeError, ValueError):
+            batch_size = 500
+        # The previous predicate scanned the entire historical generation_tasks
+        # table whenever fewer than 50 eligible VK rows existed. Scan a bounded
+        # raw ID window and advance the cursor even for ineligible tasks.
         async with self.transaction() as db:
-            rows = await (await db.execute(f'''SELECT g.id, g.task_id FROM generation_tasks g
-                LEFT JOIN vk_result_deliveries d ON d.task_id = g.id WHERE d.task_id IS NULL
-                AND g.id > ?
-                AND g.status = 'completed' AND g.type IN ('image', 'video') AND COALESCE(g.result_url, '') <> ''
-                AND CASE WHEN json_valid(g.request_data) THEN {platform} ELSE NULL END = 'vk'
-                AND CASE WHEN json_valid(g.request_data) THEN {recipient} ELSE NULL END IS NOT NULL
-                ORDER BY g.id LIMIT 50''', (self._reconcile_after,))).fetchall()
-        # Ineligible old rows must not monopolize every recovery sweep. Wrap so
-        # later ownership/policy corrections also become eligible again.
-        self._reconcile_after = rows[-1][0] if len(rows) == 50 else 0
+            rows = await (await db.execute(f"""SELECT g.id, g.task_id,
+                CASE WHEN d.task_id IS NULL
+                  AND g.status = 'completed' AND g.type IN ('image', 'video')
+                  AND COALESCE(g.result_url, '') <> ''
+                  AND CASE WHEN json_valid(g.request_data) THEN {platform} ELSE NULL END = 'vk'
+                  AND CASE WHEN json_valid(g.request_data) THEN {recipient} ELSE NULL END IS NOT NULL
+                  THEN 1 ELSE 0 END AS eligible
+                FROM generation_tasks g
+                LEFT JOIN vk_result_deliveries d ON d.task_id = g.id
+                WHERE g.id > ?
+                ORDER BY g.id LIMIT ?""",
+                (self._reconcile_after, batch_size))).fetchall()
+        # One pass eventually covers old records without starving new results;
+        # wrap only after the final partial page.
+        self._reconcile_after = rows[-1]["id"] if len(rows) == batch_size else 0
         for row in rows:
-            await self.enqueue(row[1])
+            if row["eligible"]:
+                await self.enqueue(row["task_id"])
 
     async def claim(self, policy) -> dict | None:
         now, token = int(self.clock()), secrets.token_hex(16)

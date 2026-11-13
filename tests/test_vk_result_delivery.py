@@ -486,3 +486,55 @@ async def test_publication_does_not_expose_private_delivery_identity_metadata(mo
             for field in ('origin_vk_user_id', 'origin_account_id', 'vk_chat_delivery_requested', 'request_data'):
                 assert field not in encoded
             assert account not in encoded
+
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_scans_bounded_raw_ids_and_advances_past_ineligible_rows(monkeypatch):
+    import bot.services.vk_result_delivery as delivery
+
+    queue = VKDeliveryQueue(transport())
+    monkeypatch.setattr(delivery, "load_policy", AsyncMock(
+        return_value=SimpleNamespace(enabled=True, vk_result_delivery_enabled=True)
+    ))
+    calls = []
+    first_page = [
+        {"id": index, "task_id": f"old-{index}", "eligible": 0}
+        for index in range(1, 501)
+    ]
+
+    class Cursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        async def fetchall(self):
+            return self.rows
+
+    class DB:
+        row_factory = None
+
+        async def execute(self, query, params):
+            calls.append((query, params))
+            if params[0] == 0:
+                return Cursor(first_page)
+            if params[0] == 500:
+                return Cursor([{"id": 501, "task_id": "later-valid", "eligible": 1}])
+            raise AssertionError("unexpected scan cursor")
+
+    @asynccontextmanager
+    async def transaction():
+        yield DB()
+
+    monkeypatch.setattr(queue, "transaction", transaction)
+    queued = AsyncMock(return_value=True)
+    monkeypatch.setattr(queue, "enqueue", queued)
+
+    await queue.reconcile()
+    assert queue._reconcile_after == 500
+    queued.assert_not_awaited()
+    await queue.reconcile()
+    assert queue._reconcile_after == 0
+    queued.assert_awaited_once_with("later-valid")
+    assert calls[0][1] == (0, 500)
+    assert calls[1][1] == (500, 500)
+    assert "ORDER BY g.id LIMIT ?" in calls[0][0]
