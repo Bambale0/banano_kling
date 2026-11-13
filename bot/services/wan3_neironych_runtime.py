@@ -242,7 +242,7 @@ class Wan3NeironychRuntimeTransport:
             raw_metadata = row["request_data"]
             metadata = raw_metadata if isinstance(raw_metadata, dict) else json.loads(raw_metadata or "{}")
             if not isinstance(metadata, dict):
-                raise RuntimeError("Wan generation task metadata is malformed")
+                raise TypeError("Wan generation task metadata is malformed")
             metadata["provider_submission_route"] = "neironych"
             metadata["provider"] = "neironych"
             updated = await db.execute(
