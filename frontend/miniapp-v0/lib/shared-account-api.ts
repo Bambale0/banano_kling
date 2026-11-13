@@ -363,6 +363,7 @@ export interface VkPublicFeedItem {
   preview_url: string | null
   result_url: string | null
   likes_count: number
+  can_like_in_app?: boolean
 }
 
 export type VkPublicDiscovery =
@@ -411,6 +412,7 @@ export interface VkPublicFeedLink {
     preview_poster_url?: string | null
     result_url: string | null
     likes_count: number
+    can_like_in_app?: boolean
     shares_count: number
     comments_count: number
     aspect_ratio: string
@@ -421,6 +423,25 @@ export interface VkPublicFeedLink {
     /** Native VK feed remix is a separate authorized operation, not this read. */
     can_repeat_in_app: false
   }
+}
+
+export interface VkFeedLikeResult {
+  ok: true
+  liked: boolean
+  likes_count: number
+}
+
+/** A signed, free and idempotent native VK reaction. Never send actor IDs. */
+export async function likeVkFeed(feedGenId: number, signal?: AbortSignal): Promise<VkFeedLikeResult> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId <= 0) {
+    throw new Error('Некорректная публикация для реакции.')
+  }
+  return withPreviewSession(headers => request<VkFeedLikeResult>(
+    'vk-feed-like', {
+      method: 'POST', headers,
+      body: JSON.stringify({ feed_gen_id: feedGenId }), signal,
+    },
+  ), signal)
 }
 
 export async function fetchVkPublicFeedItem(
