@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkReferenceLibrary } from './vk-reference-library'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
@@ -406,6 +407,7 @@ export function VkStandaloneDiscovery() {
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
     </section> : null}
     {view === 'mine' ? <div className="space-y-3">
+      <VkReferenceLibrary canUpload={native?.photo_upload_enabled === true} />
       {commerce?.registered && commerce.payments_enabled === true &&
         <VkNativeCheckout packages={commerce.payment_packages}
           attempt={checkoutAttempt} onAttemptChange={setCheckoutAttempt} />}
