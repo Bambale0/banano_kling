@@ -73,7 +73,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
       Единая Mini App станет доступна после подтверждения полной совместимости сервером.
     </p>
-    <VkNativeWorkspace />
+    <VkNativeWorkspace verifiedVkCommunityId={communityId} />
     {nativeBotUrl
       ? <a className="block rounded-xl bg-primary px-4 py-3 text-center font-semibold text-primary-foreground"
           href={nativeBotUrl} target="_blank" rel="noopener noreferrer">
