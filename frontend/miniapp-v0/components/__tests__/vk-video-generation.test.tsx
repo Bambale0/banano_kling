@@ -15,8 +15,8 @@ jest.mock('@/lib/shared-account-api', () => ({
 }))
 
 beforeEach(() => {
-  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.mocked(fetchVkModelCatalog).mockResolvedValue({
     ok: true, photo_models: [],
     video_models: [{
