@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkSavedReferences, fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
@@ -28,6 +28,7 @@ const card = (id: number, title: string) => ({
 })
 
 beforeEach(() => {
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   window.history.replaceState({}, '', '/')
   jest.resetAllMocks()
   jest.mocked(fetchVkNativeState).mockResolvedValue({
