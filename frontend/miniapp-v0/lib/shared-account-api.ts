@@ -363,6 +363,8 @@ export interface VkPublicFeedItem {
   preview_url: string | null
   result_url: string | null
   likes_count: number
+  /** A server-approved permission, not an inferred public prompt. */
+  can_repeat_in_app?: boolean
 }
 
 export type VkPublicDiscovery =
@@ -419,7 +421,7 @@ export interface VkPublicFeedLink {
     media_unavailable: boolean
     share_link: string
     /** Native VK feed remix is a separate authorized operation, not this read. */
-    can_repeat_in_app: false
+    can_repeat_in_app: boolean
   }
 }
 
@@ -484,6 +486,14 @@ export interface VkVideoRequest {
   expected_cost?: number
 }
 
+export interface VkFeedRepeatRequest {
+  feed_gen_id: number
+  reference_urls: string[]
+  quote_only: boolean
+  client_request_id?: string
+  expected_cost?: number
+}
+
 export interface VkTrendRequest {
   trend_id: number
   reference_urls: string[]
@@ -495,7 +505,7 @@ export interface VkTrendRequest {
 
 // The shared-account backend rejects request bodies above 32 KiB. Count
 // UTF-8 bytes (not JS characters) before creating a session or uploading data.
-function vkGenerationBody(payload: VkImageRequest | VkVideoRequest | VkTrendRequest): string {
+function vkGenerationBody(payload: VkImageRequest | VkVideoRequest | VkTrendRequest | VkFeedRepeatRequest): string {
   const body = JSON.stringify(payload)
   if (new Blob([body]).size > 32768) {
     throw new Error('Сократите промпт или число референсов: запрос слишком большой.')
@@ -553,6 +563,17 @@ export async function generateVkVideo(payload: VkVideoRequest, signal?: AbortSig
 export async function repeatVkTrend(payload: VkTrendRequest, signal?: AbortSignal) {
   const body = vkGenerationBody(payload)
   return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-trend', {
+    method: 'POST', headers, body, signal,
+  }), signal)
+}
+
+export async function repeatVkFeed(payload: VkFeedRepeatRequest, signal?: AbortSignal) {
+  if (!Number.isSafeInteger(payload.feed_gen_id) || payload.feed_gen_id < 1
+      || typeof payload.quote_only !== 'boolean' || !Array.isArray(payload.reference_urls)) {
+    throw new Error('Некорректный запрос повтора публикации.')
+  }
+  const body = vkGenerationBody(payload)
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-feed-repeat', {
     method: 'POST', headers, body, signal,
   }), signal)
 }
