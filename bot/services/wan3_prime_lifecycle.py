@@ -20,6 +20,7 @@ from bot.services import preset_manager as preset_module
 from bot.services.generation_origin import generation_origin_from_context
 from bot.services.wan3_billing import settlement_amounts
 from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
+from bot.services.wan3_neironych_runtime import Wan3NeironychRuntimeTransport
 from bot.services.wan3_prime_media import (
     WAN3_MODEL_KEY,
     MediaProbe,
@@ -253,8 +254,6 @@ class Wan3PrimeLifecycle:
         miniapp_root: str = "/mini-app",
     ) -> None:
         if transport is None:
-            from bot.services.wan3_neironych_runtime import Wan3NeironychRuntimeTransport
-
             transport = Wan3NeironychRuntimeTransport(kie=LazyWan3PrimeTransport())
         self.transport = transport
         self.probe = probe or wan3_prime_probe
