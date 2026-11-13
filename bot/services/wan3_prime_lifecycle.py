@@ -20,6 +20,7 @@ from bot.services import preset_manager as preset_module
 from bot.services.generation_origin import generation_origin_from_context
 from bot.services.wan3_billing import settlement_amounts
 from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
+from bot.services.wan3_neironych_runtime import Wan3NeironychRuntimeTransport
 from bot.services.wan3_prime_media import (
     WAN3_MODEL_KEY,
     MediaProbe,
@@ -252,7 +253,9 @@ class Wan3PrimeLifecycle:
         preset_manager: Any | None = None,
         miniapp_root: str = "/mini-app",
     ) -> None:
-        self.transport = transport or LazyWan3PrimeTransport()
+        if transport is None:
+            transport = Wan3NeironychRuntimeTransport(kie=LazyWan3PrimeTransport())
+        self.transport = transport
         self.probe = probe or wan3_prime_probe
         self.downloader = downloader
         self.preset_manager = preset_manager or preset_module.preset_manager
@@ -527,6 +530,7 @@ class Wan3PrimeLifecycle:
 
         recipe, server_quote = await self._recipe_and_quote(actor, body, quote)
         internal_task_id = f"wan3_{uuid.uuid4().hex}"
+        recipe = replace(recipe, provider_submission_id=internal_task_id)
         nonce = secrets.token_urlsafe(24)
         submission_lease_until = (datetime.now(UTC) + timedelta(minutes=10)).replace(tzinfo=None).isoformat(sep=" ")
 
@@ -719,6 +723,14 @@ class Wan3PrimeLifecycle:
             return "accepted", provider_task_id, None
         if code == 200:
             return "no_task_id", None, str(result.get("message") or result.get("msg") or "")
+        if (
+            error == "api_error"
+            and result.get("success") is False
+            and result.get("definitive_pre_submission_failure") is True
+        ):
+            # A local persistence/configuration failure occurred before any
+            # upstream POST. This is refundable even if its HTTP status is 503.
+            return "api_error", None, str(result.get("message") or "Provider preflight failed")
         raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
         codes = (code, result.get("status_code"), raw.get("code"))
         if any(isinstance(value, (int, str)) and str(value).isdigit() and 500 <= int(value) <= 599 for value in codes):
@@ -759,6 +771,8 @@ class Wan3PrimeLifecycle:
 
             request_data = generation_partner_snapshot(request_data, accepted=True, previous=request_data)
             request_data["provider_task_id"] = provider_task_id
+            if provider_task_id.startswith("neironych:"):
+                request_data["provider"] = "neironych"
             request_data["delivery_status"] = "pending"
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET provider_task_id = ?, status = 'submitted', provider_state = 'waiting', lease_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE internal_task_id = ? AND provider_task_id IS NULL AND settled = 0 AND status IN ('submitting', 'unknown', 'submitted')",
@@ -846,10 +860,12 @@ class Wan3PrimeLifecycle:
             from bot.services.wan3_prime_recovery import (
                 recover_candidates,
                 recover_expired_submissions,
+                recover_unknown_native_submissions,
             )
 
             await recover_expired_submissions()
             await recover_candidates(self, limit=limit)
+            await recover_unknown_native_submissions(self, limit=limit)
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             if provider_task_id:
@@ -1127,7 +1143,8 @@ class Wan3PrimeLifecycle:
         from bot.services.wan3_prime_result_repair import reject_invalid_result
 
         urls = _extract_result_urls(provider_data)
-        if not urls:
+        native = str(row["provider_task_id"] or "").startswith("neironych:")
+        if not urls and not native:
             await reject_invalid_result(row["internal_task_id"])
             return False
         downloader = self.downloader
@@ -1135,7 +1152,16 @@ class Wan3PrimeLifecycle:
             downloader = LocalResultDownloader()
         try:
             stored_path = dict(row).get('result_path')
-            local_path = stored_path if stored_path and os.path.isfile(stored_path) else await downloader.download(urls[0], task_id=row["internal_task_id"])
+            if stored_path and os.path.isfile(stored_path):
+                local_path = stored_path
+            elif native:
+                local_path = await self.transport.download_result(
+                    row["provider_task_id"], task_id=row["internal_task_id"],
+                )
+            else:
+                local_path = await downloader.download(
+                    urls[0], task_id=row["internal_task_id"],
+                )
         except Exception as exc:  # noqa: BLE001 - isolate transport/storage failures with durable outcome state
             logger.warning("Wan3 result download failed: task=%s reason=%s", row["internal_task_id"], type(exc).__name__)
             await reject_invalid_result(row["internal_task_id"])
@@ -1229,7 +1255,7 @@ class Wan3PrimeLifecycle:
                 return False
             request_data = json.loads(task['request_data'] or '{}')
             request_data.update({
-                "provider": "kie",
+                "provider": "neironych" if native else "kie",
                 "provider_model": row["provider_model"],
                 "provider_task_id": row["provider_task_id"],
                 "model": wan3_model_spec(row["provider_model"]).key,
