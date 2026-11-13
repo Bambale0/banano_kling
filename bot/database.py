@@ -4253,8 +4253,16 @@ def _saved_reference_is_available(reference: SavedReference) -> bool:
             is_local_upload_source,
             resolve_local_upload_path,
         )
+        from bot.services.media_storage import is_s3_enabled
 
         if is_local_upload_source(reference.file_url):
+            # Saved-reference listing is a read-only UI operation. Resolving
+            # local paths in S3 mode downloads every missing cached object
+            # synchronously, blocking bootstrap and the aiohttp event loop.
+            # Trust the persisted URL here; materialize only when the user
+            # actually submits the reference for generation.
+            if is_s3_enabled():
+                return True
             return bool(resolve_local_upload_path(reference.file_url))
     except Exception:
         logger.exception("Failed to validate saved reference file: %s", reference.file_url)

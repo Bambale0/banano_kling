@@ -3244,3 +3244,11 @@ private references and browser-provided actor information fail closed.
 - TDD: regression tests first reproduced the missing fast snapshot and over-deletion/no-op writes; rerun tests after changes.
 - Release: Python compile, DB/Mini App/partner tests, lint diff review, protected PR to tanyapi, exact-SHA CI + deploy, production health and latency sample. Do not claim production deployment before verification.
 - Rollback: revert this task PR only if a regression is observed.
+
+
+### Additional root cause: synchronous S3 cache materialization in bootstrap
+
+- Saved-reference availability filter invoked resolve_local_upload_path for each persisted /uploads URL. In S3 mode, this calls materialize_upload, which downloads missing media and blocks the event loop while building the Mini App initial payload.
+- Fix: in S3 mode, do not materialize media during read-only list filtering. The existing generation-time resolver still checks/downloads inputs when they are actually needed. Local mode retains missing-file filtering.
+- Regression: a 24-reference S3 fixture first failed because it caused 24 eager materializations; after the fix it causes zero. The local-mode fallback still performs file availability checks.
+- Risk: genuinely missing objects can remain visible as saved references until a generation uses them or a separate reconciliation detects them. Avoid trading bootstrap latency for eager S3 HEAD checks inside this route.

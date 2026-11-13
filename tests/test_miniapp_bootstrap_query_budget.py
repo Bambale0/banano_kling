@@ -130,3 +130,37 @@ async def test_bootstrap_notification_drain_deletes_only_observed_notifications(
             assert values[-1] == 137
             seen_ids.extend(values[:-1])
         assert seen_ids == ids
+
+
+@pytest.mark.parametrize(
+    ("s3_enabled", "expected_count", "expected_resolves"),
+    [(True, 24, 0), (False, 0, 24)],
+)
+def test_saved_reference_list_never_materializes_s3_files_on_bootstrap(
+    monkeypatch, s3_enabled, expected_count, expected_resolves
+):
+    from bot.services import media_input_utils, media_storage
+
+    resolves = []
+
+    def fake_materialize(source):
+        resolves.append(source)
+        return None
+
+    monkeypatch.setattr(media_storage, "is_s3_enabled", lambda: s3_enabled)
+    monkeypatch.setattr(
+        media_input_utils, "resolve_local_upload_path", fake_materialize
+    )
+    references = [
+        database.SavedReference(
+            id=i,
+            user_id=137,
+            kind="image",
+            file_url=f"/uploads/refs/image/137/202611/{i}.png",
+            file_hash=str(i),
+        )
+        for i in range(24)
+    ]
+    available = database._filter_available_saved_references(references, limit=24)
+    assert len(available) == expected_count
+    assert len(resolves) == expected_resolves
