@@ -294,6 +294,63 @@ export async function createVkInvoice(payload: VkInvoiceRequest, signal?: AbortS
 }
 
 
+export interface VkSavedReference {
+  reference_id: string
+  url: string
+  name: string
+  created_at: string
+}
+
+/** Signed VK owner's reusable media metadata, not Telegram saved_references. */
+export async function fetchVkSavedReferences(signal?: AbortSignal): Promise<VkSavedReference[]> {
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; references: VkSavedReference[] }>(
+      'vk-references', { headers, signal },
+    )
+    if (payload.ok !== true || !Array.isArray(payload.references)) {
+      throw new Error('Библиотека ВКонтакте сейчас недоступна.')
+    }
+    const valid = payload.references.every(item =>
+      /^[0-9a-f]{32}$/.test(item?.reference_id || '')
+      && typeof item.url === 'string' && /^https:\/\//.test(item.url)
+      && typeof item.name === 'string'
+      && typeof item.created_at === 'string',
+    )
+    if (!valid) throw new Error('Получен повреждённый список референсов.')
+    return payload.references
+  }, signal)
+}
+
+export async function saveVkSavedReference(url: string, name: string, signal?: AbortSignal): Promise<VkSavedReference> {
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; reference: VkSavedReference }>(
+      'vk-references', { method: 'POST', headers, signal,
+        body: JSON.stringify({ action: 'save', url, name }),
+      },
+    )
+    if (payload.ok !== true || !/^[0-9a-f]{32}$/.test(payload.reference?.reference_id || '')
+      || payload.reference.url !== url) {
+      throw new Error('Не удалось подтвердить сохранение фото ВКонтакте.')
+    }
+    return payload.reference
+  }, signal)
+}
+
+export async function forgetVkSavedReference(referenceId: string, signal?: AbortSignal): Promise<boolean> {
+  if (!/^[0-9a-f]{32}$/.test(referenceId)) throw new Error('Некорректный идентификатор референса.')
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; deleted: boolean }>(
+      'vk-references', { method: 'POST', headers, signal,
+        body: JSON.stringify({ action: 'forget', reference_id: referenceId }),
+      },
+    )
+    if (payload.ok !== true || typeof payload.deleted !== 'boolean') {
+      throw new Error('Не удалось проверить изменение VK-библиотеки.')
+    }
+    return payload.deleted
+  }, signal)
+}
+
 export interface VkNativeModelCatalog {
   ok: true
   photo_models: {
