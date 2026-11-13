@@ -236,3 +236,23 @@ def test_native_recovery_requires_proven_same_partner_model_and_client_id():
                  "model": "wan/3-0-video", "client_request_id": "wan3_test"}
     assert matches_submission(row, canonical) is True
     assert matches_submission(row, {**canonical, "client_request_id": "other"}) is False
+
+
+@pytest.mark.asyncio
+async def test_native_never_posts_or_reserves_on_failed_route_persistence():
+    native = AsyncMock()
+    native.enabled = True
+    native.list_enabled_wan_models.return_value = {"wan-3"}
+    attempted = AsyncMock(side_effect=RuntimeError("database temporarily unavailable"))
+    kie = AsyncMock()
+    transport = Wan3NeironychRuntimeTransport(
+        kie=kie,
+        neironych=native,
+        primary_provider=lambda: "neironych",
+        record_attempt=attempted,
+    )
+    result = await transport.create_task(recipe(), callback_url=None)
+    assert result["error"] == "api_error"
+    assert result["success"] is False
+    native.submit.assert_not_awaited()
+    kie.create_task.assert_not_awaited()
