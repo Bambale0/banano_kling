@@ -34,7 +34,10 @@ from .vk_native import (
     submit_native_vk_video,
 )
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
-from .vk_video_trends import build_native_video_trend_request, supports_native_vk_video_trend
+from .vk_video_trends import (
+    build_native_video_trend_request,
+    supports_native_vk_video_trend,
+)
 from .wallet import InsufficientFunds, WalletService
 
 logger = logging.getLogger(__name__)
