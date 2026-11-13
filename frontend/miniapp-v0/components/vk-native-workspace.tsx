@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { BRAND_NAME } from '@/lib/brand'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { AppTabBar } from './tab-nav'
+import { VkNativeServices } from './vk-native-services'
 import { VkStandaloneDiscovery, type VkNativeSurface } from './vk-standalone-discovery'
 
 /** Native VK route selection. No Telegram user ID, AppProvider or wallet fallback. */
@@ -34,7 +35,7 @@ const titles: Record<number, string> = {
  * The complete common TabContent mounts only after all ten VK domains are
  * verified by the server; a visual tab never unlocks a Telegram API.
  */
-export function VkNativeWorkspace() {
+export function VkNativeWorkspace({ verifiedVkCommunityId }: { verifiedVkCommunityId?: number | null } = {}) {
   const [activeTab, setActiveTab] = useState(tabFromVkLocation)
 
   useEffect(() => {
@@ -81,13 +82,7 @@ export function VkNativeWorkspace() {
     {surface ? (
       <VkStandaloneDiscovery key={activeTab} surface={surface} />
     ) : (
-      <section role="status" aria-label="Сервисы ВКонтакте"
-        className="space-y-2 rounded-2xl border border-border/70 bg-card p-4 text-sm">
-        <h3 className="text-base font-semibold">Сервисы ВКонтакте</h3>
-        <p>Полный набор сервисов в Mini App ещё подключается к защищённому VK-аккаунту.
-          Уже доступные сервисы работают через диалог с ботом сообщества.</p>
-        <p>Telegram для доступа к своему VK-аккаунту не требуется.</p>
-      </section>
+      <VkNativeServices onNavigate={selectTab} verifiedVkCommunityId={verifiedVkCommunityId} />
     )}
     <AppTabBar activeTab={activeTab} onTabChange={selectTab} isVk />
   </section>
