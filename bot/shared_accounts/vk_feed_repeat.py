@@ -62,7 +62,7 @@ def build_vk_feed_repeat(
         raise ValueError("Native VK model catalogue unavailable")
     models = catalog.get("photo_models")
     if not isinstance(models, list):
-        raise ValueError("Native VK photo model catalogue invalid")
+        raise TypeError("Native VK photo model catalogue invalid")
     model = next((item for item in models if isinstance(item, Mapping)
                   and item.get("id") == model_id), None)
     if model is None:
