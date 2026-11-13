@@ -43,6 +43,14 @@ def matches_submission(row, canonical: dict) -> bool:
         expected_model = wan3_model_spec(row["provider_model"]).provider_model
     except (KeyError, ValueError):
         return False
+    if canonical.get("source") == "neironych":
+        # The canonical native GET is authenticated for this partner and
+        # returns a client ID that we set *before* the paid POST.
+        return bool(
+            str(canonical.get("taskId") or "").startswith("neironych:")
+            and canonical.get("client_request_id") == row["internal_task_id"]
+            and canonical.get("model", expected_model) == expected_model
+        )
     if canonical.get("model") != expected_model:
         return False
     params = _object(canonical.get("param"))
@@ -69,6 +77,34 @@ def matches_submission(row, canonical: dict) -> bool:
     # equality does not. Additional undocumented input also fails closed.
     return bool(isinstance(expected, dict) and expected and
                 json.dumps(expected, sort_keys=True, ensure_ascii=False) == json.dumps(actual, sort_keys=True, ensure_ascii=False))
+
+
+_NATIVE_BY_KIE = {
+    "wan/3-0-video": "wan-3",
+    "wan/3-0-video-prime": "wan-3-prime",
+}
+
+
+def verified_native_candidate(row, generation: dict | None) -> str | None:
+    """Require one verified native generation owned by the same partner.
+
+    The upstream GET /api/v1/generations/by-client-request-id/... uses the
+    same bearer token as POST and scopes the result to that partner.
+    """
+    expected_model = _NATIVE_BY_KIE.get(row["provider_model"])
+    internal_id = str(row["internal_task_id"])
+    if not expected_model or not isinstance(generation, dict):
+        return None
+    if (generation.get("client_request_id") != internal_id
+            or generation.get("idempotency_key") != internal_id
+            or generation.get("model_slug") != expected_model):
+        return None
+    request_id = generation.get("id")
+    from bot.services.wan3_neironych_runtime import _SAFE_REQUEST_ID, NEIRONYCH_TASK_PREFIX
+
+    if not isinstance(request_id, str) or not _SAFE_REQUEST_ID.fullmatch(request_id):
+        return None
+    return NEIRONYCH_TASK_PREFIX + request_id
 
 
 async def remember_candidate(internal_task_id: str, provider_task_id: str) -> None:
@@ -98,16 +134,82 @@ async def recover_candidates(lifecycle, *, limit: int = 20) -> int:
         if not await lifecycle._claim_reconcile_lease(task_id, respect_backoff=True):
             continue
         try:
-            canonical = await lifecycle.transport.get_task_status(row["candidate_id"])
-            if (isinstance(canonical, dict) and canonical.get("taskId") == row["candidate_id"]
-                    and matches_submission(row, canonical)):
-                await lifecycle._bind_provider_id(task_id, row["candidate_id"])
-                logger.info("Wan3 unknown recovered: task_id=%s provider_task_id=%s", task_id, row["candidate_id"])
+            candidate_id = row["candidate_id"]
+            upstream_verified = True
+            if str(candidate_id).startswith("neironych:"):
+                upstream_verified = False
+                lookup = getattr(lifecycle.transport, "lookup_native_submission", None)
+                if lookup is not None:
+                    record = await lookup(task_id)
+                    upstream_verified = verified_native_candidate(row, record) == candidate_id
+            if upstream_verified:
+                canonical = await lifecycle.transport.get_task_status(candidate_id)
+                upstream_verified = bool(
+                    isinstance(canonical, dict)
+                    and canonical.get("taskId") == candidate_id
+                    and matches_submission(row, canonical)
+                )
+            if upstream_verified:
+                await lifecycle._bind_provider_id(task_id, candidate_id)
+                logger.info("Wan3 unknown recovered: task_id=%s provider_task_id=%s", task_id, candidate_id)
                 recovered += 1
             else:
-                logger.warning("Wan3 lineage unconfirmed: task_id=%s provider_task_id=%s", task_id, row["candidate_id"])
+                logger.warning("Wan3 lineage unconfirmed: task_id=%s provider_task_id=%s", task_id, candidate_id)
         except Exception as exc:  # noqa: BLE001 - provider outage must leave the durable uncertain operation intact
             logger.warning("Wan3 recovery deferred: task_id=%s error_type=%s", task_id, type(exc).__name__)
+        finally:
+            await lifecycle._mark_checked(task_id, retry_seconds=60)
+    return recovered
+
+
+async def recover_unknown_native_submissions(lifecycle, *, limit: int = 20) -> int:
+    """Find accepted native requests after a lost acknowledgement or crash.
+
+    Never replay a paid POST. GET by stable client ID and then authenticated
+    native GET must agree before the existing lifecycle binds the provider ID.
+    """
+    lookup = getattr(lifecycle.transport, "lookup_native_submission", None)
+    if lookup is None:
+        return 0
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        db.row_factory = db_backend.Row
+        rows = await (await db.execute("""
+            SELECT intent.*, task.request_data AS task_request_data
+            FROM wan3_prime_intents AS intent
+            JOIN generation_tasks AS task ON task.task_id = intent.internal_task_id
+            WHERE intent.provider_task_id IS NULL AND intent.settled = 0
+              AND intent.status = 'unknown'
+              AND (intent.next_attempt_at IS NULL OR intent.next_attempt_at <= CURRENT_TIMESTAMP)
+              AND (intent.lease_until IS NULL OR intent.lease_until <= CURRENT_TIMESTAMP)
+            ORDER BY intent.updated_at, intent.id LIMIT ?
+        """, (limit,))).fetchall()
+    recovered = 0
+    for row in rows:
+        task_id = row["internal_task_id"]
+        metadata = _object(row["task_request_data"])
+        if metadata.get("provider_submission_route") != "neironych":
+            continue
+        if not await lifecycle._claim_reconcile_lease(task_id, respect_backoff=True):
+            continue
+        try:
+            record = await lookup(task_id)
+            candidate_id = verified_native_candidate(row, record)
+            if candidate_id:
+                canonical = await lifecycle.transport.get_task_status(candidate_id)
+                if (isinstance(canonical, dict)
+                        and canonical.get("taskId") == candidate_id
+                        and matches_submission(row, canonical)):
+                    await lifecycle._bind_provider_id(task_id, candidate_id)
+                    recovered += 1
+                    logger.info(
+                        "Wan3 native lost acknowledgement recovered: task_id=%s provider_task_id=%s",
+                        task_id, candidate_id,
+                    )
+            # Upstream 404 or missing lineage is uncertain. Keep funds reserved
+            # until confirmed/settled; a second paid POST would be unsafe.
+        except Exception as exc:  # noqa: BLE001 - provider outage must not lose recovery candidate
+            logger.warning("Wan3 native lookup deferred: task_id=%s error_type=%s",
+                           task_id, type(exc).__name__)
         finally:
             await lifecycle._mark_checked(task_id, retry_seconds=60)
     return recovered
