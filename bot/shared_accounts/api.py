@@ -23,6 +23,7 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
+from .vk_saved_refs import forget_vk_reference, list_vk_references, save_vk_reference
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     create_native_vk_invoice,
@@ -232,6 +233,28 @@ async def vk_native_state(request: web.Request) -> web.Response:
     )
     return response({'ok': True, **data, 'recent_tasks': common_tasks,
                      'video_generation_enabled': video_enabled})
+
+
+async def vk_reference_library(request: web.Request) -> web.Response:
+    """Owner-only personal VK reference bookmarks, no Telegram legacy ID.
+
+    Bookmarks are metadata over already owner-validated VK uploads. Removing
+    a bookmark never deletes bytes still used by asynchronous generation.
+    """
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    if request.method == 'GET':
+        return response({'ok': True, 'references': await list_vk_references(actor.external_id)})
+    if request.method != 'POST':
+        return response({'ok': False, 'error': 'Method not allowed'}, 405)
+    data = await _body(request)
+    action = data.get('action')
+    if action == 'save' and set(data) == {'action', 'url', 'name'}:
+        saved = await save_vk_reference(actor.external_id, data['url'], data['name'])
+        return response({'ok': True, 'reference': saved})
+    if action == 'forget' and set(data) == {'action', 'reference_id'}:
+        deleted = await forget_vk_reference(actor.external_id, data['reference_id'])
+        return response({'ok': True, 'deleted': deleted})
+    raise ValueError('Invalid VK saved-reference request')
 
 
 async def vk_native_models(request: web.Request) -> web.Response:
@@ -741,6 +764,8 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
+    app.router.add_get(root + '/vk-references', _guard(vk_reference_library))
+    app.router.add_post(root + '/vk-references', _guard(vk_reference_library))
     app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
     app.router.add_post(root + '/vk-invoice', _guard(vk_native_invoice))
     app.router.add_get(root + '/vk-models', _guard(vk_native_models))
