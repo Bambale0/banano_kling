@@ -7,6 +7,7 @@ import { fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, sto
 import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   startAccountAppSession: jest.fn(),
   stopAccountAppSession: jest.fn(),
   fetchVkPublicDiscovery: jest.fn(),
