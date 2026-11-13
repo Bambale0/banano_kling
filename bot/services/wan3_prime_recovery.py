@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services.wan3_models import wan3_model_spec
-from bot.services.wan3_neironych_runtime import NEIRONYCH_TASK_PREFIX, _SAFE_REQUEST_ID
+from bot.services.wan3_neironych_runtime import _SAFE_REQUEST_ID, NEIRONYCH_TASK_PREFIX
 from bot.services.wan3_prime_schema import execute_wan_ddl
 
 logger = logging.getLogger(__name__)
