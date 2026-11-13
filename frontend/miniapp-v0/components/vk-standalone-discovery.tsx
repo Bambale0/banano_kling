@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkFeedRepeatPanel } from './vk-feed-repeat-panel'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
@@ -65,8 +66,9 @@ function TrendCard({ item, onRepeat, onShare }: {
   </article>
 }
 
-function FeedCard({ item, onLike, liking, liked }: {
+function FeedCard({ item, onOpen, onLike, liking, liked }: {
   item: VkPublicFeedItem
+  onOpen?: (id: number) => void
   onLike: (id: number) => void
   liking: boolean
   liked: boolean
@@ -80,12 +82,12 @@ function FeedCard({ item, onLike, liking, liked }: {
     <p className="px-1 py-2 text-xs text-muted-foreground">
       {item.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · ❤ {item.likes_count}
     </p>
-    {item.can_like_in_app && <button type="button"
-      disabled={liking || liked}
-      onClick={() => onLike(item.id)}
-      className="w-full rounded-lg border border-border px-2 py-2 text-xs">
+    {onOpen && <button type="button" className="w-full rounded-lg border border-border p-2 text-xs"
+      onClick={() => onOpen(item.id)}>Открыть публикацию #{item.id}</button>}
+    {item.can_like_in_app && <button type="button" disabled={liking || liked}
+      onClick={() => onLike(item.id)} className="mt-2 w-full rounded-lg border border-border p-2 text-xs">
       {liked ? 'Вам нравится' : liking ? 'Сохраняем…' : 'Нравится'}
-    </button>}
+    </button>
   </article>
 }
 
@@ -102,6 +104,7 @@ export function VkStandaloneDiscovery() {
   const [linkedTrendLoading, setLinkedTrendLoading] = useState(false)
   const [linkedFeedTarget, setLinkedFeedTarget] = useState<{ kind: 'feed' | 'remix'; genId: number } | null>(null)
   const [linkedFeed, setLinkedFeed] = useState<VkPublicFeedLink['item'] | null>(null)
+  const [feedRepeatId, setFeedRepeatId] = useState<number | null>(null)
   const [linkedFeedError, setLinkedFeedError] = useState('')
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
   const [likeBusyId, setLikeBusyId] = useState<number | null>(null)
@@ -228,6 +231,7 @@ export function VkStandaloneDiscovery() {
     }
     setLinkedFeedTarget(null)
     setLinkedFeed(null)
+    setFeedRepeatId(null)
     setLinkedFeedError('')
   }
 
@@ -438,17 +442,24 @@ export function VkStandaloneDiscovery() {
           {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
           {' · ❤ '}{linkedFeed.likes_count}
         </p>
-        {linkedFeed.can_like_in_app && <button type="button"
-          disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
-          onClick={() => void likeFeed(linkedFeed.id)}
-          className="rounded-lg border border-border px-3 py-2 text-sm">
+        {linkedFeed.can_like_in_app && <button type="button" disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
+          onClick={() => void likeFeed(linkedFeed.id)} className="rounded-lg border border-border px-3 py-2 text-sm">
           {likedIds.has(linkedFeed.id) ? 'Вам нравится' : 'Нравится'}
-        </button>}
-        {linkedFeedTarget.kind === 'remix'
-          ? <p className="text-sm text-muted-foreground">
-              Повтор этой публикации в VK Mini App пока не подключён к защищённому VK-балансу.
+        </button>
+        {linkedFeed.can_repeat_in_app && linkedFeed.generation_type === 'image'
+          ? <button type="button"
+              onClick={() => setFeedRepeatId(linkedFeed.id)}
+              className="rounded-xl border border-primary px-4 py-2 text-sm font-medium text-primary">
+              Повторить публикацию #{linkedFeed.id}
+            </button>
+          : linkedFeedTarget.kind === 'remix' ? <p className="text-sm text-muted-foreground">
+              Повтор этой публикации пока недоступен для VK-аккаунта.
               Скрытые автором промпт и референсы не раскрываются.
             </p> : null}
+        {feedRepeatId === linkedFeed.id && linkedFeed.can_repeat_in_app
+          ? <VkFeedRepeatPanel key={linkedFeed.id} feedId={linkedFeed.id}
+              onClose={() => setFeedRepeatId(null)}
+              onFinished={() => setNativeRetry(value => value + 1)} /> : null}
       </> : null}
       <button type="button" onClick={closeLinkedFeed}
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
@@ -531,6 +542,10 @@ export function VkStandaloneDiscovery() {
     {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
         {discovery.items.map(item => <FeedCard key={item.id} item={item}
+          onOpen={id => {
+            setLinkedFeedTarget({ kind: 'feed', genId: id })
+            setFeedRepeatId(null)
+          }}
           onLike={id => void likeFeed(id)}
           liking={likeBusyId === item.id}
           liked={likedIds.has(item.id)} />)}
