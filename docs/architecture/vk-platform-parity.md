@@ -149,6 +149,18 @@ video-trend repeats, feed publication, services and full seven-tab shell remain
 unimplemented; this slice must never satisfy or bypass the 10-domain parity
 gate in `full_vk_adapter()`.
 
+## 2026-11-13 — native VK video-trend client claim distinction (#451)
+
+In the existing VK-only trend repeat panel, a curated video trend uses the
+same `vk-trend` signed endpoint as photo trends, while server-side editor
+recipes remain hidden. On ambiguous paid submission the frontend now requires
+the native owner claim to have `task_type=video` rather than treating every
+`trend` as a photo. A mismatched claim is not shown as success and cannot
+trigger an automatic second charge; a manual retry preserves the original
+request key. Valid media ownership, recipe eligibility, worker capabilities
+and pricing are checked by the native BFF from the companion #496 backend.
+No full VK shared-shell gate or payment flag changes are made.
+
 ## 2026-11-13 — basic native VK video-trend repeat bridge (review-only)
 
 A signed VK-only user may quote/repeat **basic** curator-approved image-to-video

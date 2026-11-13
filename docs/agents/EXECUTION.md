@@ -7,6 +7,15 @@
 - Rollout: protected CI + exact-SHA deploy; keep both video write flags OFF until real signed VK WebView, native provider paid generation and refund/reconciliation E2E. Failing capability check must never enable shared full-app mode. Frontend video-trend repeat button/claim mapping to be done against #495 after merge.
 - Rollback: keep video write flag OFF or revert this PR. Full issue #451 remains open; private feed/remix, services, profile, checkout/refunds and all ten domains are not ready.
 
+## 2026-11-13 — #451 native VK video trend client (review stage)
+
+- Baseline `tanyapi@e39d7b89f371c51e236abe30ba9add34bdcae688` (PR #495 merged), branch `feat/vk451-video-trend-ui-20261113`.
+- Finding: existing standalone VK `VkGenerationPanel` supports image trends and native video, but unknown trend responses always expected a photo claim. A video trend would not recover its native video task; retry using a different key risks duplicate charge.
+- Fix: for a public video trend, reconcile only a signed `video` claim with the original idempotency key; never accept a photo task as success. Keep editor model/prompt/price private, use server-rendered trend parameters.
+- Tests: video trend quote/paid success, video claim after timeout, unknown claim no auto-submit and same-key retry, mismatch photo claim rejection. Existing image trend/photo regressions must remain green.
+- Dependency: backend #496 supplies the safe editor-approved native video trend BFF. Until then the public VK video repeat flag is false; full VK seven-tab parity remains gated.
+- No new finances/provider, flag, schema, keys or data migration. Rollback by reverting PR; video write gate remains OFF until real VK signed WebView acceptance.
+
 ## 2026-11-13 — #451 VK-only native video form (incremental, NOT full parity)
 
 - Baseline `tanyapi@10ab1deee83a74f4feda300688f54e57b37dbd07`, task branch `feat/vk451-native-video-panel-20261113`.
