@@ -158,10 +158,9 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             return web.json_response({'ok': False, 'error': 'Account unavailable'}, status=503)
 
         adapter = full_vk_adapter(request.app)
-        if adapter is None and actor.linked_telegram_id is not None and not native_tasks_enabled:
-            # Existing linked sessions use the previous Telegram studio until
-            # every platform-aware adapter is ready, not a mixture of wallets.
-            return await handler(request)
+        # A Telegram link is never authorization to use Telegram's legacy
+        # wallet or generation routes. VK requests fail closed until the
+        # native adapter is ready, regardless of optional account links.
         if adapter is None and native_tasks_enabled:
             task_adapter = request.app.get('vk_native_tasks_adapter')
             if (getattr(task_adapter, 'ready_operations', None) == frozenset({'tasks'})

@@ -1594,6 +1594,22 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         result = await client.post('/mini-app/api/bootstrap', json={'init_data':'vk_session:'+token})
         assert result.status == 503
         legacy.assert_not_awaited()
+        # A linked VK actor must never escape into the legacy Telegram wallet
+        # when full parity is enabled but the full native adapter is absent.
+        from dataclasses import replace
+
+        from bot.shared_accounts import gateway
+        original_resolve = gateway.resolve_platform_actor
+        async def linked_vk_actor(*args, **kwargs):
+            actor = await original_resolve(*args, **kwargs)
+            return replace(actor, linked_telegram_id=1001)
+        monkeypatch.setattr(gateway, 'resolve_platform_actor', linked_vk_actor)
+        linked = await client.post('/mini-app/api/bootstrap', json={
+            'init_data': 'vk_session:' + token,
+        })
+        assert linked.status == 503
+        legacy.assert_not_awaited()
+        monkeypatch.setattr(gateway, 'resolve_platform_actor', original_resolve)
         invalid = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + 'a' * 43,
         })
