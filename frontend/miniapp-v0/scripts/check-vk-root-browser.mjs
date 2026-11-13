@@ -78,6 +78,10 @@ test('VK root keeps linked and unlinked actors outside incomplete full shell', a
             { task_id: 42, task_type: 'photo', model: 'nano_banana_pro', status: 'completed',
               cost: 2, result_url: 'https://example.test/result.jpg', created_at: '2026-11-09 12:00:00' },
           ] }
+        } else if (path.endsWith('/vk-commerce')) {
+          payload = { ok: true, registered: true, balance: 13,
+            payments_enabled: false, payment_packages: [], payments: [],
+            referrals: { first_level_count: 0, second_level_count: 0, earned_rub: 0 } }
         } else if (path.endsWith('/trends')) {
           const params = new URL(req.url()).searchParams
           if (params.get('view') === 'feed') {
@@ -114,9 +118,14 @@ test('VK root keeps linked and unlinked actors outside incomplete full shell', a
       await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
       const nativeChat = page.getByRole('link', { name: 'Генерировать в боте ВКонтакте', exact: true })
       assert.equal(await nativeChat.getAttribute('href'), 'https://vk.com/im?sel=-239915802')
-      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0)
+      // VK-only actors now share the same visible seven-tab nav, but the
+      // backend still denies Telegram-only routes and unready paid domains.
+      const navigation = page.getByRole('navigation', { name: 'Разделы приложения' })
+      assert.equal(await navigation.locator('button').count(), 7)
+      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0)
+      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 1)
       await page.getByText('VK-баланс: 13 🍌', { exact: true }).waitFor()
-      await page.getByRole('button', { name: 'Мои работы', exact: true }).click()
+      await page.getByRole('button', { name: 'Профиль', exact: true }).click()
       assert.equal(await page.getByRole('link', { name: 'Открыть результат #42' })
         .getAttribute('href'), 'https://example.test/result.jpg')
       await page.getByRole('button', { name: 'Тренды', exact: true }).click()
@@ -131,10 +140,12 @@ test('VK root keeps linked and unlinked actors outside incomplete full shell', a
       await page.goto(origin + '/?vk_app_id=123&vk_user_id=2001&sign=browser-test', { waitUntil: 'networkidle' })
       await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
       assert.ok(logins.length >= 2)
-      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0,
-        'Telegram linking without a complete VK adapter must not unlock the shared wallet shell')
+      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 1,
+        'Linked VK and VK-only actors share the same native seven-tab navigation')
       const linkedNativeChat = page.getByRole('link', { name: 'Генерировать в боте ВКонтакте', exact: true })
       assert.equal(await linkedNativeChat.getAttribute('href'), 'https://vk.com/im?sel=-239915802')
+      await page.getByRole('button', { name: 'Профиль', exact: true }).click()
+      await page.getByText('VK-баланс: 13 🍌', { exact: true }).waitFor()
       assert.equal(appCredentials.length, 0, 'No VK actor may bootstrap the Telegram legacy wallet')
       assert.ok(!requests.some(url => /telegram-web-app/.test(url)))
       assert.deepEqual(failedAssets, [])
