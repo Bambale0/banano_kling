@@ -7,6 +7,17 @@
 - Rollout: protected CI + exact-SHA deploy; keep both video write flags OFF until real signed VK WebView, native provider paid generation and refund/reconciliation E2E. Failing capability check must never enable shared full-app mode. Frontend video-trend repeat button/claim mapping to be done against #495 after merge.
 - Rollback: keep video write flag OFF or revert this PR. Full issue #451 remains open; private feed/remix, services, profile, checkout/refunds and all ten domains are not ready.
 
+## 2026-11-13 — #451 VK-only native video form (incremental, NOT full parity)
+
+- Baseline `tanyapi@10ab1deee83a74f4feda300688f54e57b37dbd07`, task branch `feat/vk451-native-video-panel-20261113`.
+- Finding: signed native video quote/task exists in `bot/shared_accounts/api.py` and deployed native VK service, but independent VK Mini App has only an image/trend entry form. It cannot initiate a native video task. Full 10-domain shared gateway remains blocked.
+- Scope: extend existing `VkGenerationPanel` for worker-backed video models, duration, ratio, owner-owned photo references, quote, paid submit, exact idempotency claim recovery. Preserve photo/trend behavior; show video entry only when the signed VK owner's state advertises `video_generation_enabled` and native account is registered/unblocked. Linked Telegram accounts are explicitly denied that charge path.
+- Test-first: added video quote/charge claim tests (ambiguous success, unknown same-key retry, model/reference validation), VK entry feature gate tests, backend owner/flag tests. Pending required protected CI, exact-SHA deployment and signed VK WebView paid/refund E2E.
+- Financial: no price hardcodes (native dynamic catalog/quote), no DB schema or wallet migration, no payment/referral changes, no default flag changes, no auto payment resubmit. Both BFF and VK worker video-write flags must be explicitly enabled only after acceptance.
+- Observability: native generation claim/idempotency and task history remain the source of status; error boundary hides credentials and payloads; postdeploy inspect task/claim/refund events by request ID.
+- Explicitly remaining: full shared VK shell, private feed/remix/publish, full references (video/audio), services, profiles, payments/refunds and reconciled optional linking, real VK embedded WebView acceptance.
+- Rollback: revert this PR or leave `VK_MINIAPP_VIDEO_WRITES_ENABLED` unset; static form is unreachable by signed VK users without server readiness.
+
 ## 2026-11-12 — Lava.top first, Robokassa hidden from NEW checkout methods (reconciliation of #469)
 
 - This change preserves the restored in-chat offer and privacy contract from #481.

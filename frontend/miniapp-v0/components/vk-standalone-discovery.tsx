@@ -96,6 +96,7 @@ export function VkStandaloneDiscovery() {
   const [shareTitle, setShareTitle] = useState('')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
   const [createPhoto, setCreatePhoto] = useState(false)
+  const [createVideo, setCreateVideo] = useState(false)
   const [nativeError, setNativeError] = useState('')
   const [nativeRetry, setNativeRetry] = useState(0)
   const [categoryId, setCategoryId] = useState<string | number | null>(null)
@@ -286,6 +287,7 @@ export function VkStandaloneDiscovery() {
     setView(next)
     setRepeatItem(null)
     setCreatePhoto(false)
+    setCreateVideo(false)
     setCategoryId(null)
     setCategory(null)
     setDiscovery(null)
@@ -306,9 +308,17 @@ export function VkStandaloneDiscovery() {
     {((discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app)
       || category?.can_generate_in_app) && <button type="button"
         className="w-full rounded-xl bg-primary p-3 font-semibold text-primary-foreground"
-        onClick={() => { setRepeatItem(null); setCreatePhoto(true) }}>Создать фото</button>}
-    {(createPhoto || repeatItem) ? <VkGenerationPanel key={repeatItem?.id ?? 'new'}
-      trend={repeatItem ?? undefined} onClose={() => { setCreatePhoto(false); setRepeatItem(null) }}
+        onClick={() => { setRepeatItem(null); setCreateVideo(false); setCreatePhoto(true) }}>Создать фото</button>}
+    {native?.video_generation_enabled === true && native.registered && !native.is_blocked
+      ? <button type="button" className="w-full rounded-xl bg-primary p-3 font-semibold text-primary-foreground"
+        onClick={() => { setRepeatItem(null); setCreatePhoto(false); setCreateVideo(true) }}>Создать видео</button>
+      : null}
+    {(createPhoto || repeatItem || createVideo) ? <VkGenerationPanel
+      key={repeatItem?.id ?? (createVideo ? 'video' : 'new')}
+      kind={createVideo ? 'video' : 'photo'}
+      trend={repeatItem ?? undefined} onClose={() => {
+        setCreatePhoto(false); setCreateVideo(false); setRepeatItem(null)
+      }}
       onFinished={() => setNativeRetry(v => v + 1)} /> : null}
     <div className="flex flex-wrap gap-2">
       <button type="button" aria-pressed={view === 'trends'}
@@ -475,9 +485,11 @@ export function VkStandaloneDiscovery() {
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">
-      {(discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app) || category?.can_generate_in_app
-        ? 'Фото и доступные фото-тренды создаются с VK-баланса. Видеотренды и другие сценарии пока доступны в боте сообщества.'
-        : 'Просмотр открыт без Telegram. Оплачиваемый повтор непосредственно в Mini App появится после подключения защищённого VK-баланса и создания задач. Пока генерация доступна в боте сообщества.'}
+      {native?.video_generation_enabled === true
+        ? 'Фото и видео создаются с VK-баланса. Видеореференсы и повторы видеотрендов пока доступны в боте сообщества.'
+        : (discovery && 'can_generate_in_app' in discovery && discovery.can_generate_in_app) || category?.can_generate_in_app
+          ? 'Фото и доступные фото-тренды создаются с VK-баланса. Видео пока доступно в боте сообщества.'
+          : 'Просмотр открыт без Telegram. Оплачиваемый повтор непосредственно в Mini App появится после подключения защищённого VK-баланса и создания задач. Пока генерация доступна в боте сообщества.'}
     </p>
   </section>
 }

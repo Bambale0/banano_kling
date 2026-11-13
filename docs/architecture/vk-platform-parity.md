@@ -128,6 +128,27 @@ a duplicate; an unavailable lookup keeps the original idempotency key for a
 manual retry. No silent repeated paid request, no balance migration or rate
 override. This is NOT readiness for the full ten-domain #451 shared shell.
 
+
+## 2026-11-13 — VK-only video panel (review slice, feature OFF by default)
+
+The existing signed native VK video BFF and worker are now connected to the **same
+VK generation panel used for native photo**, parameterized by media kind.
+The native model catalog determines real video models, supported ratios,
+explicit duration values and image-reference limits. An owner-only server
+capability `video_generation_enabled` controls entry visibility; linked
+Telegram accounts cannot use the native VK charge path while finance isolation
+is incomplete. Quotes and charged tasks use the same verified VK actor and
+the native SQLite ledger. An ambiguous charged response is checked through
+the existing signed native claim before any **user-triggered** same-key retry.
+No new wallet, prices, payment method, provider, or automatic retry is added.
+
+Rollout remains OFF by default. The BFF and native worker must both have
+`VK_MINIAPP_VIDEO_WRITES_ENABLED=1`, and paid/refund and genuine signed
+VK WebView E2E must pass before enabling. Video file references, protected
+video-trend repeats, feed publication, services and full seven-tab shell remain
+unimplemented; this slice must never satisfy or bypass the 10-domain parity
+gate in `full_vk_adapter()`.
+
 ## 2026-11-13 — basic native VK video-trend repeat bridge (review-only)
 
 A signed VK-only user may quote/repeat **basic** curator-approved image-to-video

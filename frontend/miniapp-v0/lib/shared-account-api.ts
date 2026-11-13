@@ -53,7 +53,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ? 'ВК не подтвердил отправку. Проверьте чат перед повторными действиями.'
       : 'Доставка пока недоступна или её статус изменился. Обновите статус.')
   }
-  if (response.status === 409 && (path === 'vk-image' || path === 'vk-trend')) throw new Error('Этот запрос уже используется для другой генерации. Измените данные и создайте новый запрос.')
+  if (response.status === 409 && (path === 'vk-image' || path === 'vk-video' || path === 'vk-trend')) throw new Error('Этот запрос уже используется для другой генерации. Измените данные и создайте новый запрос.')
   if (response.status === 409) throw new Error(path.startsWith('links') ? 'Состояние связи или индивидуальные условия изменились. Обновите статус и проверьте настройки аккаунтов.' : path === 'wallet' ? 'Операция уже обработана с другими параметрами или резерв закрыт.' : 'Настройки изменились. Обновите страницу.')
   if (response.status === 410) throw new Error('Ссылка истекла или отменена. Создайте новую.')
   if (response.status === 401) throw new Error('Откройте приложение заново для подтверждения входа.')
@@ -254,6 +254,8 @@ export interface VkNativeState {
   balance: number | null
   is_blocked: boolean
   tasks: VkNativeTask[]
+  /** Server-side feature gate; never infer paid write permission from a model list. */
+  video_generation_enabled?: boolean
   /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
   recent_tasks?: Task[]
 }
@@ -307,6 +309,7 @@ export interface VkNativeModelCatalog {
     ratios: string[]
     duration_min: number
     duration_max: number
+    durations?: number[]
     scenarios: ('text' | 'imgtxt')[]
     max_image_references: number
   }[]
@@ -470,6 +473,17 @@ export interface VkImageRequest {
   expected_cost?: number
 }
 
+export interface VkVideoRequest {
+  model: string
+  prompt: string
+  aspect: string
+  duration: number
+  reference_photos: string[]
+  client_request_id?: string
+  quote_only?: boolean
+  expected_cost?: number
+}
+
 export interface VkTrendRequest {
   trend_id: number
   reference_urls: string[]
@@ -481,7 +495,7 @@ export interface VkTrendRequest {
 
 // The shared-account backend rejects request bodies above 32 KiB. Count
 // UTF-8 bytes (not JS characters) before creating a session or uploading data.
-function vkGenerationBody(payload: VkImageRequest | VkTrendRequest): string {
+function vkGenerationBody(payload: VkImageRequest | VkVideoRequest | VkTrendRequest): string {
   const body = JSON.stringify(payload)
   if (new Blob([body]).size > 32768) {
     throw new Error('Сократите промпт или число референсов: запрос слишком большой.')
@@ -525,6 +539,13 @@ export async function fetchVkGenerationClaim(clientRequestId: string, signal?: A
 export async function generateVkImage(payload: VkImageRequest, signal?: AbortSignal) {
   const body = vkGenerationBody(payload)
   return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-image', {
+    method: 'POST', headers, body, signal,
+  }), signal)
+}
+
+export async function generateVkVideo(payload: VkVideoRequest, signal?: AbortSignal) {
+  const body = vkGenerationBody(payload)
+  return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-video', {
     method: 'POST', headers, body, signal,
   }), signal)
 }

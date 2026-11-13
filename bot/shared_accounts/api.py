@@ -221,7 +221,17 @@ async def vk_native_state(request: web.Request) -> web.Response:
     # Keep the legacy native rows for backward compatibility until every
     # detail/repeat route accepts platform-namespaced task identifiers.
     common_tasks = serialize_native_vk_tasks(data['tasks'], strict=False)
-    return response({'ok': True, **data, 'recent_tasks': common_tasks})
+    # Expose video only when its independent write gate is explicitly enabled.
+    # A linked actor is still blocked from native writes until full wallet
+    # isolation is ready; never present a paid action that will use TG funds.
+    video_enabled = (
+        os.getenv('VK_MINIAPP_VIDEO_WRITES_ENABLED') == '1'
+        and 'telegram' not in actor.linked_platforms
+        and data.get('registered') is True
+        and data.get('is_blocked') is False
+    )
+    return response({'ok': True, **data, 'recent_tasks': common_tasks,
+                     'video_generation_enabled': video_enabled})
 
 
 async def vk_native_models(request: web.Request) -> web.Response:
