@@ -11,8 +11,9 @@ import inspect
 import logging
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import aiohttp
 
@@ -120,24 +121,26 @@ class NeironychWan3RuntimeService(NeironychWan3AdminService):
                 total = 0
                 try:
                     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.get(
+                    async with (
+                        aiohttp.ClientSession(timeout=timeout) as session,
+                        session.get(
                             f"{self.base_url}/v1/videos/{request_id}/content",
                             headers={"Authorization": f"Bearer {self.api_key}"},
-                        ) as response:
-                            if response.status >= 400:
-                                raise NeironychAPIError(
-                                    f"Neironych content HTTP {response.status}",
-                                    status=response.status,
-                                )
-                            if response.content_length and response.content_length > max_bytes:
-                                raise ValueError("Neironych result exceeds byte limit")
-                            with temp.open("wb") as out:
-                                async for chunk in response.content.iter_chunked(1024 * 1024):
-                                    total += len(chunk)
-                                    if total > max_bytes:
-                                        raise ValueError("Neironych result exceeds byte limit")
-                                    await asyncio.to_thread(out.write, chunk)
+                        ) as response,
+                    ):
+                        if response.status >= 400:
+                            raise NeironychAPIError(
+                                f"Neironych content HTTP {response.status}",
+                                status=response.status,
+                            )
+                        if response.content_length and response.content_length > max_bytes:
+                            raise ValueError("Neironych result exceeds byte limit")
+                        with temp.open("wb") as out:
+                            async for chunk in response.content.iter_chunked(1024 * 1024):
+                                total += len(chunk)
+                                if total > max_bytes:
+                                    raise ValueError("Neironych result exceeds byte limit")
+                                await asyncio.to_thread(out.write, chunk)
                     if not total:
                         raise ValueError("Neironych returned empty video content")
                     temp.replace(destination)
