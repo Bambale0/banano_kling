@@ -3275,3 +3275,12 @@ private references and browser-provided actor information fail closed.
   confirmed and safely dropped concurrently; no business rows were changed.
 - Verify with full CI and guarded PostgreSQL tests, exact-SHA deployment,
   production health, sustained p50/p95 and pool-timeout telemetry.
+
+
+## 2026-11-13 — VK #451 incremental native bootstrap release preparation
+
+- Base: `tanyapi@cad367c6bbdd3edb2d234888f30c1ddbcfc83fd7`; PR #479 synchronized non-destructively with latest base, preserving unrelated production fixes.
+- Shared gateway registers an **incomplete** signed VK native adapter for `bootstrap,tasks`. It reads the authoritative VK native state, catalogue, task history and commerce snapshot. No synthetic Telegram ID, no duplicate wallet, no price hardcoding.
+- All ten required native domains are not implemented; full shell, paid invoice, native video writes and shared-money feature gates stay OFF. This preparation cannot be accepted as #451 full parity.
+- Required: protected Python/PG/Wan/frontend/Chromium CI, exact merge SHA, exact production deploy, smoke, genuine VK WebView + ledger/refund/reconciliation acceptance before any financial gate.
+- Rollback: revert the additive adapter registration; preserve all existing VK/TG ledger, task and media state.
