@@ -11,17 +11,22 @@ jest.mock('@/lib/clipboard', () => ({ copyTextToClipboard: jest.fn() }))
 const mockedUseApp = jest.mocked(useApp)
 const mockedCopy = jest.mocked(copyTextToClipboard)
 const originalTelegram = window.Telegram
+const originalSuccess = toast.success
+const originalError = toast.error
 
 beforeEach(() => {
   mockedUseApp.mockReturnValue({
     state: { user: { supportContact: '@only_tany' } },
   } as ReturnType<typeof useApp>)
-  mockedCopy.mockResolvedValue(undefined)
   jest.clearAllMocks()
+  mockedCopy.mockResolvedValue(undefined)
+  jest.spyOn(toast, 'success').mockImplementation(() => '')
+  jest.spyOn(toast, 'error').mockImplementation(() => '')
 })
 
 afterEach(() => {
   window.Telegram = originalTelegram
+  jest.restoreAllMocks()
 })
 
 test('support shows the configured administrator and a real Telegram link', () => {
