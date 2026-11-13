@@ -5,11 +5,12 @@ import pytest
 
 from bot.services.wan3_neironych_runtime import (
     NEIRONYCH_TASK_PREFIX,
-    Wan3NeironychRuntimeTransport,
     NeironychWan3RuntimeService,
+    Wan3NeironychRuntimeTransport,
     native_payload_for_recipe,
 )
 from bot.services.wan3_prime_media import Wan3PrimeRecipe
+from bot.services.wan3_prime_recovery import matches_submission, verified_native_candidate
 
 
 def recipe(*, model="wan_3", scenario="text", **overrides):
@@ -223,8 +224,6 @@ async def test_native_lookup_returns_authenticated_lineage_and_404_is_ambiguous(
 
 
 def test_native_recovery_requires_proven_same_partner_model_and_client_id():
-    from bot.services.wan3_prime_recovery import matches_submission, verified_native_candidate
-
     row = {"internal_task_id": "wan3_test", "provider_model": "wan/3-0-video"}
     returned = {"id": "req_123", "client_request_id": "wan3_test",
                 "idempotency_key": "wan3_test", "model_slug": "wan-3"}
