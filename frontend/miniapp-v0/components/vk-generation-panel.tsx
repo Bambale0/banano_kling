@@ -129,7 +129,7 @@ export function VkGenerationPanel({
         || !selectedVideoModel.ratios.includes(aspect)
       )) throw new Error('Выберите доступные параметры видео.')
       if (trend && !files.length) throw new Error('Для повтора тренда загрузите своё фото.')
-      if (!trend && !prompt.trim()) throw new Error('Введите промпт для создания изображения.')
+      if (!trend && !prompt.trim()) throw new Error(kind === 'video' ? 'Введите промпт для видео.' : 'Введите промпт для создания изображения.')
       const references: string[] = []
       for (const file of files) {
         const url = await uploadVkImage(file)
