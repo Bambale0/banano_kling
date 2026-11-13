@@ -331,6 +331,8 @@ try {
             telegram_bot_username: 'test_bot',
             telegram_linked: admin,
             linked_platforms: admin ? ['telegram', 'vk'] : ['vk'],
+            // No complete native ten-domain adapter was registered.
+            full_app_ready: false,
           },
         }
       } else if (path.endsWith('/trends')) {
@@ -350,33 +352,11 @@ try {
           target_platform: 'vk', expires_at_epoch: 9999999999,
         } }
       } else if (path.endsWith('/bootstrap')) {
+        // This test has no complete VK adapter; fail closed without a
+        // synthetic Telegram identity, even for a linked VK administrator.
         const body = request.postDataJSON()
         appCredentials.push(body.init_data)
-        payload = {
-          ok: true,
-          items: [],
-          feed: [],
-          prompts: [],
-          categories: [],
-          references: [],
-          notifications: [],
-          telegram_id: 1001,
-          first_name: 'VK',
-          last_name: 'Admin',
-          telegram_username: 'linked_admin',
-          credits: 301,
-          is_admin: admin,
-          bot_username: 'test_bot',
-          referral_code: 'VKADMIN',
-          telegram_chat_available: false,
-          telegram_bot_start_required: true,
-          actions: [],
-          payment_packages: [],
-          image_models: [],
-          video_models: [],
-          recent_tasks: [],
-          saved_references: [],
-        }
+        return route.fulfill({ status: 503, json: { ok: false, error: 'VK native full adapter incomplete' } })
       } else if (path.endsWith('/settings')) {
         payload = {
           ok: true,
@@ -405,25 +385,18 @@ try {
     })
     await page.goto(base + '?vk_app_id=123&vk_user_id=2001&sign=browser-fixture#link_' + token)
     if (admin) {
-      await page.getByRole('button', { name: 'Профиль', exact: true }).waitFor()
-      for (const tab of ['Студия', 'Тренды', 'Фото', 'Видео', 'Лента', 'Сервисы', 'Профиль']) {
-        assert.equal(await page.getByRole('button', { name: tab, exact: true }).count(), 1)
-      }
-      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0, 'Motion remains Telegram-only')
-      assert.equal(requests.filter(path => path.includes('/links')).length, 0, 'Linked opening must not accept or confirm')
-      assert.ok(requests.some(path => path.endsWith('/bootstrap')), 'Linked VK admin must initialize the shared app')
-      assert.ok(appCredentials.length >= 1)
-      assert.ok(appCredentials.every(value => value === 'vk_session:' + 's'.repeat(43)))
-      assert.equal(await page.getByRole('heading', { name: 'Свяжите аккаунты ТГ и ВК' }).count(), 0)
-      assert.equal(await page.getByRole('heading', { name: 'Разреши боту писать тебе' }).count(), 0)
-      await page.getByRole('button', { name: 'Профиль', exact: true }).click()
-      await page.getByText('Настройки общих аккаунтов', { exact: true }).click()
-      try {
-        await checkCommercialPanel(page, 'vk')
-      } catch (error) {
-        console.error('VK common app diagnostic', { requests, body: (await page.locator('body').innerText()).slice(0, 4000) })
-        throw error
-      }
+      // A Telegram link or VK administrator role never proves ten-domain
+      // readiness. Without it, the same VK native discovery stays in control.
+      await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
+      await page.getByText('VK тест тренда', { exact: true }).waitFor()
+      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0)
+      assert.equal(await page.getByRole('link', { name: 'Генерировать в боте ВКонтакте' }).getAttribute('href'),
+        'https://vk.com/im?sel=-239915802')
+      assert.equal(requests.filter(path => path.endsWith('/bootstrap')).length, 0,
+        'Linked VK admin must never bootstrap the Telegram legacy wallet')
+      assert.equal(requests.filter(path => path.includes('/links') && !path.endsWith('/links/preview')).length, 0,
+        'Opening a linked VK session must not mutate account links')
+      assert.equal(appCredentials.length, 0)
     } else {
       await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
       await page.getByText('VK тест тренда', { exact: true }).waitFor()
