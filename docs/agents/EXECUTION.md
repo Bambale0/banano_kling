@@ -3252,3 +3252,26 @@ private references and browser-provided actor information fail closed.
 - Fix: in S3 mode, do not materialize media during read-only list filtering. The existing generation-time resolver still checks/downloads inputs when they are actually needed. Local mode retains missing-file filtering.
 - Regression: a 24-reference S3 fixture first failed because it caused 24 eager materializations; after the fix it causes zero. The local-mode fallback still performs file availability checks.
 - Risk: genuinely missing objects can remain visible as saved references until a generation uses them or a separate reconciliation detects them. Avoid trading bootstrap latency for eager S3 HEAD checks inside this route.
+
+
+### 2026-11-13 — PostgreSQL heavy-scan incident containment
+
+- Observed on production 95a9fd85: PostgreSQL pool checkout timeouts, Mini App
+  bootstrap p95 above 13 seconds, intermittent HTTP 500 even after S3 bootstrap fix.
+- generation_tasks has approximately 378,000 rows / 2.1 GB. The watchdog
+  referral reconciliation plan scanned generation request JSON for ~12,000
+  pending referrals (planner cost ~372k). Wan3 result expiration repeatedly
+  performed an unindexed request_data LIKE '%filename%' scan.
+- PostgreSQL referral reconciliation now scans at most a bounded, fair batch
+  of pending referrals; advances last_checked_at even for ineligible ones; and
+  probes each account by existing indexed generation_tasks.user_id. Atomic
+  referral crediting still controls idempotency; SQLite behavior is unchanged.
+- Wan3 PostgreSQL result expiration fails closed: it defers deletion (and its
+  full-table scan), leaving delivered media untouched. Upload/session cleanup
+  is unaffected. WAN3_PG_RESULT_FULL_SCAN_ENABLED=1 opts back into the legacy
+  scan, but MUST NOT be enabled on the unindexed 2.1 GB production table.
+  Follow up with a durable reverse-reference index and audited retention.
+- An aborted CREATE INDEX CONCURRENTLY left an invalid index, which was
+  confirmed and safely dropped concurrently; no business rows were changed.
+- Verify with full CI and guarded PostgreSQL tests, exact-SHA deployment,
+  production health, sustained p50/p95 and pool-timeout telemetry.

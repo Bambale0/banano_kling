@@ -188,6 +188,8 @@ async def test_postgres_storage_quota_is_atomic_across_completed_and_concurrent_
 
 @pytest.mark.asyncio
 async def test_postgres_result_retention_keeps_accounting(tmp_path, monkeypatch):
+    # Exercise full retention/locking on the small disposable test database.
+    monkeypatch.setenv('WAN3_PG_RESULT_FULL_SCAN_ENABLED', '1')
     from bot import database
     from bot.services.wan3_prime_storage import wan3_prime_storage
 
@@ -212,6 +214,8 @@ async def test_postgres_result_retention_keeps_accounting(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_postgres_publication_lock_excludes_concurrent_result_expiry(monkeypatch):
+    # Exercise full retention/locking on the small disposable test database.
+    monkeypatch.setenv('WAN3_PG_RESULT_FULL_SCAN_ENABLED', '1')
     from bot.services.wan3_prime_result_retention import lock_publication
     from bot.services.wan3_prime_storage import wan3_prime_storage
 
