@@ -257,3 +257,52 @@ async def test_legacy_seedance_repeat_task_detail_http_redacts_retained_images(m
     # Redaction must not destroy the server recipe required by future repeats.
     assert stored["reference_images"] == payload["image_urls"]
     assert detail["prompt"] == secret_prompt
+
+
+
+@pytest.mark.asyncio
+async def test_explicitly_private_bootstrap_tasks_skip_redundant_database_lookup(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    lookup = AsyncMock(return_value=set())
+    monkeypatch.setattr(trend_task_privacy, "_protected_task_ids", lookup)
+    response = await trend_task_privacy.sanitize_task_api_payload({
+        "recent_tasks": [
+            {
+                "task_id": "already-private",
+                "prompt_hidden": True,
+                "prompt_actions_allowed": False,
+                "prompt_preview": "never expose this",
+                "request_data": {
+                    "reference_images": ["https://example.test/private.jpg"],
+                    "provider_model": "synthetic-model",
+                },
+            },
+        ],
+    })
+    lookup.assert_not_awaited()
+    task = response["recent_tasks"][0]
+    assert task["prompt_preview"] == ""
+    assert task["prompt_hidden"] is True
+    assert task["prompt_actions_allowed"] is False
+    assert task["request_data"]["provider_model"] == "synthetic-model"
+    assert "reference_images" not in task["request_data"]
+
+
+@pytest.mark.asyncio
+async def test_mixed_privacy_lookup_checks_only_unresolved_tasks(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    lookup = AsyncMock(return_value={"historical-trend"})
+    monkeypatch.setattr(trend_task_privacy, "_protected_task_ids", lookup)
+    response = await trend_task_privacy.sanitize_task_api_payload({
+        "recent_tasks": [
+            {"task_id": "already-private", "prompt_hidden": True, "prompt_preview": "hide"},
+            {"task_id": "public-original", "prompt_preview": "show"},
+            {"task_id": "historical-trend", "prompt_preview": "hide historical"},
+        ],
+    })
+    lookup.assert_awaited_once_with(["public-original", "historical-trend"])
+    assert response["recent_tasks"][0]["prompt_preview"] == ""
+    assert response["recent_tasks"][1]["prompt_preview"] == "show"
+    assert response["recent_tasks"][2]["prompt_preview"] == ""
