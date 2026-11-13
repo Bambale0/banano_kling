@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import os
 import re
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,48 @@ class NeironychWan3RuntimeService(NeironychWan3AdminService):
             raise NeironychAPIError("Neironych model catalog is invalid")
         return {row["id"] for row in data if isinstance(row, dict) and row.get("id") in _KIE_MODEL}
 
+    async def submit(
+        self, payload: dict[str, Any], *, idempotency_key: str,
+    ) -> dict[str, Any]:
+        key = str(idempotency_key or "").strip()
+        if not _SAFE_REQUEST_ID.fullmatch(key) or len(key) < 8:
+            raise ValueError("Invalid stable Wan submission ID")
+        status, data = await self._request_json(
+            method="POST",
+            path="/v1/videos/generations",
+            headers={
+                "Idempotency-Key": key,
+                "X-Client-Request-Id": key,
+                "X-Submission-Receipt": "v1",
+            },
+            json_body=payload,
+            retry=False,
+        )
+        request_id = str(data.get("request_id") or "")
+        if status not in {200, 202} or not _SAFE_REQUEST_ID.fullmatch(request_id):
+            raise NeironychAPIError("Neironych did not confirm request identity", status=status)
+        client_id = data.get("client_request_id")
+        if client_id is not None and client_id != key:
+            raise NeironychAPIError("Neironych returned mismatched client identity", status=status)
+        return {"request_id": request_id, "status": "pending"}
+
+    async def lookup_by_client_id(self, internal_task_id: str) -> dict[str, Any] | None:
+        if not _SAFE_REQUEST_ID.fullmatch(internal_task_id):
+            raise ValueError("Invalid Wan client request identity")
+        path_prefix = os.getenv("NEIRONYCH_GENERATIONS_API_PREFIX", "/api/v1").rstrip("/")
+        try:
+            _status, record = await self._request_json(
+                method="GET",
+                path=f"{path_prefix}/generations/by-client-request-id/{internal_task_id}",
+                retry=True,
+            )
+        except NeironychAPIError as exc:
+            if exc.status == 404:
+                # A 404 does not prove the uncertain POST never reached upstream.
+                return None
+            raise
+        return record
+
     async def download_managed(self, request_id: str, *, task_id: str) -> str:
         """Stream authenticated output with a hard byte cap and atomic rename."""
         if not self.enabled:
@@ -172,10 +215,43 @@ class Wan3NeironychRuntimeTransport:
         kie: Any,
         neironych: Any | None = None,
         primary_provider: Callable[[], Any] | None = None,
+        record_attempt: Callable[[str], Awaitable[None]] | None = None,
     ) -> None:
         self.kie = kie
         self.neironych = neironych or NeironychWan3RuntimeService()
         self.primary_provider = primary_provider or self._configured_provider
+        self.record_attempt = record_attempt or self._persist_native_attempt
+
+    @staticmethod
+    async def _persist_native_attempt(internal_task_id: str) -> None:
+        """Durably record the selected provider before the first paid POST."""
+        from bot import database
+        from bot import db as db_backend
+
+        database_path = str(getattr(database, "DATABASE_PATH", None) or
+                            os.getenv("DATABASE_PATH") or "bot.db")
+        async with db_backend.connect(database_path) as db:
+            db.row_factory = db_backend.Row
+            cursor = await db.execute(
+                "SELECT request_data FROM generation_tasks WHERE task_id = ?",
+                (internal_task_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                raise RuntimeError("Wan generation task was not persisted before submission")
+            metadata = json.loads(row["request_data"] or "{}")
+            if not isinstance(metadata, dict):
+                raise RuntimeError("Wan generation task metadata is malformed")
+            metadata["provider_submission_route"] = "neironych"
+            metadata["provider"] = "neironych"
+            updated = await db.execute(
+                "UPDATE generation_tasks SET request_data = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE task_id = ? AND status = 'processing'",
+                (json.dumps(metadata, ensure_ascii=False, sort_keys=True), internal_task_id),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("Wan submission route persistence could not be confirmed")
+            await db.commit()
 
     @staticmethod
     async def _configured_provider() -> str:
@@ -196,6 +272,9 @@ class Wan3NeironychRuntimeTransport:
                 logger.warning("Wan3 native catalog unavailable error_type=%s", type(exc).__name__)
                 models = set()
             if payload["model"] in models:
+                # Commit the native route before the paid POST. A lost receipt
+                # can then be looked up by the stable X-Client-Request-Id.
+                await self.record_attempt(recipe.provider_submission_id)
                 # Never catch an uncertain POST and start a second paid KIE job.
                 try:
                     result = await self.neironych.submit(
@@ -237,6 +316,9 @@ class Wan3NeironychRuntimeTransport:
         }
         if native_model in _KIE_MODEL:
             result["model"] = _KIE_MODEL[native_model]
+        result["source"] = "neironych"
+        if record.get("client_request_id"):
+            result["client_request_id"] = record["client_request_id"]
         if state == "done":
             # Marker is never passed to the public downloader.
             result["resultUrls"] = [provider_task_id]
@@ -244,6 +326,9 @@ class Wan3NeironychRuntimeTransport:
             result["failCode"] = state
             result["failMsg"] = str(record.get("error") or state)[:300]
         return result
+
+    async def lookup_native_submission(self, internal_task_id: str) -> dict[str, Any] | None:
+        return await self.neironych.lookup_by_client_id(internal_task_id)
 
     async def download_result(self, provider_task_id: str, *, task_id: str) -> str:
         if not provider_task_id.startswith(NEIRONYCH_TASK_PREFIX):
