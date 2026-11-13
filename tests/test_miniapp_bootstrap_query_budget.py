@@ -145,7 +145,6 @@ def test_saved_reference_list_never_materializes_s3_files_on_bootstrap(
 
     def fake_materialize(source):
         resolves.append(source)
-        return None
 
     monkeypatch.setattr(media_storage, "is_s3_enabled", lambda: s3_enabled)
     monkeypatch.setattr(
