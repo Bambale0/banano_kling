@@ -363,6 +363,8 @@ export interface VkPublicFeedItem {
   preview_url: string | null
   result_url: string | null
   likes_count: number
+  /** Verified public native VK publication deep link. Never a paid remix. */
+  share_link?: string | null
 }
 
 export type VkPublicDiscovery =
