@@ -231,8 +231,15 @@ async def vk_native_state(request: web.Request) -> web.Response:
         and data.get('registered') is True
         and data.get('is_blocked') is False
     )
+    photo_upload_enabled = (
+        os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+        and 'telegram' not in actor.linked_platforms
+        and data.get('registered') is True
+        and data.get('is_blocked') is False
+    )
     return response({'ok': True, **data, 'recent_tasks': common_tasks,
-                     'video_generation_enabled': video_enabled})
+                     'video_generation_enabled': video_enabled,
+                     'photo_upload_enabled': photo_upload_enabled})
 
 
 async def vk_reference_library(request: web.Request) -> web.Response:
