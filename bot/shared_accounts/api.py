@@ -532,6 +532,8 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
         })
     if view == 'feed':
         from bot import database
+        from bot.miniapp_links import feed_link
+
         source = request.query.get('source', 'recent')
         if source not in {'recent', 'top', 'top_day'}:
             raise ValueError('Invalid feed source')
@@ -545,6 +547,14 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'preview_url': card.get('preview_url'),
                 'result_url': card.get('result_url'),
                 'likes_count': int(card.get('likes_count') or 0),
+                # A public feed ID is NOT an editorial prompt ID. Only the
+                # configured VK app/community may provide the share target.
+                # No private prompt, source references or TG actor is included.
+                'share_link': feed_link(
+                    None, int(card['id']), platform='vk',
+                    vk_app_id=policy.vk_app_id,
+                    vk_community_id=policy.vk_community_id,
+                ) if policy.vk_app_id else None,
             }
             for card in cards if card.get('gen_type') in {'image', 'video'}
         ]
