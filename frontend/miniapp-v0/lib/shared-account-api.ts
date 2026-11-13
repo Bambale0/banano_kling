@@ -617,6 +617,21 @@ let activeAppSessionToken = ''
 let activeAppAccountId = ''
 let activeAppSessionPlatform: AccountPlatform | null = null
 
+// Login, unmount and user-initiated retries may overlap when VK WebView
+// restores an app or React Strict Mode recreates the gate. Only the newest
+// attempt may install the shared VK bearer. It is not persisted anywhere.
+let activeAppSessionRevision = 0
+
+function releaseAppSession(): string {
+  const token = activeAppSessionToken
+  activeAppSessionToken = ''
+  activeAppAccountId = ''
+  activeAppSessionPlatform = null
+  setVerifiedVkCommunity(null, null)
+  clearPlatformSessionToken()
+  return token
+}
+
 async function revokeAppSession(token: string): Promise<void> {
   if (!token) return
   try {
@@ -629,8 +644,19 @@ async function revokeAppSession(token: string): Promise<void> {
   }
 }
 
+function assertLatestAppSession(revision: number, signal?: AbortSignal) {
+  if (signal?.aborted || revision !== activeAppSessionRevision) {
+    throw new DOMException('VK login cancelled or superseded', 'AbortError')
+  }
+}
+
 export async function startAccountAppSession(signal?: AbortSignal): Promise<AccountPreviewAccess> {
-  if (activeAppSessionToken) await stopAccountAppSession()
+  const revision = ++activeAppSessionRevision
+  // Detach synchronously. Never allow an old logout's eventual completion
+  // to clear a newer session installed while its HTTP request was in flight.
+  const previousToken = releaseAppSession()
+  if (previousToken) await revokeAppSession(previousToken)
+  assertLatestAppSession(revision, signal)
   const verifiedLaunch = accountLaunch()
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
     method: 'POST',
@@ -640,11 +666,15 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
   const token = login.session_token
   if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('Не удалось подтвердить сессию ВК.')
   try {
+    // A previous in-flight login can return *after* another one has already
+    // authenticated. Revoke only its own server-issued token, not the new one.
+    assertLatestAppSession(revision, signal)
     const profile = await request<{ account: { id: string }; preview: AccountPreviewAccess }>('me', {
       signal,
       headers: { Authorization: `Bearer ${token}` },
     })
     if (profile.account.id !== login.account.id) throw new Error('Не удалось подтвердить аккаунт.')
+    assertLatestAppSession(revision, signal)
     // Even an unlinked VK account owns a real VK-side balance and history.
     // Keep the same revocable session in memory for these endpoints without
     // inventing a Telegram user or exposing the bearer to URL/storage.
@@ -664,12 +694,10 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
 }
 
 export async function stopAccountAppSession(): Promise<void> {
-  const token = activeAppSessionToken
-  activeAppSessionToken = ''
-  activeAppAccountId = ''
-  activeAppSessionPlatform = null
-  setVerifiedVkCommunity(null, null)
-  clearPlatformSessionToken()
+  // Invalidate even when there is no committed token: a slower /session or
+  // /me response must never resurrect the VK login after WebView unmount.
+  activeAppSessionRevision += 1
+  const token = releaseAppSession()
   await revokeAppSession(token)
 }
 
