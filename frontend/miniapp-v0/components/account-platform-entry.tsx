@@ -55,9 +55,10 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       {message !== 'Подтверждаем вход…' && <VkLoginLink />}
     </main>
   }
-  // Only the explicit server-verified complete VK adapter unlocks the shell.
-  // A missing capability field must fail closed even for linked accounts.
-  if (access.full_app_ready === true) return children
+  // A complete native VK adapter unlocks independent parity. Preserve the
+  // separately verified, voluntary linked-TG legacy studio while feature
+  // gates remain OFF; never infer either capability from a link alone.
+  if (access.full_app_ready === true || access.legacy_linked_studio_available === true) return children
 
   // A VK-only visitor already has a working native VK bot. Telegram linking
   // is optional; never spoof Telegram identity or imply shared wallet funds.

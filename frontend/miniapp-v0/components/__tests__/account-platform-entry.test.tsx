@@ -113,7 +113,7 @@ test('VK linked status is not sufficient to impersonate full app readiness when 
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
-test('linked VK without explicit native readiness stays isolated from Telegram-owned shell', async () => {
+test('linked VK without any server-advertised capability stays isolated', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
   jest.mocked(startAccountAppSession).mockResolvedValue({
     revision: 1,
@@ -124,6 +124,21 @@ test('linked VK without explicit native readiness stays isolated from Telegram-o
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
   expect(await screen.findByText('Создавайте в ВКонтакте')).toBeInTheDocument()
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+})
+
+test('previously linked VK user retains the explicitly trusted legacy studio while parity is disabled', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=valid')
+  jest.mocked(startAccountAppSession).mockResolvedValue({
+    revision: 1,
+    vk_app_id: 123,
+    telegram_bot_username: 'Neuromixx_bot',
+    telegram_linked: true,
+    full_app_ready: false,
+    legacy_linked_studio_available: true,
+  })
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(await screen.findByText('Общая студия')).toBeInTheDocument()
+  expect(screen.queryByText('Создавайте в ВКонтакте')).not.toBeInTheDocument()
 })
 
 test('unlinked VK account offers optional Telegram linking', async () => {

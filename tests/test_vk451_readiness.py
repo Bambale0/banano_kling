@@ -8,7 +8,10 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from bot.shared_accounts import gateway
 from bot.shared_accounts.actor import PlatformActor
-from bot.shared_accounts.api import _vk_full_app_ready
+from bot.shared_accounts.api import (
+    _vk_full_app_ready,
+    _vk_legacy_linked_studio_available,
+)
 
 
 def test_vk_readiness_requires_complete_server_native_adapter(monkeypatch):
@@ -17,6 +20,19 @@ def test_vk_readiness_requires_complete_server_native_adapter(monkeypatch):
     assert _vk_full_app_ready(request, platform="vk", telegram_linked=True) is False
     assert _vk_full_app_ready(request, platform="vk", telegram_linked=False) is False
     assert _vk_full_app_ready(request, platform="telegram", telegram_linked=True) is True
+
+
+def test_explicit_legacy_link_remains_available_only_while_native_switches_are_off(monkeypatch):
+    monkeypatch.delenv("VK_FULL_APP_PARITY_ENABLED", raising=False)
+    monkeypatch.delenv("VK_NATIVE_TASKS_ENABLED", raising=False)
+    assert _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
+    assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=False)
+    assert not _vk_legacy_linked_studio_available(platform="telegram", telegram_linked=True)
+    monkeypatch.setenv("VK_NATIVE_TASKS_ENABLED", "1")
+    assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
+    monkeypatch.setenv("VK_NATIVE_TASKS_ENABLED", "0")
+    monkeypatch.setenv("VK_FULL_APP_PARITY_ENABLED", "1")
+    assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
 
 
 @pytest.mark.asyncio
