@@ -723,6 +723,14 @@ class Wan3PrimeLifecycle:
             return "accepted", provider_task_id, None
         if code == 200:
             return "no_task_id", None, str(result.get("message") or result.get("msg") or "")
+        if (
+            error == "api_error"
+            and result.get("success") is False
+            and result.get("definitive_pre_submission_failure") is True
+        ):
+            # A local persistence/configuration failure occurred before any
+            # upstream POST. This is refundable even if its HTTP status is 503.
+            return "api_error", None, str(result.get("message") or "Provider preflight failed")
         raw = result.get("raw") if isinstance(result.get("raw"), dict) else {}
         codes = (code, result.get("status_code"), raw.get("code"))
         if any(isinstance(value, (int, str)) and str(value).isdigit() and 500 <= int(value) <= 599 for value in codes):
