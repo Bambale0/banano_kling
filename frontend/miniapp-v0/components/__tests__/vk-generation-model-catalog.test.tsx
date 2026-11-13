@@ -4,6 +4,7 @@ import { VkGenerationPanel } from '../vk-generation-panel'
 import { fetchVkGenerationClaim, fetchVkModelCatalog, generateVkImage, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   fetchVkModelCatalog: jest.fn(),
   generateVkImage: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
