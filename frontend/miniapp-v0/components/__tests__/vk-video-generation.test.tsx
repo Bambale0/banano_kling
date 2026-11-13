@@ -6,6 +6,7 @@ import {
 } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   fetchVkModelCatalog: jest.fn(),
   generateVkVideo: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
