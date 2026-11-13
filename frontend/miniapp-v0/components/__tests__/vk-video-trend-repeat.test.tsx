@@ -4,6 +4,7 @@ import { VkGenerationPanel } from '../vk-generation-panel'
 import {
   fetchVkGenerationClaim, fetchVkModelCatalog, repeatVkTrend, uploadVkImage,
   type VkPublicTrend,
+  fetchVkSavedReferences,
 } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
@@ -23,6 +24,7 @@ const VIDEO: VkPublicTrend = {
 const file = () => new File(['image-bytes'], 'my-photo.jpg', { type: 'image/jpeg' })
 
 beforeEach(() => {
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.resetAllMocks()
   jest.mocked(uploadVkImage).mockResolvedValue(
     'https://neuromixbot.com/uploads/vk-refs/image/2001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
