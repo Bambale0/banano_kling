@@ -113,7 +113,7 @@ test('VK linked status is not sufficient to impersonate full app readiness when 
   expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
-test('linked VK account mounts the same application', async () => {
+test('linked VK without explicit native readiness stays isolated from Telegram-owned shell', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=example')
   jest.mocked(startAccountAppSession).mockResolvedValue({
     revision: 1,
@@ -122,8 +122,8 @@ test('linked VK account mounts the same application', async () => {
     telegram_linked: true,
   })
   render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
-  expect(await screen.findByText('Общая студия')).toBeInTheDocument()
-  expect(screen.queryByText(/Связать аккаунты/)).not.toBeInTheDocument()
+  expect(await screen.findByText('Создавайте в ВКонтакте')).toBeInTheDocument()
+  expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
 })
 
 test('unlinked VK account offers optional Telegram linking', async () => {
