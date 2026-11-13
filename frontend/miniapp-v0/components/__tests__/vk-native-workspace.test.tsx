@@ -2,6 +2,14 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { VkNativeWorkspace } from '../vk-native-workspace'
 
+jest.mock('../vk-native-services', () => ({
+  VkNativeServices: ({ onNavigate, verifiedVkCommunityId }: { onNavigate: (tab: number) => void; verifiedVkCommunityId?: number | null }) =>
+    <section role="status">Сервисы ВКонтакте — серверные разрешения
+      <span>Сообщество: {verifiedVkCommunityId ?? 'нет'}</span>
+      <button type="button" onClick={() => onNavigate(7)}>Партнёрам</button>
+    </section>,
+}))
+
 jest.mock('../vk-standalone-discovery', () => ({
   VkStandaloneDiscovery: ({ surface }: { surface?: string }) =>
     <section aria-label="VK-native content" data-testid="native-content">{surface}</section>,
@@ -81,4 +89,13 @@ test('VK account linking invite is not discarded by navigating the native tabs',
   render(<VkNativeWorkspace />)
   fireEvent.click(screen.getByRole('button', { name: 'Профиль' }))
   expect(window.location.hash).toBe('#link_' + invite)
+})
+
+test('VK Services uses shared navigation to native partner profile and verified community identity', () => {
+  render(<VkNativeWorkspace verifiedVkCommunityId={239915802} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Сервисы' }))
+  expect(screen.getByText('Сообщество: 239915802')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Партнёрам' }))
+  expect(screen.getByRole('button', { name: 'Профиль' })).toHaveAttribute('aria-current', 'page')
+  expect(screen.getByTestId('native-content')).toHaveTextContent('profile')
 })
