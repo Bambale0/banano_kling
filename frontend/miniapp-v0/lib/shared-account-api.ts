@@ -533,6 +533,8 @@ export interface AccountPreviewAccess {
   telegram_linked: boolean
   /** Server-advertised readiness for every shared-shell operation. Not an identity link. */
   full_app_ready?: boolean
+  /** Trusted server switch for the pre-existing explicitly linked TG studio. */
+  legacy_linked_studio_available?: boolean
   linked_platforms?: ('telegram' | 'vk')[]
 }
 

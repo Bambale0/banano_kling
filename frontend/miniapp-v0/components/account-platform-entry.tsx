@@ -55,11 +55,10 @@ function VkAccountGate({ children }: { children: ReactNode }) {
       {message !== 'Подтверждаем вход…' && <VkLoginLink />}
     </main>
   }
-  // The shared shell is selected by a trusted backend capability contract,
-  // never simply because VK happened to be linked to Telegram. A legacy
-  // backend without this field preserves the existing linked-account path.
-  if (access.full_app_ready === true
-    || (access.full_app_ready === undefined && access.telegram_linked)) return children
+  // A complete native VK adapter unlocks independent parity. Preserve the
+  // separately verified, voluntary linked-TG legacy studio while feature
+  // gates remain OFF; never infer either capability from a link alone.
+  if (access.full_app_ready === true || access.legacy_linked_studio_available === true) return children
 
   // A VK-only visitor already has a working native VK bot. Telegram linking
   // is optional; never spoof Telegram identity or imply shared wallet funds.
@@ -72,7 +71,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     <h1 className="text-xl font-semibold">Создавайте в ВКонтакте</h1>
     <p className="text-sm text-muted-foreground">
       Telegram не обязателен. Фото, видео, пополнение и ваши работы доступны в боте ВКонтакте.
-      Общая Mini App с Telegram пока работает после привязки аккаунтов.
+      Единая Mini App станет доступна после подтверждения полной совместимости сервером.
     </p>
     <VkStandaloneDiscovery />
     {nativeBotUrl
@@ -86,8 +85,8 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
       <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
       <p className="my-3 text-sm text-muted-foreground">
-        После привязки откроется общая студия с балансом, историей и генерациями Telegram.
-        Средства из прежнего VK-бота автоматически не переносятся.
+        Привязка аккаунтов добровольная. Средства из прежнего VK-бота автоматически не переносятся.
+        Доступ к единой студии включается только после проверки её готовности.
       </p>
       <SharedAccountLinkPreview
         vkAppId={access.vk_app_id}
