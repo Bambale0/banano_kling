@@ -303,6 +303,7 @@ class Wan3NeironychRuntimeTransport:
                         "success": False,
                         "error": "api_error",
                         "status_code": 503,
+                        "definitive_pre_submission_failure": True,
                         "message": "Provider route persistence failed before submission",
                     }
                 # Never catch an uncertain POST and start a second paid KIE job.
