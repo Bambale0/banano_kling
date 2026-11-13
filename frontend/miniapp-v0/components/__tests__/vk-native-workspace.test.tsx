@@ -65,3 +65,20 @@ test('back navigation returns to exact public VK tab and never manufactures Tele
   expect(screen.getByRole('button', { name: 'Лента' })).toHaveAttribute('aria-current', 'page')
   expect(screen.getByTestId('native-content')).toHaveTextContent('feed')
 })
+
+test('native tab switch clears stale public deep link while preserving signed VK launch query', () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&sign=signed#prompt_31')
+  render(<VkNativeWorkspace />)
+  fireEvent.click(screen.getByRole('button', { name: 'Фото' }))
+  expect(window.location.hash).toBe('')
+  expect(window.location.search).toContain('sign=signed')
+  expect(screen.getByTestId('native-content')).toHaveTextContent('photo')
+})
+
+test('VK account linking invite is not discarded by navigating the native tabs', () => {
+  const invite = 'a'.repeat(43)
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001#link_' + invite)
+  render(<VkNativeWorkspace />)
+  fireEvent.click(screen.getByRole('button', { name: 'Профиль' }))
+  expect(window.location.hash).toBe('#link_' + invite)
+})
