@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import math
 import os
 import time
 from urllib.parse import urlsplit
@@ -383,14 +384,15 @@ async def _native_vk_task_read(
 
     if type(vk_user_id) is not int or not 0 < vk_user_id < 2**63:
         raise ValueError('Invalid verified VK identity')
-    if operation not in {'history', 'detail'}:
+    if operation not in {'history', 'detail', 'claim'}:
         raise ValueError('Invalid native VK task operation')
     if not isinstance(payload, dict):
         raise TypeError('Invalid VK task payload')
     secret = os.getenv('INTERNAL_API_SECRET', '')
     if not secret:
         raise RuntimeError('VK internal authentication is not configured')
-    path = f'/internal/v1/miniapp/users/{vk_user_id}/tasks/{operation}'
+    domain = 'generations' if operation == 'claim' else 'tasks'
+    path = f'/internal/v1/miniapp/users/{vk_user_id}/{domain}/{operation}'
     raw = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode()
     if len(raw) > 32768:
         raise ValueError('VK task payload is too large')
@@ -452,6 +454,41 @@ async def fetch_native_vk_task_detail(vk_user_id: int, task_id: int) -> dict:
     if not isinstance(row, dict) or row.get('task_id') != task_id:
         raise RuntimeError('VK native detail response invalid')
     return data
+
+
+async def fetch_native_vk_generation_claim(vk_user_id: int, client_request_id: str) -> dict:
+    """Resolve an ambiguous native charge by its exact owner/idempotency key.
+
+    The HMAC service is read-only; neither this function nor the public BFF
+    may substitute Telegram ownership or expose hidden provider recipes.
+    """
+    if (not isinstance(client_request_id, str)
+        or not 16 <= len(client_request_id) <= 80
+        or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+               for ch in client_request_id)):
+        raise ValueError('Invalid VK generation request key')
+    data = await _native_vk_task_read(
+        vk_user_id, operation='claim',
+        payload={'client_request_id': client_request_id},
+    )
+    if type(data.get('found')) is not bool:
+        raise RuntimeError('Invalid VK generation claim state')
+    if data['found'] is False:
+        return {'ok': True, 'found': False}
+    task_id = data.get('task_id')
+    cost = data.get('cost')
+    status = data.get('status')
+    task_type = data.get('task_type')
+    if (type(task_id) is not int or not 0 < task_id < 2**63
+        or type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0
+        or task_type not in {'photo', 'video'}
+        or not isinstance(status, str) or not 1 <= len(status) <= 32
+        or not all(ch.isascii() and (ch.isalnum() or ch == '_') for ch in status)):
+        raise RuntimeError('Invalid VK generation claim payload')
+    return {
+        'ok': True, 'found': True, 'task_id': task_id,
+        'task_type': task_type, 'status': status, 'cost': cost,
+    }
 
 
 async def submit_native_vk_video(vk_user_id: int, payload: dict) -> dict:

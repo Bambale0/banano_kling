@@ -27,6 +27,7 @@ from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     create_native_vk_invoice,
     fetch_native_vk_commerce,
+    fetch_native_vk_generation_claim,
     fetch_native_vk_models,
     fetch_native_vk_state,
     submit_native_vk_image,
@@ -300,6 +301,25 @@ async def vk_native_image(request: web.Request) -> web.Response:
     payload['reference_photos'] = verified_image_urls(actor_id, payload.get('reference_photos', []))
     result = await submit_native_vk_image(actor_id, payload)
     return response({'ok': True, **result})
+
+
+async def vk_generation_claim(request: web.Request) -> web.Response:
+    """Look up a verified VK owner's native generation after an uncertain POST.
+
+    This never retries a paid operation, debits money, or exposes the
+    provider prompt. Works for linked and unlinked VK actors alike.
+    """
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    payload = await _body(request)
+    if set(payload) != {'client_request_id'}:
+        raise ValueError('Invalid VK generation claim request')
+    result = await fetch_native_vk_generation_claim(
+        actor.external_id, payload['client_request_id'],
+    )
+    return response(result)
 
 
 async def vk_native_video(request: web.Request) -> web.Response:
@@ -685,6 +705,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     # multipart body. Register directly, as the existing owned-media APIs do.
     app.router.add_route('POST', root + '/vk-image-upload', _guard(vk_image_upload))
     app.router.add_post(root + '/vk-image', _guard(vk_native_image))
+    app.router.add_post(root + '/vk-generation-claim', _guard(vk_generation_claim))
     app.router.add_post(root + '/vk-video', _guard(vk_native_video))
     app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
     app.router.add_post(root + '/logout', _guard(logout))

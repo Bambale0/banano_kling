@@ -1,4 +1,4 @@
-import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkGenerationClaim, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 import { platformMiniAppUrl } from '../account-platform'
 
@@ -46,6 +46,38 @@ test('native Cyrillic prompt within the byte budget reaches the signed generatio
   await expect(generateVkImage(payload)).resolves.toEqual(expect.objectContaining({ cost: 2.5 }))
   expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-image')
   expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual(payload)
+})
+
+test('native generation claim read uses signed VK identity with no actor override', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'r'.repeat(43), account: { id: 'owned-account' } }))
+    .mockResolvedValueOnce(reply(200, {
+      found: true, task_id: 73, task_type: 'photo', status: 'processing', cost: 3,
+      prompt: 'DO NOT DISCLOSE PRIVATE RECIPE',
+    })).mockResolvedValueOnce(reply(200))
+  await expect(fetchVkGenerationClaim('vk_native_claim_replay_000001')).resolves.toEqual({
+    ok: true, found: true, task_id: 73, task_type: 'photo', status: 'processing', cost: 3,
+  })
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-generation-claim')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body)))
+    .toEqual({ client_request_id: 'vk_native_claim_replay_000001' })
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: 'Bearer ' + 'r'.repeat(43),
+  }))
+  expect(fetch.mock.calls.every(([url]) => !String(url).includes('r'.repeat(43)))).toBe(true)
+})
+
+test('malformed native generation claim never authorizes unknown task or owner', async () => {
+  const fetch = jest.mocked(global.fetch)
+  await expect(fetchVkGenerationClaim('bad')).rejects.toThrow('Некорректный идентификатор')
+  expect(fetch).not.toHaveBeenCalled()
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'r'.repeat(43), account: { id: 'owned-account' } }))
+    .mockResolvedValueOnce(reply(200, {
+      found: true, task_id: 0, task_type: 'photo', status: 'processing', cost: 3,
+    })).mockResolvedValueOnce(reply(200))
+  await expect(fetchVkGenerationClaim('vk_native_claim_replay_000001')).rejects
+    .toThrow('Невозможно безопасно подтвердить статус')
+  expect(fetch).toHaveBeenCalledTimes(3)
 })
 
 test('VK launch forwards the signed query intact and never substitutes Telegram credentials', async () => {

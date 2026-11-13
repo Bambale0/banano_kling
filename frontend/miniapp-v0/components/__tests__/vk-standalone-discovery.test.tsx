@@ -14,6 +14,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
   generateVkImage: jest.fn(),
+  fetchVkGenerationClaim: jest.fn(),
   uploadVkImage: jest.fn(),
 }))
 

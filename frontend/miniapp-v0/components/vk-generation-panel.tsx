@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import {
+  fetchVkGenerationClaim,
   fetchVkModelCatalog,
   generateVkImage,
   repeatVkTrend,
@@ -148,9 +149,26 @@ export function VkGenerationPanel({
       setTaskId(result.task_id)
       setCost(null)
       onFinished?.()
-    } catch (failure) {
+    } catch {
+      if (runId !== epoch.current) return
+      // Provider charge/task may have committed before a BFF/WebView timeout.
+      // Reconcile the SAME native idempotency claim, never auto-submit again.
+      try {
+        const claim = await fetchVkGenerationClaim(clientRequestId)
+        if (runId !== epoch.current) return
+        if (claim.found && claim.task_type === 'photo'
+          && Number.isSafeInteger(claim.task_id) && (claim.task_id || 0) > 0) {
+          setTaskId(claim.task_id!)
+          setCost(null)
+          onFinished?.()
+          return
+        }
+      } catch {
+        // An unavailable read does not prove the paid task never existed.
+      }
       if (runId === epoch.current) setError(
-        failure instanceof Error ? failure.message : 'Статус генерации неясен. Проверьте историю, прежде чем отправлять снова.',
+        'Статус генерации пока неясен. Проверьте «Мои работы». '
+        + 'Повторная отправка использует тот же запрос и не создаёт новый ключ списания.',
       )
     } finally {
       if (runId === epoch.current) setBusy(false)

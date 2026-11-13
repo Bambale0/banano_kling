@@ -114,3 +114,16 @@ remain immutable until a verified status is returned.
 ## 2026-11-13 — Incremental VK native shared-shell bootstrap (#451)
 
 `VkNativeAppAdapter` is registered only as an incomplete adapter (`bootstrap`, `tasks`). Its signed VK actor reads the authoritative native VK state, dynamic model catalogue and commerce wallet, not the Telegram account. The existing 10-domain `full_vk_adapter()` gate rejects it until the remaining native domains are implemented and verified. `VK_FULL_APP_PARITY_ENABLED` and the money/write gates remain OFF by default; no ledger migration or new paid action is introduced. This release slice does **not** constitute full seven-tab VK parity.
+
+## 2026-11-13 — VK generation reconciliation (incremental, no wallet writes)
+
+Native VK master 750d1a2a46bd97aec30a3a4a96b9a856d4d311cc provides a
+signed read-only POST /internal/v1/miniapp/users/{actor}/generations/claim
+over the existing atomic SQLite claim table. The common VK-only BFF authenticates
+the signed owner and returns only task ID/type/status/cost, never private recipes.
+
+The existing independent VK photo panel now checks the original claim after an
+ambiguous timeout. A confirmed task displays its ID, rather than submitting
+a duplicate; an unavailable lookup keeps the original idempotency key for a
+manual retry. No silent repeated paid request, no balance migration or rate
+override. This is NOT readiness for the full ten-domain #451 shared shell.

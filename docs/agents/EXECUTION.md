@@ -3284,3 +3284,19 @@ private references and browser-provided actor information fail closed.
 - All ten required native domains are not implemented; full shell, paid invoice, native video writes and shared-money feature gates stay OFF. This preparation cannot be accepted as #451 full parity.
 - Required: protected Python/PG/Wan/frontend/Chromium CI, exact merge SHA, exact production deploy, smoke, genuine VK WebView + ledger/refund/reconciliation acceptance before any financial gate.
 - Rollback: revert the additive adapter registration; preserve all existing VK/TG ledger, task and media state.
+
+## 2026-11-13 — VK #451 generation-claim BFF and UI recovery
+
+- Baseline: tanyapi@3b649bcdff8821c17ab32678cdafa57089d9a057.
+- Root cause: a timeout after native VK atomic charge left a known idempotency
+  claim with no UI reconciliation by its key.
+- Dependency: native tanyavk #84 merged and exact-SHA deployed at
+  750d1a2a46bd97aec30a3a4a96b9a856d4d311cc.
+- Main BFF: authenticated owner-only read, exact HMAC body/path, strict result
+  projection without references, recipe or Telegram ID.
+- UI: read-only reconciliation after ambiguous POST; display known task,
+  preserve identical key after unknown outcome for explicit user retry.
+- TDD backend 2 RED -> 2 GREEN; frontend timeout 2 RED -> 2 GREEN;
+  frontend full 106 suites / 814 tests GREEN, TypeScript and ESLint clean.
+- Release: protected CI, exact merge SHA deploy and owner/auth smoke. Do NOT
+  activate full-app, video-write or checkout gates without financial E2E.
