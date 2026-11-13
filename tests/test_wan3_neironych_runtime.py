@@ -250,6 +250,7 @@ async def test_native_never_posts_or_reserves_on_failed_route_persistence():
     result = await transport.create_task(recipe(), callback_url=None)
     assert result["error"] == "api_error"
     assert result["success"] is False
+    assert result["definitive_pre_submission_failure"] is True
     native.submit.assert_not_awaited()
     kie.create_task.assert_not_awaited()
 
@@ -291,3 +292,21 @@ def test_native_download_retries_share_one_lease_safe_deadline():
         native_runtime.native_download_attempt_budget(
             timeout_seconds=timeout, deadline=deadline, now=started + 240,
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_setting_error_is_not_an_uncertain_paid_submission():
+    native = AsyncMock()
+    kie = AsyncMock()
+
+    async def unavailable_setting():
+        raise RuntimeError("database unavailable")
+
+    transport = native_runtime.Wan3NeironychRuntimeTransport(
+        kie=kie, neironych=native, primary_provider=unavailable_setting,
+    )
+    result = await transport.create_task(recipe(), callback_url=None)
+    assert result["definitive_pre_submission_failure"] is True
+    assert result["status_code"] == 503
+    native.submit.assert_not_awaited()
+    kie.create_task.assert_not_awaited()
