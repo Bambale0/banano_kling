@@ -84,7 +84,7 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     <details className="rounded-xl border border-border p-4" open={Boolean(incomingAccountLink())}>
       <summary className="cursor-pointer font-medium">Связать Telegram (необязательно)</summary>
       <p className="my-3 text-sm text-muted-foreground">
-        Привязка аккаунтов добровольная и не переносит баланс.
+        Привязка аккаунтов добровольная. Средства из прежнего VK-бота автоматически не переносятся.
         Доступ к единой студии включается только после проверки её готовности.
       </p>
       <SharedAccountLinkPreview

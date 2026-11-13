@@ -6,8 +6,8 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from bot.shared_accounts.actor import PlatformActor
 from bot.shared_accounts import gateway
+from bot.shared_accounts.actor import PlatformActor
 from bot.shared_accounts.api import _vk_full_app_ready
 
 
