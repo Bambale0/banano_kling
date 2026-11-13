@@ -73,3 +73,39 @@ Partial photo generation is production-enabled. The product is NOT 1:1 yet:
 video/services/payments/publishing and the full seven-tab VK-only shell are
 outstanding. Do not claim completion merely because a backend HMAC endpoint
 exists or UI components can be rendered.
+
+
+## Shared BalanceSheet native VK checkout (review-only, 2026-11-12)
+
+The shared VK navigation must not use Telegram `createPayment` or its
+`bootstrap` request even when the visible package offers Lava. A verified VK
+actor obtains its own `vk-commerce` view, `payments_enabled` gate and
+Lava methods/packages from the authoritative native SQLite-backed service.
+The same shared `BalanceSheet` mounts `VkNativeCheckout` only after that
+verified read, and carries the exact native idempotency claim across close and
+reopen. Disabled payments, transport failures and unregistered VK actors
+render no checkout actions, never a Telegram fallback. No flag is activated by
+the UI change.
+
+**Not full #451 parity**: the backend still lacks callable native handlers
+for the ten-domain shared shell, including services, feed writes, complete
+video/references, referral/payout reconciliation and result delivery. The
+shared-shell readiness must remain false until live VK WebView and financial
+acceptance proves those end-to-end paths.
+
+
+### Wallet snapshot and invoice immutability follow-up (review-only)
+
+The shared VK BalanceSheet does not display balances, repeat deficits, or task
+statistics from the legacy Telegram application state. It renders the signed
+native VK commerce balance only after validating a finite, nonnegative numeric
+snapshot. Invalid/missing native balances fail closed without an invoice action.
+Once a native invoice request has been issued, the form freezes its package,
+method and email for that checkout attempt: ambiguous timeouts and native
+`creating`/`unknown` states may be retried **only with the exact original
+payload and idempotency claim**. This prevents a second invoice being created
+by editing the terms while the first provider result is unresolved.
+
+A fresh invoice with a new idempotency key is available only after the
+previous attempt has been **confirmed paid**; ambiguous and pending attempts
+remain immutable until a verified status is returned.

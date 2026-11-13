@@ -25,6 +25,7 @@ Object.defineProperty(window, 'Telegram', {
     },
   },
   writable: true,
+  configurable: true, // allow auth-cache tests to exercise absence of Telegram's WebApp
 })
 
 // Mock URL.createObjectURL

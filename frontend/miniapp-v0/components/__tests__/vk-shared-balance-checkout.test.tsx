@@ -1,0 +1,212 @@
+import '@testing-library/jest-dom'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { BalanceSheet } from '@/components/balance-sheet'
+import { useApp } from '@/lib/app-context'
+import { createPayment } from '@/lib/payment-api'
+import { bootstrapApp } from '@/lib/api'
+import { fetchVkNativeCommerce, createVkInvoice } from '@/lib/shared-account-api'
+
+jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
+jest.mock('@/lib/account-platform', () => ({ currentAccountPlatform: () => 'vk' }))
+jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
+jest.mock('@/lib/api', () => ({ bootstrapApp: jest.fn(), sendMiniAppClientLog: jest.fn() }))
+jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkNativeCommerce: jest.fn(), createVkInvoice: jest.fn(),
+}))
+
+const fixture = {
+  state: {
+    mode: 'live', user: { credits: 3 }, recentTasks: [],
+    // This Telegram-only package must NEVER be used for native VK checkout.
+    paymentPackages: [{ id: 'telegram', name: 'TG пакет', credits: 100,
+      price_rub: 1000, lava_offer_id: 'tg-offer' }],
+  },
+  isBalanceOpen: true, closeBalance: jest.fn(), refreshTasks: jest.fn(),
+  refreshBalance: jest.fn(), balanceRequest: { packageId: 'telegram', requiredCredits: 50 },
+}
+const vkCommerce = {
+  ok: true, registered: true, balance: 3, payments_enabled: true,
+  payment_packages: [
+    { id: '250', credits: 25, price_rub: 250, lava_offer_id: 'vk-offer',
+      methods: ['lava_card', 'lava_sbp'] },
+  ],
+  payments: [], referrals: { first_level_count: 0, second_level_count: 0, earned_rub: 0 },
+}
+
+beforeEach(() => {
+  jest.clearAllMocks()
+  ;(useApp as jest.Mock).mockReturnValue(fixture)
+  ;(fetchVkNativeCommerce as jest.Mock).mockResolvedValue(vkCommerce)
+  ;(createVkInvoice as jest.Mock).mockResolvedValue({
+    ok: true, status: 'ready', amount_rub: 250, credits: 25,
+    payment_url: 'https://lava.top/pay/native-test',
+  })
+})
+
+it('uses the real VK commerce and native invoice, never the Telegram payment route', async () => {
+  render(<BalanceSheet />)
+  expect(fetchVkNativeCommerce).toHaveBeenCalledTimes(1)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  expect(screen.queryByText('TG пакет')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Welcome-бонус/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Stars/ })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Купить 100/ })).not.toBeInTheDocument()
+
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(1))
+  expect(createVkInvoice).toHaveBeenCalledWith(expect.objectContaining({
+    package_id: '250', payment_method: 'CARD', customer_email: 'payer@example.test',
+    client_request_id: expect.any(String),
+  }))
+  expect(createPayment).not.toHaveBeenCalled()
+  expect(bootstrapApp).not.toHaveBeenCalled()
+  expect(await screen.findByRole('link', { name: 'Перейти к оплате Lava' }))
+    .toHaveAttribute('href', 'https://lava.top/pay/native-test')
+})
+
+it('fails closed when both native payment gates have not been accepted', async () => {
+  ;(fetchVkNativeCommerce as jest.Mock).mockResolvedValue({
+    ...vkCommerce, payments_enabled: false,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByText(/Пополнение ВКонтакте временно недоступно/))
+    .toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Карта|СБП|Stars|Купить/ }))
+    .not.toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+  expect(createVkInvoice).not.toHaveBeenCalled()
+})
+
+it('fails closed when native actor commerce cannot be verified', async () => {
+  ;(fetchVkNativeCommerce as jest.Mock).mockRejectedValue(new Error('private transport diagnostics'))
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('alert'))
+    .toHaveTextContent('Не удалось проверить оплату ВКонтакте')
+  expect(screen.queryByText('private transport diagnostics')).not.toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+
+it('reopens a failed VK checkout with the identical idempotency claim, not a second order', async () => {
+  ;(createVkInvoice as jest.Mock)
+    .mockRejectedValueOnce(new Error('provider outcome unknown'))
+    .mockResolvedValueOnce({
+      ok: true, status: 'ready', amount_rub: 250, credits: 25,
+      payment_url: 'https://lava.top/pay/native-test',
+    })
+  const { rerender } = render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(1))
+  expect(await screen.findByRole('alert')).toHaveTextContent('provider outcome unknown')
+  const originalClaim = (createVkInvoice as jest.Mock).mock.calls[0][0].client_request_id
+
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, isBalanceOpen: false })
+  rerender(<BalanceSheet />)
+  ;(useApp as jest.Mock).mockReturnValue(fixture)
+  rerender(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect((createVkInvoice as jest.Mock).mock.calls[1][0].client_request_id).toBe(originalClaim)
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+it('never exposes a Telegram balance or Telegram task statistics inside VK checkout', async () => {
+  // Until native bootstrap fully replaces legacy state, it may contain values
+  // belonging to a linked Telegram identity. The payment panel must not trust it.
+  ;(useApp as jest.Mock).mockReturnValue({
+    ...fixture,
+    state: {
+      ...fixture.state,
+      user: { credits: 999 },
+      recentTasks: [{ task_id: 'tg_legacy', type: 'image', cost: 777 }],
+    },
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByText('VK-баланс: 3🍌')).toBeInTheDocument()
+  expect(screen.queryByText('999')).not.toBeInTheDocument()
+  expect(screen.queryByText('999🍌')).not.toBeInTheDocument()
+  expect(screen.queryByText('777🍌')).not.toBeInTheDocument()
+  expect(screen.queryByText('Всего запусков')).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Пополнение для повтора' })).not.toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+it('refuses VK checkout if the native wallet snapshot is absent or malformed', async () => {
+  ;(fetchVkNativeCommerce as jest.Mock).mockResolvedValue({
+    ...vkCommerce, balance: null,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('alert'))
+    .toHaveTextContent('Не удалось подтвердить VK-баланс')
+  expect(screen.queryByRole('form', { name: 'Пополнение VK-баланса' })).not.toBeInTheDocument()
+  expect(createVkInvoice).not.toHaveBeenCalled()
+})
+
+it('keeps invoice amount, method and email immutable after an ambiguous outcome', async () => {
+  ;(createVkInvoice as jest.Mock)
+    .mockRejectedValueOnce(new Error('provider outcome unknown'))
+    .mockResolvedValueOnce({
+      ok: true, status: 'ready', amount_rub: 250, credits: 25,
+      payment_url: 'https://lava.top/pay/native-test',
+    })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('provider outcome unknown')
+  expect(screen.getByRole('combobox', { name: 'Пакет пополнения' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Способ оплаты' })).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect((createVkInvoice as jest.Mock).mock.calls[1][0])
+    .toEqual((createVkInvoice as jest.Mock).mock.calls[0][0])
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
+it('locks invoice parameters when the native provider reports an unknown invoice state', async () => {
+  ;(createVkInvoice as jest.Mock).mockResolvedValue({
+    ok: true, status: 'unknown', amount_rub: 250, credits: 25,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByText(/Статус счёта уточняется/)).toBeInTheDocument()
+  expect(screen.getByRole('combobox', { name: 'Пакет пополнения' })).toBeDisabled()
+  expect(screen.getByRole('combobox', { name: 'Способ оплаты' })).toBeDisabled()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+})
+
+it('permits a fresh invoice only after the previous one is confirmed paid', async () => {
+  ;(createVkInvoice as jest.Mock).mockResolvedValue({
+    ok: true, status: 'paid', amount_rub: 250, credits: 25,
+  })
+  render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  fireEvent.change(screen.getByRole('textbox', { name: 'Email для чека' }), {
+    target: { value: 'payer@example.test' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  expect(await screen.findByText('Оплата подтверждена. Обновите баланс.')).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).toBeDisabled()
+  const originalKey = (createVkInvoice as jest.Mock).mock.calls[0][0].client_request_id
+  fireEvent.click(screen.getByRole('button', { name: 'Начать новое пополнение' }))
+  expect(screen.getByRole('textbox', { name: 'Email для чека' })).not.toBeDisabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Получить ссылку на оплату' }))
+  await waitFor(() => expect(createVkInvoice).toHaveBeenCalledTimes(2))
+  expect((createVkInvoice as jest.Mock).mock.calls[1][0].client_request_id).not.toBe(originalKey)
+  expect(createPayment).not.toHaveBeenCalled()
+})
