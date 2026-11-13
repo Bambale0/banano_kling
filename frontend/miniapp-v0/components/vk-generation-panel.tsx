@@ -192,7 +192,12 @@ export function VkGenerationPanel({
       try {
         const claim = await fetchVkGenerationClaim(clientRequestId)
         if (runId !== epoch.current) return
-        if (claim.found && claim.task_type === (quoted.mode === 'video' ? 'video' : 'photo')
+        // A hidden editorial trend recipe can execute IMAGE or VIDEO; the
+        // signed native claim must match the actual public trend media type.
+        const expectedTaskType = quoted.mode === 'video'
+          || (quoted.mode === 'trend' && trend?.generation_type === 'video')
+          ? 'video' : 'photo'
+        if (claim.found && claim.task_type === expectedTaskType
           && Number.isSafeInteger(claim.task_id) && (claim.task_id || 0) > 0) {
           setTaskId(claim.task_id!)
           setCost(null)
