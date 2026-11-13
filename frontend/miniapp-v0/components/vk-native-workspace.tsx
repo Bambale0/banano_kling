@@ -35,7 +35,10 @@ const titles: Record<number, string> = {
  * The complete common TabContent mounts only after all ten VK domains are
  * verified by the server; a visual tab never unlocks a Telegram API.
  */
-export function VkNativeWorkspace({ verifiedVkCommunityId }: { verifiedVkCommunityId?: number | null } = {}) {
+export function VkNativeWorkspace({ verifiedVkCommunityId, linkedTelegram = false }: {
+  verifiedVkCommunityId?: number | null
+  linkedTelegram?: boolean
+} = {}) {
   const [activeTab, setActiveTab] = useState(tabFromVkLocation)
 
   useEffect(() => {
@@ -82,7 +85,7 @@ export function VkNativeWorkspace({ verifiedVkCommunityId }: { verifiedVkCommuni
     {surface ? (
       <VkStandaloneDiscovery key={activeTab} surface={surface} />
     ) : (
-      <VkNativeServices onNavigate={selectTab} verifiedVkCommunityId={verifiedVkCommunityId} />
+      <VkNativeServices onNavigate={selectTab} verifiedVkCommunityId={verifiedVkCommunityId} linkedTelegram={linkedTelegram} />
     )}
     <AppTabBar activeTab={activeTab} onTabChange={selectTab} isVk />
   </section>
