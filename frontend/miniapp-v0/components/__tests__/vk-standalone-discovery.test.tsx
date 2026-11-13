@@ -4,6 +4,7 @@ import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
 import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
   fetchVkPublicTrend: jest.fn(),
