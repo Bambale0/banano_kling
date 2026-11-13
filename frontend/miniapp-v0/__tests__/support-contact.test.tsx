@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { SupportPanel } from '@/components/workspace-sheet'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { mockAppState } from '@/lib/mock-data'
 import { toast } from 'sonner'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
@@ -14,7 +15,7 @@ const originalTelegram = window.Telegram
 
 beforeEach(() => {
   mockedUseApp.mockReturnValue({
-    state: { user: { supportContact: '@only_tany' } },
+    state: { ...mockAppState, user: { ...mockAppState.user, supportContact: '@only_tany' } },
   } as ReturnType<typeof useApp>)
   jest.clearAllMocks()
   mockedCopy.mockResolvedValue(undefined)
@@ -45,7 +46,7 @@ test('uses native Telegram navigation inside the Telegram Mini App', () => {
 
 test('does not generate an unsafe or broken link if contact is missing', () => {
   mockedUseApp.mockReturnValue({
-    state: { user: { supportContact: 'https://evil.example/path' } },
+    state: { ...mockAppState, user: { ...mockAppState.user, supportContact: 'https://evil.example/path' } },
   } as ReturnType<typeof useApp>)
   render(<SupportPanel />)
   expect(screen.queryByRole('link', { name: 'Написать администратору' })).not.toBeInTheDocument()
