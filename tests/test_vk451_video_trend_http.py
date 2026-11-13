@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
-
 from bot import database, trend_catalog
 from bot.shared_accounts import api
 
