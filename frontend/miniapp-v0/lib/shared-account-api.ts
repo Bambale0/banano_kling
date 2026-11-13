@@ -489,6 +489,39 @@ function vkGenerationBody(payload: VkImageRequest | VkTrendRequest): string {
   return body
 }
 
+export interface VkGenerationClaim {
+  ok: true
+  found: boolean
+  task_id?: number
+  task_type?: 'photo' | 'video'
+  status?: string
+  cost?: number
+}
+
+/** Read-only reconciliation for a VK-native task after an ambiguous submit. */
+export async function fetchVkGenerationClaim(clientRequestId: string, signal?: AbortSignal): Promise<VkGenerationClaim> {
+  if (!/^[A-Za-z0-9_-]{16,80}$/.test(clientRequestId)) {
+    throw new Error('Некорректный идентификатор генерации.')
+  }
+  return withPreviewSession(async headers => {
+    const raw = await request<VkGenerationClaim>('vk-generation-claim', {
+      method: 'POST', headers,
+      body: JSON.stringify({ client_request_id: clientRequestId }), signal,
+    })
+    if (raw.found === false) return { ok: true, found: false }
+    if (raw.found !== true || !Number.isSafeInteger(raw.task_id) || !raw.task_id || raw.task_id < 1
+      || !['photo', 'video'].includes(raw.task_type || '')
+      || typeof raw.status !== 'string' || !/^[A-Za-z0-9_]{1,32}$/.test(raw.status)
+      || typeof raw.cost !== 'number' || !Number.isFinite(raw.cost) || raw.cost < 0) {
+      throw new Error('Невозможно безопасно подтвердить статус генерации.')
+    }
+    return {
+      ok: true, found: true, task_id: raw.task_id,
+      task_type: raw.task_type, status: raw.status, cost: raw.cost,
+    }
+  }, signal)
+}
+
 export async function generateVkImage(payload: VkImageRequest, signal?: AbortSignal) {
   const body = vkGenerationBody(payload)
   return withPreviewSession(headers => request<VkNativeGenerationResult>('vk-image', {
