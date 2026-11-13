@@ -170,10 +170,21 @@ async def sanitize_task_api_payload(payload: Any) -> Any:
         return result
 
     task_ids = [str(task.get("task_id") or "").strip() for task in tasks]
+    # A task explicitly marked private is already redacted below. Re-reading
+    # its entire generation row (and all approved trend recipes) brings no
+    # additional protection, and adds avoidable PostgreSQL load to bootstrap.
+    unresolved_ids = [
+        task_id
+        for task, task_id in zip(tasks, task_ids, strict=True)
+        if task_id and not generation_has_private_recipe(task)
+    ]
     try:
-        protected = await _protected_task_ids(task_ids)
+        protected = (
+            await _protected_task_ids(unresolved_ids) if unresolved_ids else set()
+        )
     except Exception:
         logger.exception("Unable to resolve protected trend task prompts")
+        # Fail closed even when the database cannot classify legacy recipes.
         protected = {task_id for task_id in task_ids if task_id}
 
     def redact(task: dict[str, Any]) -> dict[str, Any]:
