@@ -421,7 +421,7 @@ export interface VkPublicFeedLink {
     media_unavailable: boolean
     share_link: string
     /** Native VK feed remix is a separate authorized operation, not this read. */
-    can_repeat_in_app: boolean
+    can_repeat_in_app?: boolean
   }
 }
 
