@@ -852,10 +852,12 @@ class Wan3PrimeLifecycle:
             from bot.services.wan3_prime_recovery import (
                 recover_candidates,
                 recover_expired_submissions,
+                recover_unknown_native_submissions,
             )
 
             await recover_expired_submissions()
             await recover_candidates(self, limit=limit)
+            await recover_unknown_native_submissions(self, limit=limit)
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
             if provider_task_id:
