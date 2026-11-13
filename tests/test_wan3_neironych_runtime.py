@@ -140,3 +140,41 @@ async def test_uncertain_native_submit_never_starts_second_paid_kie_task():
     with pytest.raises(TimeoutError):
         await transport.create_task(recipe(), callback_url=None)
     kie.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 401, 402, 403, 404, 422])
+async def test_definitive_native_rejection_reports_failure_for_exactly_once_refund(code):
+    from bot.services.neironych_seedance_admin_service import NeironychAPIError
+
+    native = AsyncMock()
+    native.enabled = True
+    native.list_enabled_wan_models.return_value = {"wan-3"}
+    native.submit.side_effect = NeironychAPIError("definitive validation rejection", status=code)
+    kie = AsyncMock()
+    transport = Wan3NeironychRuntimeTransport(
+        kie=kie, neironych=native, primary_provider=lambda: "neironych",
+    )
+    result = await transport.create_task(recipe(), callback_url=None)
+    assert result["success"] is False
+    assert result["error"] == "api_error"
+    assert result["status_code"] == code
+    kie.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [429, 500, 503])
+async def test_uncertain_native_response_does_not_switch_provider_or_refund(code):
+    from bot.services.neironych_seedance_admin_service import NeironychAPIError
+
+    native = AsyncMock()
+    native.enabled = True
+    native.list_enabled_wan_models.return_value = {"wan-3"}
+    native.submit.side_effect = NeironychAPIError("ambiguous upstream response", status=code)
+    kie = AsyncMock()
+    transport = Wan3NeironychRuntimeTransport(
+        kie=kie, neironych=native, primary_provider=lambda: "neironych",
+    )
+    with pytest.raises(NeironychAPIError):
+        await transport.create_task(recipe(), callback_url=None)
+    kie.create_task.assert_not_awaited()
