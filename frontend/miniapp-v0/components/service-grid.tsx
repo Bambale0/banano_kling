@@ -88,9 +88,15 @@ const toneClass: Record<string, string> = {
 interface ServiceGridProps {
   activeServiceId: string
   onServiceClick: (serviceId: string) => void
+  /** Signed native platform may explicitly disable unsupported services. */
+  unavailableServiceIds?: readonly string[]
+  badgeOverrides?: Record<string, string>
 }
 
-export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProps) {
+export function ServiceGrid({
+  activeServiceId, onServiceClick, unavailableServiceIds = [], badgeOverrides = {},
+}: ServiceGridProps) {
+  const unavailable = new Set(unavailableServiceIds)
   return (
     <div className="space-y-5">
       <div className="relative overflow-hidden rounded-[1.75rem] border border-gold/20 bg-gradient-to-br from-gold/[0.12] via-card/70 to-cyan/[0.08] p-5">
@@ -120,6 +126,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
           {primaryServices.map((service, index) => {
             const Icon = service.icon
             const selected = activeServiceId === service.id
+            const disabled = unavailable.has(service.id)
 
             return (
               <motion.button
@@ -129,15 +136,17 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.04 }}
                 onClick={() => onServiceClick(service.id)}
+                disabled={disabled}
                 className={cn(
                   'group relative overflow-hidden rounded-[1.5rem] border p-4 text-left',
+                  disabled && 'cursor-not-allowed opacity-60',
                   'transition-all duration-300 active:scale-[0.99]',
                   selected
                     ? 'border-gold/45 bg-card/80'
                     : 'border-border/55 bg-card/45 hover:border-border hover:bg-card/70'
                 )}
               >
-                {service.id === 'pinterest-ai' ? (
+                {service.id === 'pinterest-ai' && !disabled ? (
                   <div className="pointer-events-none absolute right-3 top-3 rounded-full border border-gold/40 bg-gold/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gold">
                     NEW
                   </div>
@@ -166,7 +175,7 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                     </div>
 
                     <span className="mt-3 inline-flex rounded-full border border-border/50 bg-background/45 px-3 py-1 text-[11px] text-muted-foreground">
-                      {service.badge}
+                      {disabled ? 'Пока недоступно' : badgeOverrides[service.id] || service.badge}
                     </span>
                   </div>
                 </div>
@@ -182,14 +191,17 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
         <div className="rounded-[1.5rem] border border-border/55 bg-card/40">
           {secondaryServices.map((service, index) => {
             const Icon = service.icon
+            const disabled = unavailable.has(service.id)
 
             return (
               <button
                 key={service.id}
                 type="button"
                 onClick={() => onServiceClick(service.id)}
+                disabled={disabled}
                 className={cn(
                   'flex w-full items-center gap-3 px-4 py-4 text-left transition-colors hover:bg-secondary/30',
+                  disabled && 'cursor-not-allowed opacity-60',
                   index !== secondaryServices.length - 1 && 'border-b border-border/45'
                 )}
               >
@@ -198,7 +210,9 @@ export function ServiceGrid({ activeServiceId, onServiceClick }: ServiceGridProp
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-foreground">{service.title}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{service.description}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {disabled ? 'Пока недоступно для VK-аккаунта' : service.description}
+                  </p>
                 </div>
                 <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" />
               </button>
