@@ -125,6 +125,7 @@ async def _category_row(db: Any, category_id: int) -> Any:
 def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     from bot.services.trend_preview_service import cached_trend_preview_assets
     from bot.shared_accounts.vk_trend_contract import supports_native_vk_image_trend
+    from bot.shared_accounts.vk_video_trends import supports_native_vk_video_trend
     from bot.trend_api import with_trend_repeat_cost
 
     raw = database._prompt_to_dict(database._row_to_user_prompt(row))
@@ -136,6 +137,7 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     # boundary. Reconstructing it from the sanitized card always loses model
     # and quality and silently hides every native VK repeat button.
     public['vk_native_image_repeat_supported'] = supports_native_vk_image_trend(priced)
+    public['vk_native_video_repeat_supported'] = supports_native_vk_video_trend(priced)
     # Always use the same public serializer, even for an administrative list.
     media = cached_trend_preview_assets(public.get("preview_url"))
     public["preview_url"] = media["preview_url"]
