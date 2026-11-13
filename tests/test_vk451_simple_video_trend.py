@@ -7,7 +7,6 @@ from bot.shared_accounts.vk_video_trends import (
 )
 from bot.trend_api import TrustedTrendRun
 
-
 CATALOG = {
     "ok": True,
     "video_models": [{
