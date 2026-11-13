@@ -7,6 +7,14 @@ jest.mock('../vk-standalone-discovery', () => ({
     <section aria-label="VK-native content" data-testid="native-content">{surface}</section>,
 }))
 
+jest.mock('../vk-native-services', () => ({
+  VkNativeServices: ({ onTabChange }: { onTabChange: (tab: number) => void }) =>
+    <section role="status" aria-label="Сервисы NEUROMIX">
+      <h3>Сервисы NEUROMIX</h3>
+      <button type="button" onClick={() => onTabChange(7)}>Нативные партнёры</button>
+    </section>,
+}))
+
 afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
@@ -39,7 +47,7 @@ test('unsupported services never instantiate legacy Telegram service clients', (
   render(<VkNativeWorkspace />)
   fireEvent.click(screen.getByRole('button', { name: 'Сервисы' }))
   expect(screen.queryByTestId('native-content')).not.toBeInTheDocument()
-  expect(screen.getByRole('status')).toHaveTextContent('Сервисы ВКонтакте')
+  expect(screen.getByRole('status')).toHaveTextContent('Сервисы NEUROMIX')
   expect(screen.queryByText('Привяжите Telegram')).not.toBeInTheDocument()
 })
 
@@ -81,4 +89,12 @@ test('VK account linking invite is not discarded by navigating the native tabs',
   render(<VkNativeWorkspace />)
   fireEvent.click(screen.getByRole('button', { name: 'Профиль' }))
   expect(window.location.hash).toBe('#link_' + invite)
+})
+
+test('native VK services partner shortcut navigates to signed VK profile, not Telegram', () => {
+  render(<VkNativeWorkspace />)
+  fireEvent.click(screen.getByRole('button', { name: 'Сервисы' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Нативные партнёры' }))
+  expect(screen.getByTestId('native-content')).toHaveTextContent('profile')
+  expect(screen.getByRole('button', { name: 'Профиль' })).toHaveAttribute('aria-current', 'page')
 })
