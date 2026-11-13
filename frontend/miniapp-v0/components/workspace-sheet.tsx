@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, Mic, PanelTopOpen, Send, Sparkles, Square, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
+import { copyTextToClipboard } from '@/lib/clipboard'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
@@ -765,15 +766,51 @@ function PartnersPanel() {
   )
 }
 
-function SupportPanel() {
+export function SupportPanel() {
+  const { state } = useApp()
+  const rawContact = (state.user.supportContact || '').trim()
+  const supportHandle = /^@[A-Za-z0-9_]{5,32}$/.test(rawContact) ? rawContact : ''
+  const supportUrl = supportHandle ? `https://t.me/${supportHandle.slice(1)}` : ''
+  const message = 'Здравствуйте. Нужна помощь по задаче. Укажу номер задачи, выбранную модель и коротко опишу, что ожидал получить.'
   const tips = [
     'Проверьте, хватает ли баланса для выбранной модели и длительности.',
     'Если задача долго выполняется, откройте её детали и обновите статус.',
     'Для редактирования и анимации обязательно добавьте исходный файл.',
   ]
 
+  async function copyMessage() {
+    try {
+      await copyTextToClipboard(message)
+      toast.success('Текст скопирован')
+    } catch {
+      toast.error('Не удалось скопировать текст')
+    }
+  }
+
   return (
     <div className="space-y-4">
+      {supportUrl && (
+        <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
+          <p className="text-xs text-muted-foreground">Администратор NEUROMIX</p>
+          <p className="mt-2 text-base font-medium text-foreground">{supportHandle}</p>
+          <Button asChild className="mt-3 w-full bg-gold text-background hover:bg-gold/90">
+            <a
+              href={supportUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(event) => {
+                const openTelegramLink = window.Telegram?.WebApp?.openTelegramLink
+                if (typeof openTelegramLink === 'function') {
+                  event.preventDefault()
+                  openTelegramLink(supportUrl)
+                }
+              }}
+            >
+              Написать администратору
+            </a>
+          </Button>
+        </div>
+      )}
       <div className="rounded-2xl border border-border/50 bg-secondary/20 p-4">
         <p className="text-xs text-muted-foreground">Перед обращением</p>
         <div className="mt-3 space-y-2">
@@ -786,11 +823,9 @@ function SupportPanel() {
       </div>
       <div className="rounded-2xl border border-cyan/20 bg-cyan/10 p-4">
         <p className="text-xs text-muted-foreground">Сообщение в поддержку</p>
-        <p className="mt-2 text-sm leading-6 text-foreground">
-          Здравствуйте. Нужна помощь по задаче. Укажу номер задачи, выбранную модель и коротко опишу, что ожидал получить.
-        </p>
+        <p className="mt-2 text-sm leading-6 text-foreground">{message}</p>
         <Button
-          onClick={() => toast.success('Текст скопирован')}
+          onClick={copyMessage}
           className="mt-4 bg-cyan text-background hover:bg-cyan/90"
         >
           Скопировать текст

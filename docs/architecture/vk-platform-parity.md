@@ -74,16 +74,43 @@ video/services/payments/publishing and the full seven-tab VK-only shell are
 outstanding. Do not claim completion merely because a backend HMAC endpoint
 exists or UI components can be rendered.
 
-## Bootstrap readiness review (2026-11-12)
 
-The incremental native bootstrap adapter rejects blocked/unregistered actors and
-malformed mandatory state envelopes, model and package data before exposing a shared view.
-Historical task cards retain the existing tolerant projection: unsupported or
-unrenderable rows are omitted from recent_tasks, never removed from the native
-ledger, so one legacy task cannot hide the wallet or other valid tasks.
-Balances from separate HTTP reads are not an atomic snapshot: a native payment
-or debit may legitimately occur between them. Bootstrap displays the later
-native commerce balance; it never compares two readings as a readiness gate.
-Generation and checkout must still revalidate native funds and prices at write
-time. Upstream errors fail closed through the gateway without private details.
-This adapter still advertises only bootstrap/tasks, not full parity readiness.
+## Shared BalanceSheet native VK checkout (review-only, 2026-11-12)
+
+The shared VK navigation must not use Telegram `createPayment` or its
+`bootstrap` request even when the visible package offers Lava. A verified VK
+actor obtains its own `vk-commerce` view, `payments_enabled` gate and
+Lava methods/packages from the authoritative native SQLite-backed service.
+The same shared `BalanceSheet` mounts `VkNativeCheckout` only after that
+verified read, and carries the exact native idempotency claim across close and
+reopen. Disabled payments, transport failures and unregistered VK actors
+render no checkout actions, never a Telegram fallback. No flag is activated by
+the UI change.
+
+**Not full #451 parity**: the backend still lacks callable native handlers
+for the ten-domain shared shell, including services, feed writes, complete
+video/references, referral/payout reconciliation and result delivery. The
+shared-shell readiness must remain false until live VK WebView and financial
+acceptance proves those end-to-end paths.
+
+
+### Wallet snapshot and invoice immutability follow-up (review-only)
+
+The shared VK BalanceSheet does not display balances, repeat deficits, or task
+statistics from the legacy Telegram application state. It renders the signed
+native VK commerce balance only after validating a finite, nonnegative numeric
+snapshot. Invalid/missing native balances fail closed without an invoice action.
+Once a native invoice request has been issued, the form freezes its package,
+method and email for that checkout attempt: ambiguous timeouts and native
+`creating`/`unknown` states may be retried **only with the exact original
+payload and idempotency claim**. This prevents a second invoice being created
+by editing the terms while the first provider result is unresolved.
+
+A fresh invoice with a new idempotency key is available only after the
+previous attempt has been **confirmed paid**; ambiguous and pending attempts
+remain immutable until a verified status is returned.
+
+
+## 2026-11-13 — Incremental VK native shared-shell bootstrap (#451)
+
+`VkNativeAppAdapter` is registered only as an incomplete adapter (`bootstrap`, `tasks`). Its signed VK actor reads the authoritative native VK state, dynamic model catalogue and commerce wallet, not the Telegram account. The existing 10-domain `full_vk_adapter()` gate rejects it until the remaining native domains are implemented and verified. `VK_FULL_APP_PARITY_ENABLED` and the money/write gates remain OFF by default; no ledger migration or new paid action is introduced. This release slice does **not** constitute full seven-tab VK parity.

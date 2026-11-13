@@ -3195,15 +3195,6 @@ private references and browser-provided actor information fail closed.
 - VK funding offer now filters to packages with a real `lava_offer_id` before recommending a quick checkout; if none exists, no unsupported quick purchase CTA is rendered. The shared UI remains unchanged on Telegram, and all package values remain from authenticated bootstrap/configuration. No fake merchant offer, wallet credit, runtime business settings or payment API write is introduced.
 - RED: 2 new VK-focused frontend tests failed on original branch. GREEN: 32 targeted Jest tests, TypeScript and scoped ESLint passed. Full Jest and production VK build are separate release gates.
 - Real money, successful Lava invoice creation, webhook replay and reward accounting were **not** simulated by this UI fix. Those must pass before #451 full acceptance; do not conflate a safe provider-selection UI with the full native VK payment implementation.
-# VK native shared-shell bootstrap — 2026-11-12
-
-- Baseline: `tanyapi@04fa78b586bcb35bbe9c6d0c20b168be2389b49d`; native dependency `tanyavk@0536bb51356ef02a97277efbfd2b64e41fa1514a` is deployed and exposes dynamically priced model capabilities.
-- User-visible target: the existing `MiniAppShell` can eventually bootstrap a VK-only actor from the real native wallet, task history, model prices, and payment packages without synthesizing a Telegram identity.
-- Current slice: `VkNativeBootstrapService` validates matching wallet snapshots, maps native priced capabilities to the existing frontend DTO, and composes bootstrap + owned task routes in an explicitly incomplete `VkNativeAppAdapter`.
-- Fail-closed decision: readiness is exactly `bootstrap,tasks`; registration alone cannot satisfy the ten-domain `full_vk_adapter` gate or expose the shared shell. Payment/write/full-parity flags remain OFF.
-- Test evidence: RED on missing service; shared-account/bootstrap suite `73 passed, 70 skipped`; focused initial run `2 passed`; scoped Ruff, compileall, and diff check passed.
-- Next: sync pending wallet relay/checkout merges, then implement photo/video write dispatch, public/private trends/feed, services, profile/referrals/payments, and signed WebView financial acceptance before advertising all readiness domains.
-
 # 2026-11-12 — VK shared-operation native wallet relay (#451)
 
 - Baseline: `tanyapi@8b4e9951e9a084d03ad7a7c075c38a831792907d`.
@@ -3221,13 +3212,66 @@ private references and browser-provided actor information fail closed.
 - Next: consume this relay from owner-safe services/feed/repeat adapters, release
   native first, then common backend, then enable only after signed VK WebView E2E.
 
-## 2026-11-12 — #451 full release continuation
 
-- User authorized completion and release of the full issue, not only review. Shared production checkout and runtime data remain untouched; work is in `/root/vk451-release`, native inspection in `/root/vk451-native`.
-- Baseline shared production checkout: de526040211abf825feec0686e1d75b1d8a331af; native: 0536bb51356ef02a97277efbfd2b64e41fa1514a. These are disk revisions, not yet proven running image revisions.
-- Existing: signed actor, native photo/video RPC, native ledger reserve/settle, commerce, tasks, shared shell readiness contract. Partial: bootstrap PR #479, checkout isolation #483, linked readiness fixes. Missing: complete domain routing and actual embedded VK/payment/refund acceptance.
-- First slice: finish #479 review findings (blocked actors, malformed upstream, concurrent wallet snapshots, redacted failures), run isolated Python 3.12 regression and update PR without bypassing required CI.
-- Follow-up slices: linked actor isolation; shared checkout; photo/video/reference execution; feed/private repeats and services; profile/referrals/delivery. Keep full parity/money gates OFF until all operations and acceptance are verified.
-- No ledger migration, fake TG identity, price hardcoding, or production wallet mutation. Native wallet remains authoritative. No new configuration for the bootstrap fix.
-- Tests use synthetic actors, temporary DB and mocked upstream; production read-only health/SHA/flag checks later. Requested owner availability for genuine embedded VK acceptance; no credentials requested in chat.
-- Initial local test attempt failed at fixture setup under Python 3.10 (`datetime.UTC`); preparing isolated 3.12 to match CI. Required tool repositories updated; implement, clean-code, PR checklist and webapp-testing guidance consulted.
+## 2026-11-12 — VK shared BalanceSheet native checkout isolation (#451, review only)
+
+- Base: `tanyapi@f3d6fa915d81ef46ec86169bd57a82e06dce8be3`; separate review PR only. Do **not** merge, auto-merge, deploy or enable feature flags until explicitly requested.
+- Reproduced risk: shared `BalanceSheet` rendered Telegram-priced packages for VK and sent its Lava payment action through Telegram-owned `createPayment`. The payment UI must not obtain a TG actor, package, invoice or bootstrap email for an unlinked VK user.
+- Fix: VK shared balance panel consumes authenticated `account-preview/vk-commerce` and its native model-independent package/method list; it reuses native VK `VkNativeCheckout` with cryptographically strong and persistent idempotency claims. The old Telegram `createPayment` path and bootstrap email request are unreachable on VK; TG UI and providers are unchanged.
+- Fail-closed: native commerce errors/unregistered accounts and missing double payment flags cannot expose any payment action. The existing native BFF validates the verified actor and `VK_MINIAPP_CHECKOUT_ENABLED` plus native `VK_MINIAPP_PAYMENTS_ENABLED` before enabling checkout; no payment was actually created.
+- Tests: focused payment/VK scope 42/42, full Jest 105 suites/799 tests with two worker isolation, TypeScript, scoped ESLint and production VK static build all passed. A single-worker full run exposed order-dependent failures in unrelated reference-library tests; the same tests pass alone, and the complete suite passes with two workers. Fixed an independently reproduced test setup error by making the mocked Telegram property configurable, so auth-cache tests can delete it as intended.
+- Release: full VK parity **still blocked**, because native callable adapters only cover parts of the ten required domains. No native money operations, server configuration, pricing, deployment, master/tanyapi merge or actual VK WebView invoice/refund acceptance was performed.
+
+- Follow-up on the same Draft PR (review-only): replicated and guarded against
+  showing legacy Telegram `user.credits`, task statistics and repeat deficits
+  on the shared VK balance sheet before native bootstrap is complete. Native
+  `vk-commerce` balance is now the sole displayed amount, strictly validated.
+  Added regression tests for wrong-platform credit leakage and malformed native
+  snapshots. A second regression reproduces editable invoice terms after an
+  ambiguous provider outcome; package, method and email now freeze after the
+  first native invoice request, with exact-payload retries. No payment or live
+  wallet operation was initiated. Await exact-head GitHub CI before reporting
+  the review branch ready.
+
+
+## 2026-11-13 — Mini App bootstrap latency and PostgreSQL pool pressure
+
+- Baseline: production image SHA 8d7b0313 at diagnosis; shared tanyapi branch baseline 58727096.
+- Symptoms: Telegram Mini App took seconds/tens of seconds to open. Live bootstrap p50 2.18s, p95 10.61s (570 requests/20min); 533 pool-exhaustion warnings in the earlier incident window.
+- Contributors: bootstrap fetched full partner analytics for two repeat-balance fields; partner overview nested another DB connection; notification drain issued a DELETE/COMMIT on every bootstrap and could remove concurrently inserted notifications.
+- Fix: authenticated actor + a single pending-withdrawal aggregate preserving available-balance cap; full partner overview no longer nests connections. Notification drain deletes only observed IDs, batches large lists and skips writes when no notices.
+- Observability: slow bootstrap phase timings, configurable MINIAPP_BOOTSTRAP_SLOW_LOG_MS (default 2500 ms). Never log credentials, user profile or request payload. No schema, payment or frontend contract changes.
+- TDD: regression tests first reproduced the missing fast snapshot and over-deletion/no-op writes; rerun tests after changes.
+- Release: Python compile, DB/Mini App/partner tests, lint diff review, protected PR to tanyapi, exact-SHA CI + deploy, production health and latency sample. Do not claim production deployment before verification.
+- Rollback: revert this task PR only if a regression is observed.
+
+
+### Additional root cause: synchronous S3 cache materialization in bootstrap
+
+- Saved-reference availability filter invoked resolve_local_upload_path for each persisted /uploads URL. In S3 mode, this calls materialize_upload, which downloads missing media and blocks the event loop while building the Mini App initial payload.
+- Fix: in S3 mode, do not materialize media during read-only list filtering. The existing generation-time resolver still checks/downloads inputs when they are actually needed. Local mode retains missing-file filtering.
+- Regression: a 24-reference S3 fixture first failed because it caused 24 eager materializations; after the fix it causes zero. The local-mode fallback still performs file availability checks.
+- Risk: genuinely missing objects can remain visible as saved references until a generation uses them or a separate reconciliation detects them. Avoid trading bootstrap latency for eager S3 HEAD checks inside this route.
+
+
+### 2026-11-13 — PostgreSQL heavy-scan incident containment
+
+- Observed on production 95a9fd85: PostgreSQL pool checkout timeouts, Mini App
+  bootstrap p95 above 13 seconds, intermittent HTTP 500 even after S3 bootstrap fix.
+- generation_tasks has approximately 378,000 rows / 2.1 GB. The watchdog
+  referral reconciliation plan scanned generation request JSON for ~12,000
+  pending referrals (planner cost ~372k). Wan3 result expiration repeatedly
+  performed an unindexed request_data LIKE '%filename%' scan.
+- PostgreSQL referral reconciliation now scans at most a bounded, fair batch
+  of pending referrals; advances last_checked_at even for ineligible ones; and
+  probes each account by existing indexed generation_tasks.user_id. Atomic
+  referral crediting still controls idempotency; SQLite behavior is unchanged.
+- Wan3 PostgreSQL result expiration fails closed: it defers deletion (and its
+  full-table scan), leaving delivered media untouched. Upload/session cleanup
+  is unaffected. WAN3_PG_RESULT_FULL_SCAN_ENABLED=1 opts back into the legacy
+  scan, but MUST NOT be enabled on the unindexed 2.1 GB production table.
+  Follow up with a durable reverse-reference index and audited retention.
+- An aborted CREATE INDEX CONCURRENTLY left an invalid index, which was
+  confirmed and safely dropped concurrently; no business rows were changed.
+- Verify with full CI and guarded PostgreSQL tests, exact-SHA deployment,
+  production health, sustained p50/p95 and pool-timeout telemetry.

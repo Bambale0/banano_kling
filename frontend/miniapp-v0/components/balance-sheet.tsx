@@ -13,6 +13,8 @@ import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import { currentAccountPlatform } from '@/lib/account-platform'
 import type { PaymentProvider } from '@/lib/types'
+import { VkSharedBalanceCheckout } from '@/components/vk-shared-balance-checkout'
+import type { VkCheckoutAttempt } from '@/components/vk-native-checkout'
 import {
   paymentPriceLabel,
   preferredProviderForPackage,
@@ -76,6 +78,8 @@ export function BalanceSheet() {
   const { state, isBalanceOpen, balanceRequest, closeBalance, refreshBalance } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
   const vkPaymentsOnly = currentAccountPlatform() === 'vk'
+  // Native checkout claim survives modal close/reopen to preserve financial idempotency.
+  const [vkCheckoutAttempt, setVkCheckoutAttempt] = useState<VkCheckoutAttempt | null>(null)
   const selectedPackageId = balanceRequest?.packageId
   const selectedPackage = paymentPackages.find((pkg) => pkg.id === selectedPackageId)
   const orderedPackages = selectedPackageId
@@ -149,7 +153,9 @@ export function BalanceSheet() {
     : null
 
   useEffect(() => {
-    if (!isBalanceOpen) return
+    // VK's private commerce is fetched through its own signed actor relay.
+    // Telegram bootstrap must not inspect VK users or fetch a TG payment email.
+    if (!isBalanceOpen || vkPaymentsOnly) return
 
     let cancelled = false
     void bootstrapApp()
@@ -168,7 +174,7 @@ export function BalanceSheet() {
     return () => {
       cancelled = true
     }
-  }, [isBalanceOpen])
+  }, [isBalanceOpen, vkPaymentsOnly])
 
   const focusCustomerEmail = () => {
     window.setTimeout(() => {
@@ -220,7 +226,9 @@ export function BalanceSheet() {
   }
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
-    if (paymentRequestInFlight.current || mode !== 'live') return
+    // The legacy createPayment route is Telegram-owned. Never submit a VK
+    // actor's checkout there, even if a stale button survives a UI update.
+    if (vkPaymentsOnly || paymentRequestInFlight.current || mode !== 'live') return
     const selectedPackage = paymentPackages.find((item) => item.id === packageId)
     if (!selectedPackage) return
     if (vkPaymentsOnly && !isLavaProvider(provider)) {
@@ -379,7 +387,7 @@ export function BalanceSheet() {
             </div>
 
             <div className="space-y-5 px-5 pb-6">
-              {requiredCredits > 0 ? (
+              {requiredCredits > 0 && !vkPaymentsOnly ? (
                 <section role="region" aria-label="Пополнение для повтора" className="rounded-2xl border border-gold/30 bg-gold/5 p-4">
                   <p className="text-sm font-semibold text-foreground">Пополнение для вашего видео</p>
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
@@ -405,7 +413,7 @@ export function BalanceSheet() {
                     </Button>
                   ) : (
                     <>
-                      {selectedPackage && selectedProvider ? (
+                      {!vkPaymentsOnly && selectedPackage && selectedProvider ? (
                         <>
                           <p className="mt-3 text-sm text-muted-foreground">
                             Подойдёт пакет «{selectedPackage.name}»: {selectedCredits}🍌 за {selectedPrice}
@@ -442,7 +450,7 @@ export function BalanceSheet() {
                   )}
                 </section>
               ) : null}
-              {manualPaymentUrl && !readyPayment ? (
+              {!vkPaymentsOnly && manualPaymentUrl && !readyPayment ? (
                 <section ref={manualPaymentRef} role="region" aria-label="Ссылка на оплату"
                   className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="text-sm text-muted-foreground">
@@ -465,7 +473,7 @@ export function BalanceSheet() {
                   </Button>
                 </section>
               ) : null}
-              {readyPayment ? (
+              {!vkPaymentsOnly && readyPayment ? (
                 <section ref={paymentReadyRef} aria-label="Готовый счёт" className="rounded-2xl border border-gold/40 bg-gold/10 p-4">
                   <p className="font-medium text-foreground">Счёт готов: {readyPayment.amountRub !== null ? `${readyPayment.amountRub} ₽ · ` : ''}{readyPayment.credits}🍌</p>
                   <p className="mt-2 text-sm text-muted-foreground">
@@ -493,6 +501,7 @@ export function BalanceSheet() {
                   </Button>
                 </section>
               ) : null}
+              {!vkPaymentsOnly ? (<>
               <div className="rounded-2xl border border-gold/20 bg-gold/10 p-4">
                 <div className="flex items-center justify-between gap-4">
                   <div>
@@ -501,7 +510,7 @@ export function BalanceSheet() {
                       <Banana className="h-5 w-5 text-gold" />
                       <span className="text-2xl font-semibold text-gold">{user.credits}</span>
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">Welcome-бонус для новых пользователей: 5🍌</p>
+                    {!vkPaymentsOnly ? <p className="mt-2 text-xs text-muted-foreground">Welcome-бонус для новых пользователей: 5🍌</p> : null}
                   </div>
                   <div className="rounded-2xl border border-cyan/20 bg-background/30 px-4 py-3 text-right">
                     <p className="text-xs text-muted-foreground">Режим</p>
@@ -517,7 +526,9 @@ export function BalanceSheet() {
                 <StatCard icon={CreditCard} label="Видео" value={`${videoTasks}`} />
               </div>
 
-              <label className="block space-y-2" htmlFor="payment-customer-email">
+              </>) : null}
+
+              {!vkPaymentsOnly ? <label className="block space-y-2" htmlFor="payment-customer-email">
                 <span className="text-sm font-medium text-foreground">Почта для оплаты через Lava.top</span>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -544,9 +555,13 @@ export function BalanceSheet() {
                 {customerEmail && !customerEmailValid ? (
                   <span className="block text-xs text-destructive">Проверьте формат почты.</span>
                 ) : null}
-              </label>
+              </label> : null}
 
               <div ref={packagesRef}>
+                {vkPaymentsOnly ? (
+                  <VkSharedBalanceCheckout isOpen={isBalanceOpen}
+                    attempt={vkCheckoutAttempt} onAttemptChange={setVkCheckoutAttempt} />
+                ) : (<>
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="font-serif text-lg text-foreground">Пакеты бананов</h3>
                   <span className="text-xs text-muted-foreground">Быстрый выбор пакета</span>
@@ -751,6 +766,7 @@ export function BalanceSheet() {
                     )
                   })}
                 </div>
+                </>)}
               </div>
 
               <Button

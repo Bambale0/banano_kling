@@ -132,7 +132,10 @@ async def test_installed_bootstrap_prices_both_models_per_actor_without_global_l
     monkeypatch.setattr(miniapp, "_cached_bot_me", AsyncMock(return_value=SimpleNamespace(username="synthetic_bot")))
     for name in ("_fetch_recent_tasks", "list_saved_references", "get_and_clear_miniapp_notifications"):
         monkeypatch.setattr(miniapp, name, AsyncMock(return_value=[]))
-    monkeypatch.setattr(miniapp, "get_partner_overview", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        miniapp, "get_miniapp_prompt_repeat_snapshot",
+        AsyncMock(return_value={"prompt_repeat_balance_rub": 0, "prompt_repeat_total_rub": 0}),
+    )
     monkeypatch.setattr(miniapp, "can_attempt_telegram_delivery", AsyncMock(return_value=True))
     monkeypatch.setattr(miniapp, "needs_telegram_bot_start", AsyncMock(return_value=False))
     tariff = AsyncMock(side_effect=["creator", "standard"])

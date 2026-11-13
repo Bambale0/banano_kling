@@ -253,8 +253,43 @@ async def reconcile_pending_invite_bonuses(limit: int = 100) -> int:
                 version = f"json_extract({safe_json}, '$.partner_policy_version') = 2"
                 accepted = f"json_extract({safe_json}, '$.partner_generation_accepted') = 1"
                 eligible = f"json_extract({safe_json}, '$.partner_invite_eligible') = 1"
-            cursor = await db.execute(
-                f"""SELECT bonus.referred_id, MIN(task.id) AS generation_id
+            limit = max(1, min(int(limit), 1000))
+            if db_backend.is_postgres():
+                # Bound the recovery scan to a fair batch of referral IDs instead
+                # of evaluating every generation_tasks.request_data JSON field.
+                sql = f"""
+                    WITH due AS MATERIALIZED (
+                        SELECT referred_id, after_generation_id
+                        FROM referral_activation_bonuses
+                        WHERE granted_at IS NULL
+                        ORDER BY CASE WHEN last_checked_at IS NULL THEN 0 ELSE 1 END,
+                                 last_checked_at, referred_id
+                        LIMIT ?
+                    ),
+                    marked AS (
+                        UPDATE referral_activation_bonuses AS bonus
+                        SET last_checked_at = CURRENT_TIMESTAMP
+                        FROM due
+                        WHERE bonus.referred_id = due.referred_id
+                          AND bonus.granted_at IS NULL
+                        RETURNING bonus.referred_id, bonus.after_generation_id
+                    )
+                    SELECT marked.referred_id, candidate.generation_id
+                    FROM marked LEFT JOIN LATERAL (
+                        SELECT task.id AS generation_id
+                        FROM generation_tasks task
+                        WHERE task.user_id = marked.referred_id
+                          AND task.id > marked.after_generation_id
+                          AND task.type IN ('image', 'video', 'motion_control', 'audio', 'character')
+                          AND COALESCE(task.cost, 0) > 0
+                          AND COALESCE(task.action_type, '') != 'admin_replay'
+                          AND {version} AND {eligible}
+                          AND ({accepted} OR (task.status = 'completed' AND task.result_url IS NOT NULL))
+                        ORDER BY task.id LIMIT 1
+                    ) AS candidate ON TRUE
+                """
+            else:
+                sql = f"""SELECT bonus.referred_id, MIN(task.id) AS generation_id
                    FROM referral_activation_bonuses bonus
                    JOIN generation_tasks task ON task.user_id = bonus.referred_id
                    WHERE bonus.granted_at IS NULL AND task.id > bonus.after_generation_id
@@ -264,10 +299,15 @@ async def reconcile_pending_invite_bonuses(limit: int = 100) -> int:
                      AND ({accepted} OR (task.status = 'completed' AND task.result_url IS NOT NULL))
                    GROUP BY bonus.referred_id, bonus.last_checked_at
                    ORDER BY CASE WHEN bonus.last_checked_at IS NULL THEN 0 ELSE 1 END,
-                            bonus.last_checked_at, bonus.referred_id LIMIT ?""",
-                (max(1, min(int(limit), 1000)),),
-            )
-            candidates = [dict(row) for row in await cursor.fetchall()]
+                            bonus.last_checked_at, bonus.referred_id LIMIT ?"""
+            cursor = await db.execute(sql, (limit,))
+            candidates = [
+                dict(row)
+                for row in await cursor.fetchall()
+                if row["generation_id"] is not None
+            ]
+            if db_backend.is_postgres():
+                await db.commit()
         for candidate in candidates:
             async with db_backend.connect() as db:
                 await db.execute(

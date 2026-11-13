@@ -432,3 +432,88 @@ async def test_miniapp_feed_remix_falls_back_to_profile_only_source(monkeypatch)
         viewer_user_id=7,
         include_unavailable=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_postgres_schema_fastpath_is_read_only_under_concurrent_requests(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    publication = _load_publication_scope_module()
+    monkeypatch.setattr(publication.database, "DATABASE_PATH", "pg-publication-fastpath-test")
+    monkeypatch.setattr(publication.db_backend, "is_postgres", lambda: True)
+
+    columns = [
+        ("is_profile_visible",),
+        ("profile_published_at",),
+        ("feed_reference_selection",),
+        ("feed_repeat_reference_selection",),
+    ]
+    queries = []
+    connections = []
+
+    class Cursor:
+        async def fetchall(self):
+            return columns
+
+    class DB:
+        async def execute(self, statement, *args):
+            queries.append(statement)
+            assert "information_schema.columns" in statement, (
+                "existing PostgreSQL schema must not run ALTER TABLE / full-table backfill"
+            )
+            await asyncio.sleep(0.01)
+            return Cursor()
+
+        async def commit(self):
+            raise AssertionError("read-only existing schema must not commit")
+
+    @asynccontextmanager
+    async def connection(*args, **kwargs):
+        connections.append((args, kwargs))
+        yield DB()
+
+    monkeypatch.setattr(publication.db_backend, "connect", connection)
+    await asyncio.gather(*(publication._ensure_publication_scope_schema() for _ in range(12)))
+    assert len(connections) == 1
+    assert len(queries) == 1
+    assert "pg-publication-fastpath-test" in publication._SCHEMA_READY_PATHS
+
+
+@pytest.mark.asyncio
+async def test_postgres_schema_missing_column_still_migrates(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    publication = _load_publication_scope_module()
+    monkeypatch.setattr(publication.database, "DATABASE_PATH", "pg-publication-migration-test")
+    monkeypatch.setattr(publication.db_backend, "is_postgres", lambda: True)
+    queries = []
+    committed = []
+
+    class Cursor:
+        async def fetchall(self):
+            return [
+                ("is_profile_visible",),
+                ("profile_published_at",),
+                ("feed_reference_selection",),
+            ]
+
+    class DB:
+        async def execute(self, statement, *args):
+            queries.append(statement)
+            return Cursor()
+
+        async def commit(self):
+            committed.append(True)
+
+    @asynccontextmanager
+    async def connection(*args, **kwargs):
+        yield DB()
+
+    monkeypatch.setattr(publication.db_backend, "connect", connection)
+    await publication._ensure_publication_scope_schema()
+    ddl = [query for query in queries if query.startswith("DO $$")]
+    assert len(ddl) == 1
+    assert "ADD COLUMN feed_repeat_reference_selection" in ddl[0]
+    assert any("UPDATE generation_tasks" in query for query in queries)
+    assert committed == [True]

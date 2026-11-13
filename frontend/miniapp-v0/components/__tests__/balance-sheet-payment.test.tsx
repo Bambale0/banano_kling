@@ -4,11 +4,13 @@ import { BalanceSheet } from '@/components/balance-sheet'
 import { useApp } from '@/lib/app-context'
 import { createPayment } from '@/lib/payment-api'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
+import { fetchVkNativeCommerce } from '@/lib/shared-account-api'
 import { toast } from 'sonner'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
 jest.mock('@/lib/api', () => ({ bootstrapApp: jest.fn(), sendMiniAppClientLog: jest.fn() }))
+jest.mock('@/lib/shared-account-api', () => ({ fetchVkNativeCommerce: jest.fn() }))
 
 const exactUrl = 'https://gate.lava.top/pay/fixture-9007199254740993123?order=fixture&signature=synthetic'
 const openLink = jest.fn()
@@ -333,7 +335,7 @@ it.each([
 })
 
 
-it('shows only Lava payment methods in the VK application', () => {
+it('shows VK-native commerce, not the Telegram Lava packages, in the shared balance panel', async () => {
   window.history.replaceState({}, '', '/?vk_app_id=54880352&vk_user_id=2001&sign=test')
   ;(useApp as jest.Mock).mockReturnValue({
     ...fixture,
@@ -352,13 +354,24 @@ it('shows only Lava payment methods in the VK application', () => {
     },
   })
 
+  ;(fetchVkNativeCommerce as jest.Mock).mockResolvedValue({
+    ok: true, registered: true, balance: 1, payments_enabled: true,
+    payment_packages: [{
+      id: '250', price_rub: 250, credits: 25,
+      lava_offer_id: 'native-vk-offer', methods: ['lava_card', 'lava_sbp'],
+    }], payments: [],
+    referrals: { first_level_count: 0, second_level_count: 0, earned_rub: 0 },
+  })
   render(<BalanceSheet />)
+  expect(await screen.findByRole('form', { name: 'Пополнение VK-баланса' })).toBeInTheDocument()
+  expect(fetchVkNativeCommerce).toHaveBeenCalledTimes(1)
 
   expect(screen.queryByText(/Robokassa/i)).not.toBeInTheDocument()
   expect(screen.queryByText('Резерв · KASSA')).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: /Stars/ })).not.toBeInTheDocument()
   expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'Карта' })).toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'СБП' })).toBeInTheDocument()
-  expect(screen.getByText('Lava.top · основной способ')).toBeInTheDocument()
+  expect(screen.getByRole('option', { name: '250 ₽ · 25 🍌' })).toBeInTheDocument()
+  expect(screen.queryByText('Старт')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Получить ссылку на оплату' })).toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
 })
