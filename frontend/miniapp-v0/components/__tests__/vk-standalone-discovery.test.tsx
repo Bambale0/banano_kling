@@ -432,3 +432,58 @@ test('VK-only video action uses the existing studio panel when backend is ready'
   expect(screen.getByLabelText('Фото-референсы')).toBeDisabled()
   expect(generateVkVideo).not.toHaveBeenCalled()
 })
+
+test('native VK Trends tab displays the real curated catalogue without a second navigation', async () => {
+  render(<VkStandaloneDiscovery surface="trends" />)
+  expect(await screen.findByText('Ретро портрет')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Мои работы' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Лента' })).not.toBeInTheDocument()
+})
+
+test('native VK Feed tab loads the public feed, never another user’s private tasks', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: false, items: [{
+      id: 12, generation_type: 'video', preview_url: null,
+      result_url: 'https://example.test/public.mp4', likes_count: 9,
+    }],
+  })
+  render(<VkStandaloneDiscovery surface="feed" />)
+  expect(await screen.findByText(/🎬 Видео · ❤ 9/)).toBeInTheDocument()
+  expect(fetchVkPublicDiscovery).toHaveBeenCalledWith('feed', expect.anything())
+  expect(screen.queryByRole('button', { name: 'Тренды' })).not.toBeInTheDocument()
+})
+
+test('native VK Profile tab reads its own wallet, tasks and referral info', async () => {
+  render(<VkStandaloneDiscovery surface="profile" />)
+  expect(await screen.findByText('Оплаты и партнёрская программа')).toBeInTheDocument()
+  expect(screen.getByText(/Партнёрский доход: 95/)).toBeInTheDocument()
+  expect(screen.getByRole('link', { name: 'Открыть результат #7' })).toHaveAttribute(
+    'href', 'https://example.test/result.jpg',
+  )
+  expect(fetchVkNativeCommerce).toHaveBeenCalled()
+  expect(fetchVkPublicDiscovery).not.toHaveBeenCalled()
+})
+
+test('native VK Video tab never mounts a paid form while server write gate is OFF', async () => {
+  render(<VkStandaloneDiscovery surface="video" />)
+  expect(await screen.findByText(/Создание видео через Mini App пока недоступно/)).toBeInTheDocument()
+  expect(fetchVkModelCatalog).not.toHaveBeenCalled()
+  expect(screen.queryByRole('button', { name: 'Создать видео' })).not.toBeInTheDocument()
+})
+
+test('native VK Photo tab fails closed if the signed server does not allow generation', async () => {
+  render(<VkStandaloneDiscovery surface="photo" />)
+  expect(await screen.findByText(/Создание фото через Mini App пока недоступно/)).toBeInTheDocument()
+  expect(fetchVkModelCatalog).not.toHaveBeenCalled()
+  expect(screen.queryByText('Ретро портрет')).not.toBeInTheDocument()
+})
+
+test('native VK Photo tab mounts the common native composer only when backend advertises writes', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: true, categories: [],
+  })
+  render(<VkStandaloneDiscovery surface="photo" />)
+  expect(await screen.findByRole('button', { name: 'Создать фото' })).toBeInTheDocument()
+  await waitFor(() => expect(fetchVkModelCatalog).toHaveBeenCalled())
+  expect(screen.queryByText('Ретро портрет')).not.toBeInTheDocument()
+})
