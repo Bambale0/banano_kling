@@ -592,6 +592,11 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'preview_url': card.get('preview_url'),
                 'result_url': card.get('result_url'),
                 'likes_count': int(card.get('likes_count') or 0),
+                'can_repeat_in_app': (
+                    os.getenv('VK_MINIAPP_FEED_REPEAT_ENABLED') == '1'
+                    and os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+                    and native_vk_feed_repeat_model(card) is not None
+                ),
             }
             for card in cards if card.get('gen_type') in {'image', 'video'}
         ]
