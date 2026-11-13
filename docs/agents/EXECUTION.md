@@ -1,3 +1,12 @@
+## 2026-11-13 — #451 independent VK basic video trend repeat (review stage)
+
+- Base: `tanyapi@10ab1deee83a74f4feda300688f54e57b37dbd07`; branch `feat/vk451-simple-video-trend-20261113`. Dependent frontend photo/video panel lives in #495.
+- Verified gap: `vk_native_trend` only used image executor and rejected all video cards; native VK video already offers HMAC signed quote/task and native SQLite idempotency. Shared seven-tab VK gateway is still incomplete.
+- Contract: public curated trend lookup + approved_public_only row; trusted server variable render; no user-provided prompt/provider/model/price, verify owner-scoped image refs; reject any fixed private assets from `trend_reference_assets`, seedance editing, private contracts, other audio/video inputs; check live native VK model catalog before quote/submit. Native wallet exclusively owns debit/refund; return task_id/cost only.
+- TDD regressions: unapproved/unlisted public ID, photo ownership, fixed assets, dynamic model ratio/scenario/duration/ref caps, missing claim or expected quote, photo-only compatibility, public card feature gate. No DB migration/price/provider/flag default change.
+- Rollout: protected CI + exact-SHA deploy; keep both video write flags OFF until real signed VK WebView, native provider paid generation and refund/reconciliation E2E. Failing capability check must never enable shared full-app mode. Frontend video-trend repeat button/claim mapping to be done against #495 after merge.
+- Rollback: keep video write flag OFF or revert this PR. Full issue #451 remains open; private feed/remix, services, profile, checkout/refunds and all ten domains are not ready.
+
 ## 2026-11-12 — Lava.top first, Robokassa hidden from NEW checkout methods (reconciliation of #469)
 
 - This change preserves the restored in-chat offer and privacy contract from #481.
