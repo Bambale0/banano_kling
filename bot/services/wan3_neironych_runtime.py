@@ -195,9 +195,23 @@ class Wan3NeironychRuntimeTransport:
                 models = set()
             if payload["model"] in models:
                 # Never catch an uncertain POST and start a second paid KIE job.
-                result = await self.neironych.submit(
-                    payload, idempotency_key=recipe.provider_submission_id,
-                )
+                try:
+                    result = await self.neironych.submit(
+                        payload, idempotency_key=recipe.provider_submission_id,
+                    )
+                except NeironychAPIError as exc:
+                    # Explicit provider rejection: no task was accepted, so the
+                    # existing Wan lifecycle can refund the reserved credits.
+                    if exc.status in {400, 401, 402, 403, 404, 422}:
+                        return {
+                            "success": False,
+                            "error": "api_error",
+                            "status_code": exc.status,
+                            "message": "Neironych rejected the generation request",
+                        }
+                    # 429/5xx may arrive after acceptance at an upstream
+                    # gateway: never start a second paid KIE request.
+                    raise
                 request_id = str(result["request_id"])
                 if not _SAFE_REQUEST_ID.fullmatch(request_id):
                     raise RuntimeError("Invalid Neironych acceptance identifier")
