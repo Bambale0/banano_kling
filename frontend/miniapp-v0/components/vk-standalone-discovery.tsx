@@ -64,7 +64,7 @@ function TrendCard({ item, onRepeat, onShare }: {
   </article>
 }
 
-function FeedCard({ item }: { item: VkPublicFeedItem }) {
+function FeedCard({ item, onShare }: { item: VkPublicFeedItem; onShare?: (item: VkPublicFeedItem) => void }) {
   return <article className="min-w-0 rounded-2xl border border-border/70 bg-card p-2">
     <Preview
       image={item.preview_url || (item.generation_type === 'image' ? item.result_url : null)}
@@ -74,6 +74,11 @@ function FeedCard({ item }: { item: VkPublicFeedItem }) {
     <p className="px-1 py-2 text-xs text-muted-foreground">
       {item.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · ❤ {item.likes_count}
     </p>
+    {item.share_link && onShare ? <button type="button"
+      onClick={() => onShare(item)}
+      className="mx-1 mb-1 w-[calc(100%-0.5rem)] rounded-lg border border-border px-2 py-2 text-xs font-medium">
+      Ссылка на публикацию #{item.id}
+    </button> : null}
   </article>
 }
 
@@ -94,6 +99,7 @@ export function VkStandaloneDiscovery() {
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [shareTitle, setShareTitle] = useState('')
+  const [shareKind, setShareKind] = useState<'trend' | 'feed'>('trend')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
   const [createPhoto, setCreatePhoto] = useState(false)
   const [createVideo, setCreateVideo] = useState(false)
@@ -199,11 +205,16 @@ export function VkStandaloneDiscovery() {
     setRepeatItem(null)
   }
 
-  const openShareLink = (item: VkPublicTrend) => {
+  const openShareLink = (item: VkPublicTrend | VkPublicFeedItem) => {
     const url = item.share_link || ''
-    // Trusted app origin and public ID only, no signed session or private media.
-    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#prompt_[1-9][0-9]*$/.test(url)) return
-    setShareTitle(item.title)
+    const isTrend = 'title' in item
+    const expectedKind = isTrend ? 'prompt' : 'feed'
+    // Public VK app + community route with exact item ID only. Never accept
+    // a Telegram URL, foreign domain, private recipe or arbitrary deeplink.
+    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#(?:prompt|feed)_[1-9][0-9]*$/.test(url)
+      || !url.endsWith(`#${expectedKind}_${item.id}`)) return
+    setShareKind(isTrend ? 'trend' : 'feed')
+    setShareTitle(isTrend ? item.title : `Публикация #${item.id}`)
     setShareLink(url)
     setShareCopyMessage('')
   }
@@ -337,10 +348,10 @@ export function VkStandaloneDiscovery() {
         Мои работы
       </button>
     </div>
-    {shareLink ? <div role="dialog" aria-label="Поделиться трендом"
+    {shareLink ? <div role="dialog" aria-label={shareKind === 'trend' ? 'Поделиться трендом' : 'Поделиться публикацией'}
       className="space-y-3 rounded-xl border border-border bg-card p-3">
       <h3 className="text-sm font-semibold">Ссылка на «{shareTitle}»</h3>
-      <input aria-label="Ссылка на тренд" type="text" readOnly value={shareLink}
+      <input aria-label={shareKind === 'trend' ? 'Ссылка на тренд' : 'Ссылка на публикацию'} type="text" readOnly value={shareLink}
         onFocus={event => event.currentTarget.select()}
         className="w-full rounded-lg border border-border bg-background p-2 text-xs" />
       <div className="flex flex-wrap gap-2">
@@ -481,7 +492,7 @@ export function VkStandaloneDiscovery() {
     )) : null}
     {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
-        {discovery.items.map(item => <FeedCard key={item.id} item={item} />)}
+        {discovery.items.map(item => <FeedCard key={item.id} item={item} onShare={openShareLink} />)}
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">
