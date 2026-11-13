@@ -8,7 +8,6 @@ from aiohttp.test_utils import make_mocked_request
 from bot import database, trend_catalog
 from bot.shared_accounts import api
 
-
 PROMPT = {
     "id": 31, "status": "approved", "is_public": True, "tags": ["trend"],
     "prompt_text": "Two friendly foxes wave", "model": "v3_std",
