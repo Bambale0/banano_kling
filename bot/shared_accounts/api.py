@@ -204,7 +204,7 @@ def _vk_public_trend_card(card: dict, *, vk_app_id: int | None = None,
              and card.get('vk_native_image_repeat_supported') is True)
             or
             (os.getenv('VK_MINIAPP_VIDEO_WRITES_ENABLED') == '1'
-             and supports_native_vk_video_trend(card))
+             and card.get('vk_native_video_repeat_supported') is True)
         ),
         'user_fields': safe.get('user_fields', []),
     }
