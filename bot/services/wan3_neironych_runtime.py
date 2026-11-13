@@ -275,7 +275,19 @@ class Wan3NeironychRuntimeTransport:
             if payload["model"] in models:
                 # Commit the native route before the paid POST. A lost receipt
                 # can then be looked up by the stable X-Client-Request-Id.
-                await self.record_attempt(recipe.provider_submission_id)
+                try:
+                    await self.record_attempt(recipe.provider_submission_id)
+                except Exception as exc:  # noqa: BLE001 - no paid provider call has started
+                    logger.error(
+                        "Wan3 native submission preflight persistence failed task=%s error_type=%s",
+                        recipe.provider_submission_id, type(exc).__name__,
+                    )
+                    return {
+                        "success": False,
+                        "error": "api_error",
+                        "status_code": 503,
+                        "message": "Provider route persistence failed before submission",
+                    }
                 # Never catch an uncertain POST and start a second paid KIE job.
                 try:
                     result = await self.neironych.submit(
