@@ -256,6 +256,8 @@ export interface VkNativeState {
   tasks: VkNativeTask[]
   /** Server-side feature gate; never infer paid write permission from a model list. */
   video_generation_enabled?: boolean
+  /** Signed native photo upload capability, independent from Telegram link. */
+  photo_upload_enabled?: boolean
   /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
   recent_tasks?: Task[]
 }
