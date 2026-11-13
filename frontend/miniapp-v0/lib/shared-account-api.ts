@@ -634,7 +634,7 @@ export async function startAccountAppSession(signal?: AbortSignal): Promise<Acco
   // Detach synchronously. Never allow an old logout's eventual completion
   // to clear a newer session installed while its HTTP request was in flight.
   const previousToken = releaseAppSession()
-  await revokeAppSession(previousToken)
+  if (previousToken) await revokeAppSession(previousToken)
   assertLatestAppSession(revision, signal)
   const verifiedLaunch = accountLaunch()
   const login = await request<{ session_token: string; account: { id: string } }>('session', {
