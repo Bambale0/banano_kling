@@ -3552,6 +3552,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 partner_stats.get("prompt_repeat_total_rub", 0) or 0
             ),
             "bot_username": me.username,
+            "support_contact": str(preset_manager.get_price_config().get("support_contact") or "").strip(),
             "username": me.username,
             "telegram_chat_available": await can_attempt_telegram_delivery(telegram_id),
             "telegram_bot_start_required": await needs_telegram_bot_start(telegram_id),

@@ -248,6 +248,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         promptRepeatBalanceRub: data.prompt_repeat_balance_rub || 0,
         promptRepeatTotalRub: data.prompt_repeat_total_rub || 0,
         botUsername: data.bot_username || '',
+        supportContact: data.support_contact || '',
         telegramChatAvailable: accessRevision === chatAccessRevision.current
           ? data.telegram_chat_available ?? prev.user.telegramChatAvailable
           : prev.user.telegramChatAvailable,
