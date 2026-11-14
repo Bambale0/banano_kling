@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkFeedRepeatPanel } from './vk-feed-repeat-panel'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
@@ -64,7 +65,11 @@ function TrendCard({ item, onRepeat, onShare }: {
   </article>
 }
 
-function FeedCard({ item, onShare }: { item: VkPublicFeedItem; onShare?: (item: VkPublicFeedItem) => void }) {
+function FeedCard({ item, onOpen, onShare }: {
+  item: VkPublicFeedItem
+  onOpen?: (id: number) => void
+  onShare?: (item: VkPublicFeedItem) => void
+}) {
   return <article className="min-w-0 rounded-2xl border border-border/70 bg-card p-2">
     <Preview
       image={item.preview_url || (item.generation_type === 'image' ? item.result_url : null)}
@@ -74,9 +79,11 @@ function FeedCard({ item, onShare }: { item: VkPublicFeedItem; onShare?: (item: 
     <p className="px-1 py-2 text-xs text-muted-foreground">
       {item.generation_type === 'video' ? '🎬 Видео' : '🖼 Фото'} · ❤ {item.likes_count}
     </p>
+    {onOpen && <button type="button" className="w-full rounded-lg border border-border p-2 text-xs"
+      onClick={() => onOpen(item.id)}>Открыть публикацию #{item.id}</button>}
     {item.share_link && onShare ? <button type="button"
       onClick={() => onShare(item)}
-      className="mx-1 mb-1 w-[calc(100%-0.5rem)] rounded-lg border border-border px-2 py-2 text-xs font-medium">
+      className="mt-2 w-full rounded-lg border border-border px-2 py-2 text-xs font-medium">
       Ссылка на публикацию #{item.id}
     </button> : null}
   </article>
@@ -95,6 +102,7 @@ export function VkStandaloneDiscovery() {
   const [linkedTrendLoading, setLinkedTrendLoading] = useState(false)
   const [linkedFeedTarget, setLinkedFeedTarget] = useState<{ kind: 'feed' | 'remix'; genId: number } | null>(null)
   const [linkedFeed, setLinkedFeed] = useState<VkPublicFeedLink['item'] | null>(null)
+  const [feedRepeatId, setFeedRepeatId] = useState<number | null>(null)
   const [linkedFeedError, setLinkedFeedError] = useState('')
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
   const [shareLink, setShareLink] = useState('')
@@ -192,6 +200,7 @@ export function VkStandaloneDiscovery() {
     }
     setLinkedFeedTarget(null)
     setLinkedFeed(null)
+    setFeedRepeatId(null)
     setLinkedFeedError('')
   }
 
@@ -209,8 +218,8 @@ export function VkStandaloneDiscovery() {
     const url = item.share_link || ''
     const isTrend = 'title' in item
     const expectedKind = isTrend ? 'prompt' : 'feed'
-    // Public VK app + community route with exact item ID only. Never accept
-    // a Telegram URL, foreign domain, private recipe or arbitrary deeplink.
+    // A public VK Mini App route for THIS item only. No Telegram, provider
+    // URL, private recipe or a cross-namespace #remix/#prompt substitution.
     if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#(?:prompt|feed)_[1-9][0-9]*$/.test(url)
       || !url.endsWith(`#${expectedKind}_${item.id}`)) return
     setShareKind(isTrend ? 'trend' : 'feed')
@@ -407,11 +416,20 @@ export function VkStandaloneDiscovery() {
           {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
           {' · ❤ '}{linkedFeed.likes_count}
         </p>
-        {linkedFeedTarget.kind === 'remix'
-          ? <p className="text-sm text-muted-foreground">
-              Повтор этой публикации в VK Mini App пока не подключён к защищённому VK-балансу.
+        {linkedFeed.can_repeat_in_app && linkedFeed.generation_type === 'image'
+          ? <button type="button"
+              onClick={() => setFeedRepeatId(linkedFeed.id)}
+              className="rounded-xl border border-primary px-4 py-2 text-sm font-medium text-primary">
+              Повторить публикацию #{linkedFeed.id}
+            </button>
+          : linkedFeedTarget.kind === 'remix' ? <p className="text-sm text-muted-foreground">
+              Повтор этой публикации пока недоступен для VK-аккаунта.
               Скрытые автором промпт и референсы не раскрываются.
             </p> : null}
+        {feedRepeatId === linkedFeed.id && linkedFeed.can_repeat_in_app
+          ? <VkFeedRepeatPanel key={linkedFeed.id} feedId={linkedFeed.id}
+              onClose={() => setFeedRepeatId(null)}
+              onFinished={() => setNativeRetry(value => value + 1)} /> : null}
       </> : null}
       <button type="button" onClick={closeLinkedFeed}
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
@@ -492,7 +510,12 @@ export function VkStandaloneDiscovery() {
     )) : null}
     {view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && categoryId === null && discovery && 'items' in discovery ? (
       <div className="grid grid-cols-2 gap-3">
-        {discovery.items.map(item => <FeedCard key={item.id} item={item} onShare={openShareLink} />)}
+        {discovery.items.map(item => <FeedCard key={item.id} item={item}
+          onOpen={id => {
+            setLinkedFeedTarget({ kind: 'feed', genId: id })
+            setFeedRepeatId(null)
+          }}
+          onShare={openShareLink} />)}
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">
