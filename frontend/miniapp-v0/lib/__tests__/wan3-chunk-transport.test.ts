@@ -178,14 +178,40 @@ test('snapshots the picked image before awaiting a remote upload session', async
   expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/cancel'))).toHaveLength(0)
 })
 
+test('Telegram WebView recovers image bytes through Blob.arrayBuffer when FileReader fails', async () => {
+  const picked = new File(['0123456789'], 'picked.png', { type: 'image/png' })
+  const arrayBuffer = jest.fn().mockResolvedValue(new Uint8Array([48, 49, 50, 51, 52, 53, 54, 55, 56, 57]).buffer)
+  Object.defineProperty(picked, 'arrayBuffer', { value: arrayBuffer })
+  jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
+  })
+  await expect(api.uploadWan3PrimeReference('image', picked)).resolves.toMatchObject({ url: 'https://owned.test/photo.jpeg' })
+  expect(arrayBuffer).toHaveBeenCalledTimes(1)
+  const chunks = fetchMock.mock.calls.filter(([url]) => url.endsWith('/chunk'))
+  expect(chunks).toHaveLength(2)
+  expect(chunks.map(([, options]) => atob(JSON.parse(options.body).chunk_base64)).join('')).toBe('0123456789')
+})
+
 test('unreadable picked photo fails before reserving server quota', async () => {
   global.FileReader = class {
     onerror: (() => void) | null = null
     readAsArrayBuffer() { this.onerror?.() }
   } as unknown as typeof FileReader
-  await expect(api.uploadWan3PrimeReference('image', new File(['photo'], 'photo.jpeg'))).rejects.toBeInstanceOf(api.Wan3ImageReadError)
+  const unreadable = new File(['photo'], 'photo.jpeg')
+  Object.defineProperty(unreadable, 'arrayBuffer', { value: jest.fn().mockRejectedValue(new Error('Native picker handle expired')) })
+  await expect(api.uploadWan3PrimeReference('image', unreadable)).rejects.toBeInstanceOf(api.Wan3ImageReadError)
   expect(fetchMock).not.toHaveBeenCalled()
   expect(api.wan3SafeError(new api.Wan3ImageReadError(), 'fallback')).toContain('Выберите его заново')
+})
+
+test('synchronous Blob fallback failure does not reserve upload quota', async () => {
+  const unreadable = new File(['photo'], 'photo.jpeg', { type: 'image/jpeg' })
+  Object.defineProperty(unreadable, 'arrayBuffer', { value: () => { throw new Error('Expired native file') } })
+  jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
+  })
+  await expect(api.uploadWan3PrimeReference('image', unreadable)).rejects.toBeInstanceOf(api.Wan3ImageReadError)
+  expect(fetchMock).not.toHaveBeenCalled()
 })
 
 test('cancelling the initial picked-photo read creates no server reservation', async () => {

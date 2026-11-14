@@ -10,7 +10,7 @@ import { RepeatPersonalizationFields, repeatValuesComplete } from './repeat-pers
 import { normalizeWan3ImageForRetry, Wan3ImagePreparationError } from '@/lib/wan3-image-normalize'
 import {
   fetchWan3PrimeOwnerRecipe, fetchWan3PrimeRepeatPlan, fetchWan3PrimeTrendPlan, generateWan3Prime, importWan3PrimeReference,
-  quoteWan3Prime, prepareWan3Image, uploadWan3PrimeReference, wan3SafeError, Wan3PrimeApiError,
+  quoteWan3Prime, prepareWan3Image, uploadWan3PrimeReference, wan3SafeError, Wan3ImageReadError, Wan3PrimeApiError,
   type Wan3PrimeGenerateRequest, type Wan3PrimeGenerateResponse,
   type Wan3PrimeQuoteResponse, type Wan3PrimeRecipe, type Wan3PrimeScenario,
   type Wan3PrimeUploadKind, type Wan3PrimeRepeatPlan, type Wan3PrimeRepeatSlot,
@@ -83,13 +83,14 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
   const [progress, setProgress] = useState('')
   const [fieldError, setFieldError] = useState('')
   const [retryFiles, setRetryFiles] = useState<File[]>([])
+  const [needsFreshImage, setNeedsFreshImage] = useState(false)
   const blocked = Boolean(fieldError || retryFiles.length)
   useEffect(() => () => onUploadIssue(fieldId, false), [fieldId, onUploadIssue])
   const input = useRef<HTMLInputElement | null>(null)
   const lock = useRef(false)
   const active = useRef<AbortController | null>(null)
   useEffect(() => {
-    setFieldError(''); setRetryFiles([]); setProgress(''); setExternal(''); onUploadIssue(fieldId, false)
+    setFieldError(''); setRetryFiles([]); setNeedsFreshImage(false); setProgress(''); setExternal(''); onUploadIssue(fieldId, false)
     return () => { const previous = active.current; active.current = null; previous?.abort() }
   }, [resetKey, resetRecipe, fieldId, onUploadIssue])
   const fail = (message: string) => { onUploadIssue(fieldId, true); setFieldError(message); onError(message) }
@@ -97,7 +98,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     if (!files.length || lock.current || disabled || (blockFailedUploads && retryFiles.length > 0 && !retry)) return
     if (files.length + values.length > limit) { setRetryFiles([]); fail(`Можно добавить максимум ${limit}. Выбранные файлы не загружены.`); return }
     const controller = new AbortController(); active.current = controller
-    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); onError('')
+    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); setNeedsFreshImage(false); onError('')
     let next = [...values]
     let index = 0
     let preparing = kind === 'image'
@@ -141,7 +142,12 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     } catch (error) {
       if (active.current === controller) {
         if (preparing) controller.abort()
-        setRetryFiles(files.slice(index))
+        const unreadablePickerFile = kind === 'image' && error instanceof Wan3ImageReadError
+        // Retrying an expired iOS picker handle cannot work. Require a new
+        // selection rather than retaining the inaccessible original File.
+        setRetryFiles(unreadablePickerFile ? [] : files.slice(index))
+        setNeedsFreshImage(unreadablePickerFile)
+        if (unreadablePickerFile && input.current) input.current.value = ''
         const imageRejected = kind === 'image' && (
           error instanceof Wan3ImagePreparationError ||
           (error instanceof Wan3PrimeApiError && error.status === 400 && error.code === 'validation_error')
@@ -157,7 +163,7 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
     if (lock.current || disabled || !external.trim()) return
     if (values.length >= limit) { fail(`Сначала удалите один из ${limit} референсов.`); return }
     const controller = new AbortController(); active.current = controller
-    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); onError(''); setProgress('Проверяю и импортирую ссылку…')
+    lock.current = true; onBusy(1); onUploadIssue(fieldId, false); setFieldError(''); setRetryFiles([]); setNeedsFreshImage(false); onError(''); setProgress('Проверяю и импортирую ссылку…')
     try {
       const stored = await importWan3PrimeReference(kind, external.trim(), controller.signal)
       if (controller.signal.aborted || active.current !== controller) return
@@ -188,9 +194,10 @@ function MediaField({ title, label, prefix, kind, values, limit, offset = 1, dis
       }}>Отменить загрузку</Button>
     </div> : null}
     {fieldError ? <p role="alert" className="break-words text-xs text-destructive">{fieldError}</p> : null}
+    {needsFreshImage ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => input.current?.click()}>Выбрать фото заново</Button> : null}
     {retryFiles.length ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => { void upload(retryFiles, true) }}>Повторить загрузку</Button> : null}
     {blockFailedUploads && blocked ? <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => {
-      setRetryFiles([]); setFieldError(''); onUploadIssue(fieldId, false); onError('')
+      setRetryFiles([]); setNeedsFreshImage(false); setFieldError(''); onUploadIssue(fieldId, false); onError('')
     }}>Удалить незагруженные файлы</Button> : null}
     {allowImport ? <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">{kind === 'link' ? 'Добавить адрес страницы' : 'Импортировать по ссылке'}</summary>
       <div className="mt-2 flex min-w-0 gap-2"><Input aria-label={`Ссылка: ${title}`} value={external} onChange={e => setExternal(e.target.value)} placeholder="https://…" disabled={disabled} className="min-w-0 text-xs" />

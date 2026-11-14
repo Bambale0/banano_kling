@@ -363,23 +363,54 @@ const preparedImages = new WeakSet<File>()
 function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    const cleanup = () => { signal.removeEventListener('abort', abort); reader.onload = reader.onerror = reader.onabort = null }
-    const abort = () => { cleanup(); reader.abort(); reject(new DOMException('Aborted', 'AbortError')) }
-    reader.onerror = () => { cleanup(); reject(new Wan3ImageReadError()) }
-    reader.onabort = () => { cleanup(); reject(new DOMException('Aborted', 'AbortError')) }
-    reader.onload = () => {
-      const bytes = reader.result
-      cleanup()
-      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) { reject(new Wan3ImageReadError()); return }
-      const prepared = new File([bytes], file.name, { type: file.type, lastModified: file.lastModified })
-      preparedImages.add(prepared)
-      resolve(prepared)
+    let settled = false
+    let fallbackStarted = false
+    const cleanup = () => {
+      signal.removeEventListener('abort', abort)
+      reader.onload = reader.onerror = reader.onabort = null
     }
+    const fail = () => {
+      if (settled) return
+      settled = true; cleanup(); reject(new Wan3ImageReadError())
+    }
+    const accept = (bytes: unknown) => {
+      if (settled) return
+      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) { fail(); return }
+      try {
+        const prepared = new File([bytes], file.name, { type: file.type, lastModified: file.lastModified })
+        preparedImages.add(prepared)
+        settled = true; cleanup(); resolve(prepared)
+      } catch { fail() }
+    }
+    const abort = () => {
+      if (settled) return
+      settled = true; cleanup()
+      try { reader.abort() } catch { /* Reader may already have failed. */ }
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    const tryBlobFallback = () => {
+      if (settled || fallbackStarted) return
+      if (signal.aborted) { abort(); return }
+      fallbackStarted = true
+      // iOS Telegram/WebKit can reject FileReader for a picker-backed file
+      // even while the File's Blob API remains readable. Retry the *read*
+      // once, before any upload session or provider charge is created.
+      reader.onload = reader.onerror = reader.onabort = null
+      if (typeof file.arrayBuffer !== 'function') { fail(); return }
+      try {
+        void file.arrayBuffer().then(
+          bytes => { if (signal.aborted) abort(); else accept(bytes) },
+          () => fail(),
+        )
+      } catch { fail() }
+    }
+    reader.onerror = tryBlobFallback
+    reader.onabort = () => { if (signal.aborted) abort(); else tryBlobFallback() }
+    reader.onload = () => accept(reader.result)
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) { abort(); return }
-    // Start while the native picker still owns the original handle. Later
-    // network awaits and chunk reads operate only on this bounded memory copy.
-    try { reader.readAsArrayBuffer(file) } catch { cleanup(); reject(new Wan3ImageReadError()) }
+    // Snapshot immediately after the native picker, not after an await.
+    try { reader.readAsArrayBuffer(file) } catch { tryBlobFallback() }
   })
 }
 

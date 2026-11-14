@@ -291,6 +291,34 @@ test('photo failure and retry stay visible beside the input with the original Cy
   expect((uploadWan3PrimeReference as jest.Mock).mock.calls[1][1].name).toBe('Фото.jpg')
 })
 
+test('unreadable iOS picker photo must be reselected, never retried with the stale handle', async () => {
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  const input = field.getByLabelText('Загрузить фото-референсы') as HTMLInputElement
+  const stale = new File(['photo'], 'old.png', { type: 'image/png' })
+  Object.defineProperty(stale, 'arrayBuffer', { value: jest.fn().mockRejectedValue(new Error('Native picker handle expired')) })
+  const readerSpy = jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
+  })
+  try {
+    fireEvent.change(input, { target: { files: [stale] } })
+    expect(await field.findByRole('alert')).toHaveTextContent('Выберите его заново')
+    expect(field.queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
+    expect(field.getByRole('button', { name: 'Выбрать фото заново' })).toBeEnabled()
+    expect(input).toBeEnabled()
+    expect(uploadWan3PrimeReference).not.toHaveBeenCalled()
+  } finally {
+    readerSpy.mockRestore()
+  }
+
+  fireEvent.change(input, { target: { files: [new File(['fresh'], 'new.png', { type: 'image/png' })] } })
+  await field.findByText('new.png')
+  expect(field.queryByRole('alert')).not.toBeInTheDocument()
+  expect(field.queryByRole('button', { name: 'Выбрать фото заново' })).not.toBeInTheDocument()
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(1)
+})
+
 test('multi-file retry uploads only the unfinished files, preserving the accepted video once', async () => {
   ;(uploadWan3PrimeReference as jest.Mock)
     .mockResolvedValueOnce({ url: 'https://owned.test/one.mov' })
