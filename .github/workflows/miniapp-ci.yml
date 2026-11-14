@@ -81,6 +81,8 @@ jobs:
           components/forms/video-generator-form-topup.test.tsx
           lib/contextual-topup.test.ts
           lib/__tests__/trend-api.test.ts
+          lib/__tests__/telegram-initdata-freshness.test.ts
+          lib/__tests__/platform-session.test.ts
           components/tabs/__tests__/video-tab-repeat.test.tsx
           components/forms/video-generator-form-repeat-pricing.test.tsx
           components/forms/video-generator-form-repeat.test.tsx
