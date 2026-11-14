@@ -4842,6 +4842,10 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                 normalized_status = "failed"
 
         if normalized_status in {"success", "completed", "succeeded", "finished"}:
+            if task is not None and task.model == "seedream_55_layers":
+                from bot.services.seedream55_completion import deliver_layer_task
+                request["seedream55_canonical_result"] = webhook_data
+                return await deliver_layer_task(request, task)
             # Parse resultJson for Kie.ai specific format
             result_json_str = webhook_data.get("resultJson", "{}")
             result_url = None

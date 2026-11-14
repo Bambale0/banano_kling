@@ -156,6 +156,11 @@ from bot.payment_utils import (
     total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
+from bot.services.seedream55_pricing import (
+    quality_prices as seedream55_quality_prices,
+    input_image_price as seedream55_input_price,
+    image_generation_cost as seedream55_cost,
+)
 from bot.repeat_personalization import (
     admin_preview_enabled as repeat_personalization_preview_enabled,
 )
@@ -566,6 +571,36 @@ IMAGE_MODELS = (
         "max_references": 8,
     },
     {
+        "id": "seedream_55",
+        "label": "Seedream 5.5",
+        "description": "Создание с нуля и редактирование с 1–10 референсами",
+        "cost": seedream55_quality_prices()["2K"],
+        "ratios": ["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9", "auto"],
+        "requires_reference": False,
+        "max_references": 10,
+        "qualities": ["1K", "1.5K", "2K"],
+        "quality_costs": seedream55_quality_prices(),
+        "reference_unit_cost": seedream55_input_price(),
+        "supports_nsfw_checker": True,
+        "supports_output_format": True,
+        "supports_background": True,
+    },
+    {
+        "id": "seedream_55_layers",
+        "label": "Seedream 5.5 — слои",
+        "description": "Разделение изображения на независимые слои (2–100); резерв списывается до запуска, остаток возвращается после результата",
+        "cost": seedream55_quality_prices()["2K"],
+        "ratios": ["1:1"],
+        "requires_reference": True,
+        "max_references": 1,
+        "qualities": ["1K", "1.5K", "2K"],
+        "quality_costs": seedream55_quality_prices(),
+        "reference_unit_cost": seedream55_input_price(),
+        "supports_nsfw_checker": True,
+        "supports_output_format": True,
+        "supports_layers": True,
+    },
+    {
         "id": "seedream_5_pro",
         "label": "Seedream 5 Pro 🔥 НОВИНКА",
         "description": "Фотореалистичная генерация с нуля и image-to-image в одной модели",
@@ -679,7 +714,11 @@ def _resolve_image_unit_cost(
     img_quality: str,
     *,
     tariff: str = "standard",
+    reference_count: int = 0,
+    max_images: int = 30,
 ) -> float:
+    if img_service in {"seedream_55", "seedream_55_layers"}:
+        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
 
@@ -712,7 +751,12 @@ async def _resolve_actor_image_unit_cost(
     telegram_id: int,
     img_service: str,
     img_quality: str,
+    *,
+    reference_count: int = 0,
+    max_images: int = 30,
 ) -> float:
+    if img_service in {"seedream_55", "seedream_55_layers"}:
+        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
     tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
@@ -2123,7 +2167,7 @@ async def _fetch_recent_tasks(
         cursor = await db.execute(
             """
             SELECT id, task_id, type, model, duration, aspect_ratio, prompt, cost, status,
-                   result_url, result_urls, is_public_feed, is_prompt_library,
+                   result_url, result_urls, request_data, is_public_feed, is_prompt_library,
                source_feed_gen_id, feed_prompt_visible, feed_references_visible,
                feed_blurred, is_profile_visible, is_adult_content,
                completed_at, updated_at, created_at
@@ -2143,6 +2187,12 @@ async def _fetch_recent_tasks(
         task_type = row["type"] or "image"
         model = row["model"] or ""
         result_urls = _public_result_urls(dict(row))
+        layer_metadata = {}
+        if model == "seedream_55_layers":
+            try:
+                layer_metadata = json.loads(row["request_data"] or "{}")
+            except (TypeError, ValueError):
+                layer_metadata = {}
         label = (
             get_image_model_label(model)
             if task_type == "image"
@@ -2159,6 +2209,10 @@ async def _fetch_recent_tasks(
                 "status": _public_task_status(row),
                 "result_url": result_urls[0] if result_urls else None,
                 "result_urls": result_urls,
+                "layers_archive_url": (
+                    layer_metadata.get("seedream55_layers_archive_url")
+                    if model == "seedream_55_layers" else None
+                ),
                 "media_unavailable": bool((row["status"] or "") == "completed" and not result_urls),
                 "created_at": row["created_at"],
                 "prompt_preview": "" if _task_prompt_hidden(row) else _task_preview(row["prompt"]),
@@ -5130,6 +5184,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             len(references),
         )
         img_quality = str(body.get("img_quality", "2K"))
+        img_output_format = str(body.get("img_output_format", "png"))
+        img_background = str(body.get("img_background", "auto"))
+        img_layers_max_images = body.get("img_layers_max_images", 30)
+        img_layers_text_recognition = body.get("img_layers_text_recognition", False)
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
 
@@ -5140,6 +5198,20 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             return web.json_response(
                 {"ok": False, "error": "Добавьте своё фото или референс для повтора"}, status=400,
             )
+        if img_service in {"seedream_55", "seedream_55_layers"}:
+            from bot.services.seedream55_service import SIZES, RATIOS, FORMATS, BACKGROUNDS
+            if (img_quality not in SIZES
+                or img_output_format not in FORMATS
+                or img_background not in BACKGROUNDS
+                or (img_background == "transparent" and img_output_format != "png")
+                or (img_service == "seedream_55" and img_ratio not in RATIOS | ({"auto"} if references else set()))
+                or type(img_layers_max_images) is not int
+                or not 2 <= img_layers_max_images <= 100
+                or type(img_layers_text_recognition) is not bool):
+                return web.json_response({"ok": False, "error": "Некорректные параметры Seedream 5.5"}, status=400)
+            if (img_service == "seedream_55" and len(prompt) > 5000) or (
+                img_service == "seedream_55_layers" and len(prompt) > 2000):
+                return web.json_response({"ok": False, "error": "Слишком длинный промпт"}, status=400)
         if model_meta["requires_reference"] and not references:
             return web.json_response({"ok": False, "error": "Для этой модели нужен референс"}, status=400)
         if len(references) > model_meta["max_references"]:
@@ -5172,6 +5244,8 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             telegram_id,
             img_service,
             img_quality,
+            reference_count=len(references),
+            max_images=img_layers_max_images,
         )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
@@ -5198,6 +5272,10 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
             reference_images=references,
             unit_cost=unit_cost,
             img_quality=img_quality,
+            img_output_format=img_output_format,
+            img_background=img_background,
+            img_layers_max_images=img_layers_max_images,
+            img_layers_text_recognition=img_layers_text_recognition,
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),
@@ -5370,6 +5448,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             or "1:1"
         )
         img_quality = str(body.get("img_quality", "2K"))
+        img_output_format = str(body.get("img_output_format", "png"))
+        img_background = str(body.get("img_background", "auto"))
+        img_layers_max_images = body.get("img_layers_max_images", 30)
+        img_layers_text_recognition = body.get("img_layers_text_recognition", False)
         img_nsfw_checker = bool(body.get("img_nsfw_checker", False))
         nsfw_enabled = bool(body.get("nsfw_enabled", False))
 
@@ -5383,7 +5465,7 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 )
             prompt = str(prompt_source["prompt_text"]).strip()
 
-        if not prompt:
+        if not prompt and str(body.get("img_service") or "") != "seedream_55_layers":
             return web.json_response(
                 {"ok": False, "error": "Введите промпт для генерации фото"},
                 status=400,
@@ -5398,6 +5480,20 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
                 status=400,
             )
 
+        if img_service in {"seedream_55", "seedream_55_layers"}:
+            from bot.services.seedream55_service import SIZES, RATIOS, FORMATS, BACKGROUNDS
+            if (img_quality not in SIZES
+                or img_output_format not in FORMATS
+                or img_background not in BACKGROUNDS
+                or (img_background == "transparent" and img_output_format != "png")
+                or (img_service == "seedream_55" and img_ratio not in RATIOS | ({"auto"} if references else set()))
+                or type(img_layers_max_images) is not int
+                or not 2 <= img_layers_max_images <= 100
+                or type(img_layers_text_recognition) is not bool):
+                return web.json_response({"ok": False, "error": "Некорректные параметры Seedream 5.5"}, status=400)
+            if (img_service == "seedream_55" and len(prompt) > 5000) or (
+                img_service == "seedream_55_layers" and len(prompt) > 2000):
+                return web.json_response({"ok": False, "error": "Слишком длинный промпт"}, status=400)
         if model_meta["requires_reference"] and not references:
             return web.json_response(
                 {"ok": False, "error": "Для этой модели нужен хотя бы один исходник"},
@@ -5435,6 +5531,8 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             telegram_id,
             img_service,
             img_quality,
+            reference_count=len(references),
+            max_images=img_layers_max_images,
         )
         is_admin = config.is_admin(telegram_id)
         if not is_admin and not await check_can_afford(telegram_id, unit_cost):
@@ -5466,6 +5564,10 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             reference_images=references,
             unit_cost=unit_cost,
             img_quality=img_quality,
+            img_output_format=img_output_format,
+            img_background=img_background,
+            img_layers_max_images=img_layers_max_images,
+            img_layers_text_recognition=img_layers_text_recognition,
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=(config.kie_notification_url if config.WEBHOOK_HOST else None),

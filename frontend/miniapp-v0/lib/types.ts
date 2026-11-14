@@ -67,6 +67,10 @@ export interface ImageModel {
   max_references: number
   qualities?: string[]
   quality_costs?: Record<string, number>
+  reference_unit_cost?: number
+  supports_layers?: boolean
+  supports_output_format?: boolean
+  supports_background?: boolean
   supports_nsfw_checker?: boolean
   supports_nsfw_mode?: boolean
 }
@@ -163,6 +167,7 @@ export interface Task {
   status: TaskStatus
   result_url?: string | null
   result_urls?: string[]
+  layers_archive_url?: string | null
   created_at: string
   prompt_preview: string
   cost: number

@@ -943,6 +943,10 @@ export async function generateImage(payload: {
   model: string
   ratio: string
   quality: string
+  outputFormat?: string
+  background?: string
+  layersMaxImages?: number
+  layersTextRecognition?: boolean
   nsfwChecker?: boolean
   nsfwEnabled?: boolean
   promptId?: number | null
@@ -976,6 +980,10 @@ export async function generateImage(payload: {
     img_service: payload.model,
     img_ratio: payload.ratio,
     img_quality: payload.quality,
+    img_output_format: payload.outputFormat || 'png',
+    img_background: payload.background || 'auto',
+    img_layers_max_images: payload.layersMaxImages ?? 30,
+    img_layers_text_recognition: payload.layersTextRecognition ?? false,
     img_nsfw_checker: payload.nsfwChecker ?? false,
     nsfw_enabled: payload.nsfwEnabled ?? false,
     prompt: payload.prompt,
@@ -1390,6 +1398,10 @@ export async function remixFeedItem(payload: {
   model: string
   ratio: string
   quality: string
+  outputFormat?: string
+  background?: string
+  layersMaxImages?: number
+  layersTextRecognition?: boolean
   prompt?: string
   repeatUserValues?: Record<string, string>
   references?: string[]
@@ -1419,6 +1431,10 @@ export async function remixFeedItem(payload: {
     img_service: payload.model,
     img_ratio: payload.ratio,
     img_quality: payload.quality,
+    img_output_format: payload.outputFormat || 'png',
+    img_background: payload.background || 'auto',
+    img_layers_max_images: payload.layersMaxImages ?? 30,
+    img_layers_text_recognition: payload.layersTextRecognition ?? false,
     prompt: payload.prompt || '',
     ...(payload.repeatUserValues ? { repeat_user_values: payload.repeatUserValues } : {}),
     reference_images: restoreProviderUploadUrls(payload.references || []),

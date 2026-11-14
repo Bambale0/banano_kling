@@ -113,6 +113,25 @@ export function ResultCard({ task, onClose }: ResultCardProps) {
           </button>
         )}
 
+        {isCompleted && task.model === 'seedream_55_layers' && task.layers_archive_url && (
+          <div className="mb-4 rounded-xl border border-border/50 bg-secondary/30 p-3">
+            <p className="mb-2 text-sm text-foreground">Готовы {task.result_urls?.length || 0} изображений и слоёв</p>
+            <a href={task.layers_archive_url} target="_blank" rel="noopener noreferrer"
+              className="block rounded-lg border border-gold/50 bg-gold/10 px-3 py-2 text-center text-sm font-semibold text-gold">
+              Скачать все слои ZIP
+            </a>
+          </div>
+        )}
+        {isCompleted && task.type === 'image' && (task.result_urls?.length || 0) > 1 && (
+          <div className="mb-4 grid max-h-64 grid-cols-2 gap-2 overflow-y-auto">
+            {task.result_urls!.map((url, idx) => (
+              <a key={idx} href={url} target="_blank" rel="noopener noreferrer"
+                className="truncate rounded-lg border border-border/50 bg-secondary/40 p-2 text-xs text-foreground">
+                {idx === 0 ? 'Базовое изображение' : 'Слой ' + idx}
+              </a>
+            ))}
+          </div>
+        )}
         {isCompleted && task.result_url && task.type === 'video' && (
           <div className="relative mb-4 aspect-video overflow-hidden rounded-xl">
             <video

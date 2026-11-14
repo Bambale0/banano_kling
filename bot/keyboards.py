@@ -278,6 +278,8 @@ IMAGE_MODEL_LABELS = {
     "nano-banana-2-lite": "Nano Banana 2 Lite 🔥 НОВИНКА",
     "seedream_edit": "Seedream 4.5",
     "seedream_5_pro": "Seedream 5 Pro 🔥 НОВИНКА",
+    "seedream_55": "Seedream 5.5",
+    "seedream_55_layers": "Seedream 5.5 — слои",
     "grok_imagine_i2i": "Grok Imagine",
     "wan_27": "Wan 2.7 Pro",
     "nanobanana": "Nano Banana Pro",
@@ -765,6 +767,8 @@ def get_image_model_selection_keyboard(
 
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
+        ("seedream_55", "model_seedream_55", "✨ Seedream 5.5", preset_manager.get_generation_cost("seedream_55_2k")),
+        ("seedream_55_layers", "model_seedream_55_layers", "🧩 Seedream 5.5 — слои", preset_manager.get_generation_cost("seedream_55_2k")),
         ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", seedream_basic),
         ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", banana_pro_cost),
         ("banana_2", "model_banana_2", "🍌 Nano Banana 2", banana_2_cost),
@@ -796,7 +800,7 @@ def get_create_image_keyboard(
 ):
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="🤖 Сменить модель", callback_data="image_change_model"))
-    supported_ratios = ["auto", "1:1", "9:16", "16:9", "4:3", "3:4", "2:3"] if current_service == "flux_pro" else (["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"] if current_service in {"seedream_edit", "seedream_5_pro"} else ["1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "3:2", "2:3", "21:9"])
+    supported_ratios = ["auto", "1:1", "9:16", "16:9", "4:3", "3:4", "2:3"] if current_service == "flux_pro" else (["1:1", "4:3", "3:4", "16:9", "9:16", "2:3", "3:2", "21:9"] if current_service in {"seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"} else ["1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "3:2", "2:3", "21:9"])
     ratio_buttons = []
     for ratio in supported_ratios:
         marker = "◉" if current_ratio == ratio else "○"
@@ -815,6 +819,19 @@ def get_create_image_keyboard(
             InlineKeyboardButton(text=("◉ 2K" if q == "2K" else "○ 2K"), callback_data="img_quality_2k"),
             InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k"),
         )
+    if current_service in {"seedream_55", "seedream_55_layers"}:
+        quality_buttons = []
+        for choice, callback in (("1K", "img_quality_1k"), ("1.5K", "img_quality_1_5k"), ("2K", "img_quality_2k")):
+            marker = "◉" if str(img_quality) == choice else "○"
+            quality_buttons.append(InlineKeyboardButton(text=f"{marker} {choice}", callback_data=callback))
+        builder.row(*quality_buttons)
+        # 5.5 output controls are server-validated; options are stored with the image FSM.
+        builder.row(InlineKeyboardButton(text="🖼 PNG / JPEG", callback_data="seedream55_toggle_format"))
+        if current_service == "seedream_55":
+            builder.row(InlineKeyboardButton(text="🎨 Фон: авто / прозрачный / непрозрачный", callback_data="seedream55_cycle_background"))
+        else:
+            builder.row(InlineKeyboardButton(text="🧩 Слои: 5 / 10 / 30 / 100", callback_data="seedream55_cycle_layers"))
+            builder.row(InlineKeyboardButton(text="🔤 Распознавать текст", callback_data="seedream55_toggle_text"))
     if current_service in {"seedream_edit", "seedream_5_pro"}:
         basic_marker = "◉" if img_quality == "basic" else "○"
         high_marker = "◉" if img_quality == "high" else "○"

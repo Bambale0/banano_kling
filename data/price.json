@@ -98,7 +98,11 @@
       "nano-banana-pro": 1.5,
       "seedream_edit": 1.5,
       "grok_imagine_i2i": 2,
-      "wan_27": 2
+      "wan_27": 2,
+      "seedream_55_1k": 2.0,
+      "seedream_55_1_5k": 2.5,
+      "seedream_55_2k": 3.0,
+      "seedream_55_ref": 0.5
     },
     "image_quality_costs": {
       "1K": 1.5,

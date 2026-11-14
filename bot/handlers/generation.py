@@ -93,6 +93,8 @@ from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.seedream_service import seedream_service
+from bot.services.seedream55_service import seedream55_service
+from bot.services.seedream55_pricing import image_generation_cost as seedream55_cost
 from bot.services.telegram_transport import telegram_api_call
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
@@ -441,6 +443,10 @@ def _get_image_provider_model(img_service: str, reference_images: list[str]) -> 
         return "nano-banana-pro"
     if img_service == "seedream_edit":
         return "seedream/4.5-edit"
+    if img_service == "seedream_55":
+        return "seedream/5-5-image-to-image" if reference_images else "seedream/5-5-text-to-image"
+    if img_service == "seedream_55_layers":
+        return "seedream/5-5-layer-decomposition"
     if img_service == "seedream_5_pro":
         return (
             "seedream/5-pro-image-to-image"
@@ -500,6 +506,10 @@ def _resolve_image_aspect_ratio(img_service: str, img_ratio: str, prompt: str) -
 
 def _get_max_image_references(img_service: str | None) -> int:
     normalized = str(img_service or "").strip()
+    if normalized == "seedream_55":
+        return 10
+    if normalized == "seedream_55_layers":
+        return 1
     if normalized == "seedream_5_pro":
         return 5
     if normalized in {"seedream_edit", "flux_pro", "wan_27", "grok_imagine_i2i"}:
@@ -1230,9 +1240,9 @@ def _prepare_banana_reference_images(
     img_service: str, reference_images: list[str] | None, prompt: str = ""
 ) -> list[str]:
     normalized = _snapshot_reference_images(reference_images)
-    if img_service not in {*BANANA_IMAGE_SERVICES, "seedream_edit", "seedream_5_pro"}:
+    if img_service not in {*BANANA_IMAGE_SERVICES, "seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"}:
         return normalized
-    max_refs = 5 if img_service in {"seedream_edit", "seedream_5_pro"} else 8
+    max_refs = _get_max_image_references(img_service) if img_service in {"seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"} else 8
     direct_refs = [
         ref for ref in normalized if not is_reference_contact_sheet_url(ref)
     ]
@@ -1244,7 +1254,11 @@ def _resolve_image_unit_cost(
     img_quality: str,
     *,
     tariff: str = "standard",
+    reference_count: int = 0,
+    max_images: int = 30,
 ) -> float:
+    if img_service in {"seedream_55", "seedream_55_layers"}:
+        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
 
@@ -1276,10 +1290,13 @@ async def _resolve_repeat_image_unit_cost(
     img_service: str,
     img_quality: str,
     historical_cost: float | None,
+    *,
+    reference_count: int = 0,
+    max_images: int = 30,
 ) -> float:
     """Price a new repeat for its actor; source debit is historical accounting."""
     tariff = await get_actor_tariff(actor_id)
-    return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
+    return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff, reference_count=reference_count, max_images=max_images)
 
 
 async def _start_image_generation_task(
@@ -1293,6 +1310,10 @@ async def _start_image_generation_task(
     unit_cost: int,
     private_repeat_reference_images: list[str] | None = None,
     img_quality: str = "basic",
+    img_output_format: str = "png",
+    img_background: str = "auto",
+    img_layers_max_images: int = 30,
+    img_layers_text_recognition: bool = False,
     img_nsfw_checker: bool = False,
     nsfw_enabled: bool = False,
     callback_url: Optional[str] = None,
@@ -1361,6 +1382,19 @@ async def _start_image_generation_task(
             "error": policy_error,
         }
     img_ratio = _resolve_image_aspect_ratio(runtime_img_service, img_ratio, prompt)
+    if runtime_img_service in {"seedream_55", "seedream_55_layers"}:
+        try:
+            calculated_cost = seedream55_cost(
+                runtime_img_service, img_quality,
+                reference_count=len(reference_images),
+                max_images=img_layers_max_images,
+            )
+            if abs(float(unit_cost) - calculated_cost) > 0.00001:
+                logger.error("Seedream 5.5 charge mismatch: task model=%s expected=%s actual=%s",
+                             runtime_img_service, calculated_cost, unit_cost)
+                return {"status": "failed", "task_id": None, "error": "price_mismatch"}
+        except (ValueError, TypeError) as exc:
+            return {"status": "failed", "task_id": None, "error": str(exc)}
     reference_images, missing_reference_images = _available_reference_images(
         reference_images
     )
@@ -1417,6 +1451,20 @@ async def _start_image_generation_task(
         **({"private_repeat_permission_source_id": private_repeat_permission_source_id}
            if private_repeat_permission_source_id else {}),
         "img_quality": img_quality,
+        **({
+            "img_output_format": img_output_format,
+            "img_background": img_background,
+            "img_layers_max_images": img_layers_max_images,
+            "img_layers_text_recognition": img_layers_text_recognition,
+            "seedream55_reserved_cost": float(unit_cost),
+            "seedream55_output_unit_cost": seedream55_cost(
+                "seedream_55", img_quality, reference_count=0,
+            ),
+            "seedream55_input_unit_cost": seedream55_cost(
+                "seedream_55", img_quality, reference_count=1,
+            ) - seedream55_cost("seedream_55", img_quality, reference_count=0),
+            "seedream55_charge_exempt": bool(config.is_admin(telegram_id)),
+        } if runtime_img_service in {"seedream_55", "seedream_55_layers"} else {}),
         "img_nsfw_checker": img_nsfw_checker,
         "nsfw_enabled": nsfw_enabled,
         "provider_model": provider_model,
@@ -1483,6 +1531,28 @@ async def _start_image_generation_task(
             image_input=reference_images,
             callback_url=callback_url,
         )
+    elif runtime_img_service == "seedream_55_layers":
+        result = await seedream55_service.generate_layers(
+            image_url=reference_images[0], prompt=prompt,
+            size=img_quality, output_format=img_output_format,
+            max_images=img_layers_max_images,
+            text_recognition=img_layers_text_recognition,
+            nsfw_checker=img_nsfw_checker, callBackUrl=callback_url,
+        )
+    elif runtime_img_service == "seedream_55":
+        if reference_images:
+            result = await seedream55_service.generate_image(
+                prompt=prompt, image_urls=reference_images,
+                aspect_ratio=img_ratio, size=img_quality,
+                output_format=img_output_format, background=img_background,
+                nsfw_checker=img_nsfw_checker, callBackUrl=callback_url,
+            )
+        else:
+            result = await seedream55_service.generate_text_to_image(
+                prompt=prompt, aspect_ratio=img_ratio, size=img_quality,
+                output_format=img_output_format, background=img_background,
+                nsfw_checker=img_nsfw_checker, callBackUrl=callback_url,
+            )
     elif runtime_img_service in {"seedream_edit", "seedream_5_pro"}:
         if runtime_img_service == "seedream_edit" or reference_images:
             result = await seedream_service.generate_image(
@@ -2824,7 +2894,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
         await state.set_state(GenerationStates.uploading_reference_images)
         return
 
-    if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
+    if img_service in {"grok_imagine_i2i", "seedream_edit", "seedream_55_layers"} and not reference_images:
         await callback.answer("Для этой модели сначала отправьте фото.", show_alert=True)
         await state.set_state(GenerationStates.uploading_reference_images)
         return
@@ -3119,7 +3189,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
         await callback.answer("Часть исходных фото уже недоступна. Добавьте фото заново.", show_alert=True)
         return
 
-    if img_service in {"grok_imagine_i2i", "seedream_edit"} and not reference_images:
+    if img_service in {"grok_imagine_i2i", "seedream_edit", "seedream_55_layers"} and not reference_images:
         await callback.answer("Для этой модели нужны референсы, а они уже не доступны.", show_alert=True)
         return
 
@@ -4340,26 +4410,43 @@ def _build_image_creation_text(
             current_service,
             img_quality,
             tariff=tariff,
+            reference_count=len(reference_images),
+            max_images=int(data.get("img_layers_max_images", 30)),
         )
         if tariff == "creator"
-        else _resolve_image_unit_cost(current_service, img_quality)
+        else _resolve_image_unit_cost(
+            current_service, img_quality,
+            reference_count=len(reference_images),
+            max_images=int(data.get("img_layers_max_images", 30)),
+        )
     )
 
     info_lines = [
         f"• Модель: <code>{get_image_model_label(current_service)}</code>",
         f"• Формат: <code>{ratio_label}</code>",
-        "• Результат: <code>1 изображение</code>",
+        ("• Результат: <code>несколько слоёв</code>" if current_service == "seedream_55_layers"
+         else "• Результат: <code>1 изображение</code>"),
         f"• Стоимость: <code>{unit_cost}🍌</code>",
     ]
     if reference_images:
         info_lines.append(f"• Референсы: <code>{len(reference_images)}</code>")
-    elif current_service in {"flux_pro", "seedream_5_pro"}:
+    elif current_service in {"flux_pro", "seedream_5_pro", "seedream_55"}:
         info_lines.append("• Референсы: <code>0 (text-to-image)</code>")
-    if current_service in {"seedream_edit", "seedream_5_pro"}:
+    if current_service in {"seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"}:
         info_lines.append(f"• Quality: <code>{img_quality}</code>")
+    if current_service in {"seedream_55", "seedream_55_layers"}:
+        info_lines.append(f"• Файл: <code>{data.get('img_output_format', 'png')}</code>")
+    if current_service == "seedream_55":
+        info_lines.append(f"• Фон: <code>{data.get('img_background', 'auto')}</code>")
+    if current_service == "seedream_55_layers":
+        info_lines.append(f"• Лимит слоёв: <code>{data.get('img_layers_max_images', 30)}</code>")
+        info_lines.append(f"• Распознавание текста: <code>{'да' if data.get('img_layers_text_recognition') else 'нет'}</code>")
+        info_lines.append("• Стоимость — резерв до подтверждения числа слоёв")
 
     prompt_hint = (
-        "Опишите, что нужно изменить на загруженном изображении."
+        "Опишите, какие части исходной картинки нужно отделить. Или отправьте «Авто»."
+        if current_service == "seedream_55_layers"
+        else "Опишите, что нужно изменить на загруженном изображении."
         if current_service == "seedream_edit"
         else (
             "Опишите, что хотите создать с нуля или как переработать загруженные фото."
@@ -4460,7 +4547,7 @@ async def _show_image_references_screen(
             else (
                 "Для <b>Seedream 5 Pro</b> фото не обязательны.\n"
                 "Без фото модель работает как text-to-image, а с фото переключается в image-to-image.\n\n"
-                if current_service == "seedream_5_pro"
+                if current_service in {"seedream_5_pro", "seedream_55"}
                 else (
                 "Для <b>Seedream 4.5 Edit</b> нужно хотя бы одно исходное фото.\n"
                 "Можно добавить и дополнительные фото, если это поможет.\n\n"
@@ -4893,7 +4980,7 @@ async def handle_img_ref_continue_new(callback: types.CallbackQuery, state: FSMC
 
     if (
         generation_type == "image"
-        and current_service == "seedream_edit"
+        and current_service in {"seedream_edit", "seedream_55_layers"}
         and not reference_images
     ):
         await callback.answer(
@@ -5965,6 +6052,24 @@ async def handle_model_seedream_5_pro(
     await callback.answer()
 
 
+@router.callback_query(F.data.in_({"model_seedream_55", "model_seedream_55_layers"}))
+async def handle_model_seedream_55(callback: types.CallbackQuery, state: FSMContext):
+    model = "seedream_55_layers" if callback.data.endswith("_layers") else "seedream_55"
+    await state.update_data(
+        img_service=model, img_ratio="1:1", img_quality="2K",
+        img_nsfw_checker=False, reference_images=[],
+        img_layers_max_images=30, img_layers_text_recognition=False,
+        img_output_format="png", img_background="auto",
+    )
+    data = await state.get_data()
+    if data.get("img_flow_step") == "select_model":
+        await state.update_data(img_flow_step="upload_refs")
+        await _show_image_references_screen(callback, state)
+    else:
+        await _show_image_creation_screen(callback, state)
+    await callback.answer()
+
+
 @router.callback_query(F.data == "model_grok_i2i")
 async def handle_model_grok_i2i(callback: types.CallbackQuery, state: FSMContext):
     """Выбор модели Grok Imagine i2i (фото + текст)"""
@@ -6076,6 +6181,50 @@ async def handle_img_count(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(img_count=1)
     await _show_image_creation_screen(callback, state)
     await callback.answer("Обычная генерация создаёт 1 фото")
+
+
+@router.callback_query(F.data == "img_quality_1_5k")
+async def handle_seedream55_quality_1_5k(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if data.get("img_service") not in {"seedream_55", "seedream_55_layers"}:
+        await callback.answer("Этот формат недоступен", show_alert=True)
+        return
+    await state.update_data(img_quality="1.5K")
+    await _show_image_creation_screen(callback, state)
+    await callback.answer("1.5K")
+
+
+@router.callback_query(F.data.in_({
+    "seedream55_toggle_format", "seedream55_cycle_background",
+    "seedream55_cycle_layers", "seedream55_toggle_text",
+}))
+async def handle_seedream55_options(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    model = data.get("img_service")
+    if model not in {"seedream_55", "seedream_55_layers"}:
+        await callback.answer("Настройка недоступна", show_alert=True)
+        return
+    if callback.data == "seedream55_toggle_format":
+        new_format = "jpeg" if data.get("img_output_format", "png") == "png" else "png"
+        await state.update_data(img_output_format=new_format,
+                                img_background="auto" if new_format == "jpeg" else data.get("img_background", "auto"))
+    elif callback.data == "seedream55_cycle_background":
+        if model == "seedream_55":
+            current = str(data.get("img_background", "auto"))
+            backgrounds = ("auto", "transparent", "opaque")
+            next_bg = backgrounds[(backgrounds.index(current) + 1) % len(backgrounds)] if current in backgrounds else "auto"
+            await state.update_data(img_background=next_bg,
+                                    img_output_format="png" if next_bg == "transparent" else data.get("img_output_format", "png"))
+    elif callback.data == "seedream55_cycle_layers":
+        if model == "seedream_55_layers":
+            values = (5, 10, 30, 100)
+            old = data.get("img_layers_max_images", 30)
+            await state.update_data(img_layers_max_images=values[(values.index(old) + 1) % len(values)] if old in values else 30)
+    elif callback.data == "seedream55_toggle_text":
+        if model == "seedream_55_layers":
+            await state.update_data(img_layers_text_recognition=not bool(data.get("img_layers_text_recognition", False)))
+    await _show_image_creation_screen(callback, state)
+    await callback.answer()
 
 
 @router.callback_query(F.data == "img_quality_basic")
@@ -8967,7 +9116,9 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         return  # Not for images, let other handlers catch
 
     prompt, confirmed_no_reference = _extract_no_reference_confirmation(message.text)
-    if not prompt:
+    if data.get("img_service") == "seedream_55_layers" and prompt.strip().lower() in {"авто", "auto", "-"}:
+        prompt = ""
+    if not prompt and data.get("img_service") != "seedream_55_layers":
         await message.answer(
             "Нужен текстовый промпт — опишите, какое изображение хотите получить.",
             reply_markup=get_main_menu_button_keyboard(),
@@ -9031,20 +9182,24 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
             reply_markup=get_main_menu_button_keyboard(),
         )
         return
-    if img_service == "seedream_edit" and not reference_images:
+    if img_service in {"seedream_edit", "seedream_55_layers"} and not reference_images:
         await message.answer(
-            "Для Seedream 4.5 Edit сначала добавьте хотя бы одно исходное изображение.",
+            "Для этой модели сначала добавьте исходное изображение.",
             reply_markup=get_main_menu_button_keyboard(),
         )
         return
 
     user = await get_or_create_user(message.from_user.id)
     tariff = await get_actor_tariff(message.from_user.id)
-    unit_cost = (
-        _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
-        if tariff == "creator"
-        else _resolve_image_unit_cost(img_service, img_quality)
-    )
+    try:
+        unit_cost = _resolve_image_unit_cost(
+            img_service, img_quality, tariff=tariff,
+            reference_count=len(reference_images),
+            max_images=int(data.get("img_layers_max_images", 30)),
+        )
+    except (ValueError, TypeError):
+        await message.answer("Проверьте настройки стоимости и параметры выбранной модели.")
+        return
     total_cost = unit_cost
 
     if user.credits < total_cost:
@@ -9123,6 +9278,10 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
                 reference_images=task_reference_images,
                 unit_cost=unit_cost,
                 img_quality=img_quality,
+                img_output_format=str(data.get("img_output_format", "png")),
+                img_background=str(data.get("img_background", "auto")),
+                img_layers_max_images=int(data.get("img_layers_max_images", 30)),
+                img_layers_text_recognition=bool(data.get("img_layers_text_recognition", False)),
                 img_nsfw_checker=img_nsfw_checker,
                 nsfw_enabled=nsfw_enabled,
                 callback_url=callback_url,

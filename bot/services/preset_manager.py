@@ -24,6 +24,8 @@ CANONICAL_IMAGE_ALIASES = {
     "seedream_45": "seedream_45",
     "seedream_edit": "seedream_edit",
     "seedream_5_pro": "seedream_edit",
+    "seedream_55": "seedream_55",
+    "seedream_55_layers": "seedream_55_layers",
     "flux_pro": "flux_pro",
     "grok_imagine_i2i": "grok_imagine_i2i",
     "wan_27": "wan_27",
@@ -189,6 +191,15 @@ class PresetManager:
 
         with open(self.price_path, "r", encoding="utf-8") as f:
             self._price_config = json.load(f)
+        # Production /app/data is volume-backed and may contain an older
+        # admin-edited price.json. Add new model defaults only in memory:
+        # preserve every existing price and never rewrite the live file on startup.
+        seedream55_defaults_path = Path(__file__).with_name("seedream55_default_prices.json")
+        with open(seedream55_defaults_path, "r", encoding="utf-8") as f:
+            seedream55_defaults = json.load(f)
+        image_prices = self._price_config.setdefault("costs_reference", {}).setdefault("image_models", {})
+        for key, initial_value in seedream55_defaults.items():
+            image_prices.setdefault(key, initial_value)
         self._admin_ids = self._price_config.get("admin_ids", [])
 
     def reload(self) -> bool:
