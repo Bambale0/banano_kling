@@ -732,7 +732,10 @@ def _resolve_image_unit_cost(
     max_images: int = 30,
 ) -> float:
     if img_service in {"seedream_55", "seedream_55_layers"}:
-        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
+        return seedream55_cost(
+            img_service, img_quality, reference_count=reference_count,
+            max_images=max_images, tariff=tariff,
+        )
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
 
@@ -769,9 +772,12 @@ async def _resolve_actor_image_unit_cost(
     reference_count: int = 0,
     max_images: int = 30,
 ) -> float:
-    if img_service in {"seedream_55", "seedream_55_layers"}:
-        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
     tariff = await creator_tariff_display.get_actor_tariff(telegram_id)
+    if img_service in {"seedream_55", "seedream_55_layers"}:
+        return seedream55_cost(
+            img_service, img_quality, reference_count=reference_count,
+            max_images=max_images, tariff=tariff,
+        )
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
 

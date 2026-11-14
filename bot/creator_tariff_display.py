@@ -12,6 +12,7 @@ from aiohttp import web
 from bot.creator_tariff import (
     get_actor_tariff,
     image_quality_rates,
+    image_reference_unit_rate,
     resolve_video_quote,
     video_quality_rates,
 )
@@ -28,11 +29,14 @@ def price_image_model_metadata(
     if not rates:
         return dict(metadata)
     default_quality = "basic" if model == "seedream_5_pro" else "2K"
-    return {
+    result = {
         **metadata,
         "cost": rates.get(default_quality, metadata.get("cost")),
         "quality_costs": rates,
     }
+    if model in {"seedream_55", "seedream_55_layers"}:
+        result["reference_unit_cost"] = image_reference_unit_rate(model, tariff=tariff)
+    return result
 
 
 def price_video_model_metadata(

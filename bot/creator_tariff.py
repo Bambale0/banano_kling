@@ -29,6 +29,7 @@ CREATOR_IMAGE_QUALITIES = {
     "nano-banana-pro": ("1K", "2K", "4K"),
     "banana_2": ("1K", "2K", "4K"),
     "seedream_5_pro": ("basic", "high"),
+    "seedream_55": ("1K", "1.5K", "2K"),
 }
 CREATOR_IMAGE_ALIASES = {
     "banana_pro": "nano-banana-pro",
@@ -39,6 +40,8 @@ CREATOR_IMAGE_ALIASES = {
     "nano-banana-2": "banana_2",
     "nanobanana": "nano-banana-pro",
     "seedream_5_pro": "seedream_5_pro",
+    "seedream_55": "seedream_55",
+    "seedream_55_layers": "seedream_55",
 }
 GENJUTSU_QUALITIES = {key: tuple(value['resolutions']) for key, value in json.loads(
     Path(__file__).with_name('genjutsu').joinpath('catalog.json').read_text()
@@ -164,7 +167,23 @@ def _parse_config(raw: Any) -> tuple[dict[str, Any], list[str], list[str]]:
                         )
                         continue
                     normalized_rates[quality] = numeric_rate
-                clean_image_models[model] = {"quality_costs": normalized_rates}
+                clean_entry = {"quality_costs": normalized_rates}
+                if model == "seedream_55" and "reference_unit_cost" in entry:
+                    ref = entry["reference_unit_cost"]
+                    try:
+                        ref_rate = float(ref)
+                    except (TypeError, ValueError, OverflowError):
+                        ref_rate = float("nan")
+                    if (
+                        isinstance(ref, bool) or not isinstance(ref, (int, float))
+                        or not math.isfinite(ref_rate) or ref_rate <= 0
+                    ):
+                        invalid.append("seedream_55/ref: нужна конечная положительная цена")
+                    else:
+                        clean_entry["reference_unit_cost"] = ref_rate
+                elif model != "seedream_55" and "reference_unit_cost" in entry:
+                    invalid.append(f"{model}: цена референса недоступна")
+                clean_image_models[model] = clean_entry
         normalized["image_models"] = clean_image_models
 
     if 'genjutsu' in raw:
@@ -248,6 +267,10 @@ def _ordinary_image_quality_rates(model: str) -> dict[str, float]:
             quality: float(SEEDREAM_5_PRO_QUALITY_COSTS[quality])
             for quality in CREATOR_IMAGE_QUALITIES[normalized]
         }
+    if normalized == "seedream_55":
+        from bot.services.seedream55_pricing import quality_prices
+
+        return quality_prices()
     return {}
 
 
@@ -270,13 +293,40 @@ def image_quality_rates(model: str, *, tariff: str = "standard") -> dict[str, fl
     }
 
 
+def image_reference_unit_rate(model: str, *, tariff: str = "standard") -> float:
+    """Per-reference price for Seedream 5.5; absent creator override uses public rate."""
+    normalized = _normalize_creator_image_model(model)
+    if normalized != "seedream_55":
+        raise ValueError("No reference-unit pricing for model")
+    from bot.services.seedream55_pricing import input_image_price
+
+    ordinary = input_image_price()
+    if tariff != "creator":
+        return ordinary
+    status = creator_tariff_status()
+    if not status["enabled"] or not status["configured"]:
+        return ordinary
+    configured = status.get("image_models", {}).get("seedream_55", {})
+    return float(configured.get("reference_unit_cost", ordinary))
+
+
 def resolve_image_unit_cost(
     model: str,
     quality: str | None = None,
     *,
     tariff: str = "standard",
+    reference_count: int = 0,
+    max_images: int = 30,
 ) -> float:
     normalized = _normalize_creator_image_model(model)
+    if normalized == "seedream_55":
+        from bot.services.seedream55_pricing import image_generation_cost
+
+        return image_generation_cost(
+            model, str(quality or "2K"),
+            reference_count=reference_count, max_images=max_images,
+            tariff=tariff,
+        )
     rates = image_quality_rates(normalized, tariff=tariff)
     if rates:
         requested = str(quality or "").strip()

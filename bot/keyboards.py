@@ -759,16 +759,20 @@ def get_image_model_selection_keyboard(
         banana_2_cost = resolve_image_unit_cost(
             "banana_2", "2K", tariff=tariff
         )
+        seedream_55_cost = resolve_image_unit_cost(
+            "seedream_55", "2K", tariff=tariff
+        )
     else:
         seedream_basic = SEEDREAM_5_PRO_QUALITY_COSTS["basic"]
         seedream_high = SEEDREAM_5_PRO_QUALITY_COSTS["high"]
         banana_pro_cost = preset_manager.get_generation_cost("nano-banana-pro")
         banana_2_cost = preset_manager.get_generation_cost("banana_2")
+        seedream_55_cost = preset_manager.get_generation_cost("seedream_55_2k")
 
     model_rows = [
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
         ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", seedream_basic),
-        ("seedream_55", "model_seedream_55", "✨ Seedream 5.5", preset_manager.get_generation_cost("seedream_55_2k")),
+        ("seedream_55", "model_seedream_55", "✨ Seedream 5.5", seedream_55_cost),
         ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", banana_pro_cost),
         ("banana_2", "model_banana_2", "🍌 Nano Banana 2", banana_2_cost),
         ("seedream_edit", "model_seedream_edit", "🖌 Seedream 4.5", preset_manager.get_generation_cost("seedream_edit")),
