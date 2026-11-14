@@ -123,6 +123,15 @@ export function clearPlatformSessionToken(): void {
   if (typeof window !== 'undefined') delete window.__BANANO_PLATFORM_INIT_DATA__
 }
 
+// A cached WebView launch can survive navigation long after Telegram's 24h
+// signed init_data window. Such a token must never shadow a fresh SDK launch.
+function freshCachedTelegramInitData(value: string): boolean {
+  if (!value) return false
+  const authDate = Number(new URLSearchParams(value).get('auth_date'))
+  return Number.isSafeInteger(authDate) && authDate > 0
+    && Math.abs(Date.now() / 1000 - authDate) <= 86400
+}
+
 export function getInitData(): string {
   const platformSession = typeof window !== 'undefined'
     ? String(window.__BANANO_PLATFORM_INIT_DATA__ || '').trim()
@@ -132,13 +141,15 @@ export function getInitData(): string {
   // Prefer initData from location hash (tgWebAppData) — it's available
   // before window.Telegram.WebApp is fully initialized. This is critical
   // on slow networks/VPN where the Telegram SDK CDN may be delayed.
-  const fromLocation = getInitDataFromLocation()
   const fromTelegram = getWebApp()?.initData || ''
+  const fromLocation = getInitDataFromLocation()
   const fromWindow =
     typeof window !== 'undefined'
       ? String(window.__BANANO_TG_INIT_DATA__ || '').trim()
       : ''
-  const initData = fromLocation || fromTelegram || fromWindow
+  const initData = fromTelegram
+    || (freshCachedTelegramInitData(fromLocation) ? fromLocation : '')
+    || (freshCachedTelegramInitData(fromWindow) ? fromWindow : '')
   if (initData && typeof window !== 'undefined') {
     try {
       window.__BANANO_TG_INIT_DATA__ = initData
@@ -154,10 +165,11 @@ export function getInitData(): string {
   if (typeof window !== 'undefined') {
     try {
       const fromStorage = window.sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || ''
-      if (fromStorage) {
+      if (freshCachedTelegramInitData(fromStorage)) {
         window.__BANANO_TG_INIT_DATA__ = fromStorage
         return fromStorage
       }
+      if (fromStorage) window.sessionStorage.removeItem(INIT_DATA_STORAGE_KEY)
     } catch {}
   }
   return ''
