@@ -2,7 +2,7 @@ import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
 import { normalizeWan3ImageForRetry } from '@/lib/wan3-image-normalize'
-import { Wan3ImageReadError, Wan3PrimeApiError, Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { Wan3PrimeApiError, Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
   ...jest.requireActual('@/lib/wan3-prime-api'),
