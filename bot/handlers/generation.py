@@ -1240,7 +1240,12 @@ def _prepare_banana_reference_images(
     normalized = _snapshot_reference_images(reference_images)
     if img_service not in {*BANANA_IMAGE_SERVICES, "seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"}:
         return normalized
-    max_refs = _get_max_image_references(img_service) if img_service in {"seedream_edit", "seedream_5_pro", "seedream_55", "seedream_55_layers"} else 8
+    max_refs = (
+        5 if img_service in {"seedream_edit", "seedream_5_pro"}
+        else _get_max_image_references(img_service)
+        if img_service in {"seedream_55", "seedream_55_layers"}
+        else 8
+    )
     direct_refs = [
         ref for ref in normalized if not is_reference_contact_sheet_url(ref)
     ]
@@ -1294,7 +1299,13 @@ async def _resolve_repeat_image_unit_cost(
 ) -> float:
     """Price a new repeat for its actor; source debit is historical accounting."""
     tariff = await get_actor_tariff(actor_id)
-    return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff, reference_count=reference_count, max_images=max_images)
+    if img_service in {"seedream_55", "seedream_55_layers"}:
+        return _resolve_image_unit_cost(
+            img_service, img_quality, tariff=tariff,
+            reference_count=reference_count, max_images=max_images,
+        )
+    # Keep the original call signature for all legacy model families.
+    return _resolve_image_unit_cost(img_service, img_quality, tariff=tariff)
 
 
 async def _start_image_generation_task(
@@ -4403,20 +4414,17 @@ def _build_image_creation_text(
     img_nsfw_checker = data.get("img_nsfw_checker", False)
     ratio_label = current_ratio.replace(":", "∶")
     # nano_quality_cost_display_v1
+    seedream55_quote_options = (
+        {
+            "reference_count": len(reference_images),
+            "max_images": int(data.get("img_layers_max_images", 30)),
+        }
+        if current_service in {"seedream_55", "seedream_55_layers"} else {}
+    )
     unit_cost = (
-        _resolve_image_unit_cost(
-            current_service,
-            img_quality,
-            tariff=tariff,
-            reference_count=len(reference_images),
-            max_images=int(data.get("img_layers_max_images", 30)),
-        )
+        _resolve_image_unit_cost(current_service, img_quality, tariff=tariff, **seedream55_quote_options)
         if tariff == "creator"
-        else _resolve_image_unit_cost(
-            current_service, img_quality,
-            reference_count=len(reference_images),
-            max_images=int(data.get("img_layers_max_images", 30)),
-        )
+        else _resolve_image_unit_cost(current_service, img_quality, **seedream55_quote_options)
     )
 
     info_lines = [
@@ -9189,10 +9197,16 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
     user = await get_or_create_user(message.from_user.id)
     tariff = await get_actor_tariff(message.from_user.id)
     try:
+        seedream55_quote_options = (
+            {
+                "reference_count": len(reference_images),
+                "max_images": int(data.get("img_layers_max_images", 30)),
+            }
+            if img_service in {"seedream_55", "seedream_55_layers"} else {}
+        )
         unit_cost = _resolve_image_unit_cost(
-            img_service, img_quality, tariff=tariff,
-            reference_count=len(reference_images),
-            max_images=int(data.get("img_layers_max_images", 30)),
+            img_service, img_quality, **({"tariff": tariff} if tariff == "creator" else {}),
+            **seedream55_quote_options,
         )
     except (ValueError, TypeError):
         await message.answer("Проверьте настройки стоимости и параметры выбранной модели.")
