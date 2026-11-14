@@ -65,6 +65,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   if (response.status === 404 && path.startsWith('trends?view=feed_item&gen_id=')) {
     throw new Error('Публикация не найдена.')
   }
+  if (response.status === 404 && path.startsWith('vk-feed-comments?')) throw new Error('Публикация скрыта или удалена.')
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -505,6 +506,41 @@ export async function likeVkFeed(feedGenId: number, signal?: AbortSignal): Promi
       body: JSON.stringify({ feed_gen_id: feedGenId }), signal,
     },
   ), signal)
+}
+
+/** Public comments on a shared feed post, not an owner's profile/private work.
+ * This is a read-only VK actor route; posting must wait for native ownership.
+ */
+export interface VkPublicFeedComment {
+  id: number
+  author: string
+  text: string
+  created_at: string
+}
+
+export interface VkPublicFeedCommentsPage {
+  ok: true
+  comments_count: number
+  comments: VkPublicFeedComment[]
+}
+
+export async function fetchVkPublicFeedComments(
+  feedGenId: number, signal?: AbortSignal,
+): Promise<VkPublicFeedCommentsPage> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId < 1) {
+    throw new Error('Некорректная публикация из ленты.')
+  }
+  const result = await withPreviewSession(headers => request<VkPublicFeedCommentsPage>(
+    'vk-feed-comments?feed_gen_id=' + feedGenId, { headers, signal },
+  ), signal)
+  if (!Array.isArray(result.comments)
+    || !Number.isSafeInteger(result.comments_count) || result.comments_count < 0
+    || result.comments.some(item => !item || typeof item !== 'object' || !Number.isSafeInteger(item.id) || item.id <= 0
+      || typeof item.author !== 'string' || typeof item.text !== 'string'
+      || typeof item.created_at !== 'string')) {
+    throw new Error('Сервер вернул неполный список комментариев.')
+  }
+  return result
 }
 
 export async function fetchVkPublicFeedItem(

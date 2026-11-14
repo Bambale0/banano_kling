@@ -182,3 +182,16 @@ separate actor/media adapters. `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains
 OFF by default, on both BFF and native worker. A public repeat affordance is
 only preliminary; native catalog validation and quote are authoritative.
 No expanded full `VK_FULL_APP_OPERATIONS` readiness is claimed.
+
+
+## 2026-11-14 — native VK public feed comments read (incremental)
+
+Verified native VK actors can open the **same public feed comments** as
+Telegram via an on-demand read-only route. The server filters out private,
+profile-only, unpublished and adult posts, and never serializes author IDs
+or private recipes. The caller sees comment authors and texts, without linking
+Telegram. Posting is intentionally not implemented by this slice: existing
+`feed_comments.user_id` is a mandatory foreign key to Telegram `users.id`.
+A safe VK writer needs platform-neutral author ownership, moderation,
+rate limits and authenticated E2E. No full-app readiness is claimed and no
+finance or write flags are activated.

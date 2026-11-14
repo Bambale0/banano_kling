@@ -696,6 +696,58 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
     raise ValueError('Unknown discovery view')
 
 
+async def vk_public_feed_comments(request: web.Request) -> web.Response:
+    """Read shared public feed comments for an authenticated independent VK actor.
+
+    This route deliberately reuses the Telegram-visible public feed rows.
+    No VK identity is converted to a Telegram user, and private/profile
+    publications and owner-only information are never returned.
+    """
+    policy = await load_policy()
+    if not policy.enabled:
+        return response({'ok': False, 'error': 'Preview unavailable'}, 404)
+    await resolve_platform_actor(_bearer(request), expected_platform='vk')
+
+    raw_id = request.query.get('feed_gen_id', '')
+    if not raw_id.isascii() or not raw_id.isdecimal() or not 0 < len(raw_id) <= 16:
+        raise ValueError('Invalid public feed identifier')
+    gen_id = int(raw_id)
+    if gen_id <= 0:
+        raise ValueError('Invalid public feed identifier')
+
+    raw_limit = request.query.get('limit', '80')
+    if (not raw_limit.isascii() or not raw_limit.isdecimal()
+        or not 0 < len(raw_limit) <= 3 or not 1 <= int(raw_limit) <= 150):
+        raise ValueError('Invalid comment page size')
+
+    from bot import database
+    card = await database.get_feed_generation_card(
+        gen_id, viewer_user_id=None, include_unavailable=False,
+    )
+    if not card or card.get('publication_scope') != 'feed':
+        return response({'ok': False, 'error': 'Публикация не найдена'}, 404)
+
+    existing = await database.get_feed_comments(
+        gen_id, limit=int(raw_limit), viewer_user_id=None,
+    )
+    comments = [
+        {
+            'id': int(item['id']),
+            'author': str(item.get('author') or '')[:120],
+            'text': str(item.get('text') or '')[:500],
+            'created_at': str(item.get('created_at') or ''),
+        }
+        for item in existing
+    ]
+    # Public text and display names only; never Telegram IDs, referral
+    # identifiers, private recipes, media, or viewer ownership claims.
+    return response({
+        'ok': True,
+        'comments_count': int(card.get('comments_count') or 0),
+        'comments': comments,
+    })
+
+
 async def logout(request: web.Request) -> web.Response:
     # Revoking one's own opaque token remains safe after account merging or
     # preview shutdown. It grants no access and is intentionally idempotent.
@@ -851,6 +903,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
     app.router.add_post(root + '/vk-feed-like', _guard(vk_public_feed_like))
+    app.router.add_get(root + '/vk-feed-comments', _guard(vk_public_feed_comments))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
     app.router.add_get(root + '/vk-references', _guard(vk_reference_library))
     app.router.add_post(root + '/vk-references', _guard(vk_reference_library))

@@ -5,6 +5,7 @@ import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-para
 import { VkGenerationPanel } from './vk-generation-panel'
 import { VkReferenceLibrary } from './vk-reference-library'
 import { VkFeedRepeatPanel } from './vk-feed-repeat-panel'
+import { VkPublicFeedComments } from './vk-public-feed-comments'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
   fetchVkPublicCategory,
@@ -116,6 +117,7 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
   const [linkedFeedTarget, setLinkedFeedTarget] = useState<{ kind: 'feed' | 'remix'; genId: number } | null>(null)
   const [linkedFeed, setLinkedFeed] = useState<VkPublicFeedLink['item'] | null>(null)
   const [feedRepeatId, setFeedRepeatId] = useState<number | null>(null)
+  const [showFeedComments, setShowFeedComments] = useState(false)
   const [linkedFeedError, setLinkedFeedError] = useState('')
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
   const [likeBusyId, setLikeBusyId] = useState<number | null>(null)
@@ -188,12 +190,14 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
 
   useEffect(() => {
     if (!linkedFeedTarget) {
+      setShowFeedComments(false)
       setLinkedFeed(null)
       setLinkedFeedError('')
       setLinkedFeedLoading(false)
       return
     }
     const controller = new AbortController()
+    setShowFeedComments(false)
     setView('feed')
     setCategoryId(null)
     setLinkedFeed(null)
@@ -244,6 +248,7 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
     setLinkedFeedTarget(null)
     setLinkedFeed(null)
     setFeedRepeatId(null)
+    setShowFeedComments(false)
     setLinkedFeedError('')
   }
 
@@ -474,6 +479,12 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
           {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
           {' · ❤ '}{linkedFeed.likes_count}
         </p>
+        <button type="button" aria-expanded={showFeedComments}
+          className="rounded-lg border border-border px-3 py-2 text-sm"
+          onClick={() => setShowFeedComments(value => !value)}>
+          Комментарии ({linkedFeed.comments_count})
+        </button>
+        {showFeedComments ? <VkPublicFeedComments key={linkedFeed.id} feedGenId={linkedFeed.id} /> : null}
         {linkedFeed.can_like_in_app && <button type="button" disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
           onClick={() => void likeFeed(linkedFeed.id)} className="rounded-lg border border-border px-3 py-2 text-sm">
           {likedIds.has(linkedFeed.id) ? 'Вам нравится' : 'Нравится'}
