@@ -182,3 +182,18 @@ separate actor/media adapters. `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains
 OFF by default, on both BFF and native worker. A public repeat affordance is
 only preliminary; native catalog validation and quote are authoritative.
 No expanded full `VK_FULL_APP_OPERATIONS` readiness is claimed.
+
+
+## 2026-11-14 — independent VK bootstrap on the common API route
+
+A signed VK actor can be dispatched to the existing native bootstrap adapter
+through the same /mini-app/api/bootstrap path used by Telegram, but only under
+the default-OFF VK_NATIVE_BOOTSTRAP_ENABLED switch. The returned models,
+history, payment packages and later read native VK balance come from the
+authoritative VK backend, never a synthesized Telegram user or second wallet.
+This deliberately does NOT make full_app_ready true or mount common
+TabContent: eight remaining native domain contracts are not yet ready.
+When the native path is gated off or a signed VK actor calls an unsupported
+shared domain, the shared gateway now fails closed rather than falling
+through to a TG-owned endpoint. Linked VK users cannot use legacy TG studio
+under a partial native bootstrap switch. No money writes or provider calls.
