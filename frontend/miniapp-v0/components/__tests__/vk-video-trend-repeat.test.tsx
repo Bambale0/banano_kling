@@ -1,10 +1,9 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkGenerationPanel } from '../vk-generation-panel'
-import {
+import { fetchVkSavedReferences,
   fetchVkGenerationClaim, fetchVkModelCatalog, repeatVkTrend, uploadVkImage,
   type VkPublicTrend,
-  fetchVkSavedReferences,
 } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
