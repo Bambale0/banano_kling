@@ -177,7 +177,7 @@ export function TelegramOpenGate() {
           ) : (
             <>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Продолжите через Telegram или ВКонтакте — без пароля
+                Продолжите через Telegram — без пароля
               </p>
 
               <div className="mt-7 flex min-h-12 w-full items-center justify-center">
@@ -208,20 +208,6 @@ export function TelegramOpenGate() {
                   ) : null}
                 </div>
               ) : null}
-              <div className="mt-5 w-full space-y-3 border-t border-white/10 pt-5">
-                <p className="text-xs text-muted-foreground">
-                  Открыли приложение из ВКонтакте? Telegram для входа не нужен.
-                </p>
-                <Button asChild variant="secondary" className="h-11 w-full rounded-xl">
-                  <a
-                    href={`${getApiBasePath()}/account-preview/vk-login`}
-                    target="_top"
-                    rel="noreferrer"
-                  >
-                    Войти через ВКонтакте
-                  </a>
-                </Button>
-              </div>
             </>
           )}
         </div>

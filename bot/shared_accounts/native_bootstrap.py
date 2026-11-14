@@ -37,7 +37,7 @@ def _model_identity(item: object, reference_field: str) -> bool:
         and isinstance(item.get("label"), str) and bool(item["label"])
         and _strings(item.get("ratios"))
         and type(item.get(reference_field)) is int
-        and item[reference_field] >= 0  # authoritative native model limit, not a BFF cap
+        and 0 <= item[reference_field] <= 4
     )
 
 
