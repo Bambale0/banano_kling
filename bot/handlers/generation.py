@@ -4601,6 +4601,16 @@ async def _show_image_references_screen(
         + f"<i>Можно загрузить до {max_refs} фото. Когда всё готово, нажмите «Продолжить».</i>"
     )
 
+    if current_service == "seedream_55_layers":
+        text = (
+            "🖼 <b>Создание фото</b>\n"
+            f"🍌 Баланс: <code>{user_credits}</code> бананов\n\n"
+            "<b>Шаг 2. Референс для режима слоёв</b>\n"
+            "Модель: <code>Seedream 5.5</code>\n\n"
+            "Нужно загрузить <b>ровно одно исходное фото</b>.\n"
+            "Оно будет разложено на независимые слои."
+        )
+
     try:
         if isinstance(message_or_callback, types.CallbackQuery):
             await message_or_callback.message.edit_text(
@@ -6233,6 +6243,37 @@ async def handle_seedream55_quality_1_5k(callback: types.CallbackQuery, state: F
     await state.update_data(img_quality="1.5K")
     await _show_image_creation_screen(callback, state)
     await callback.answer("1.5K")
+
+
+@router.callback_query(F.data == "seedream55_toggle_layers_mode")
+async def handle_seedream55_toggle_layers_mode(
+    callback: types.CallbackQuery, state: FSMContext,
+):
+    """Toggle layers inside Seedream 5.5 without a second model-selection button."""
+    data = await state.get_data()
+    current = data.get("img_service")
+    if current not in {"seedream_55", "seedream_55_layers"}:
+        await callback.answer("Режим недоступен для этой модели", show_alert=True)
+        return
+
+    if current == "seedream_55_layers":
+        await state.update_data(img_service="seedream_55", img_ratio="1:1")
+        await _show_image_creation_screen(callback, state)
+    else:
+        reference_images = data.get("reference_images") or []
+        if len(reference_images) > 1:
+            await callback.answer(
+                "Для разделения на слои оставьте ровно одно исходное фото.",
+                show_alert=True,
+            )
+            return
+        await state.update_data(img_service="seedream_55_layers", img_ratio="1:1")
+        if not reference_images:
+            await state.update_data(img_flow_step="upload_refs")
+            await _show_image_references_screen(callback, state)
+        else:
+            await _show_image_creation_screen(callback, state)
+    await callback.answer()
 
 
 @router.callback_query(F.data.in_({

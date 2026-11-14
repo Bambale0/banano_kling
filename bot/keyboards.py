@@ -769,7 +769,6 @@ def get_image_model_selection_keyboard(
         ("nano-banana-2-lite", "model_nano_banana_2_lite", "🍌 Nano Banana 2 Lite 🔥 НОВИНКА", preset_manager.get_generation_cost("nano-banana-2-lite")),
         ("seedream_5_pro", "model_seedream_5_pro", "🌟 Seedream 5 Pro 🔥 НОВИНКА", seedream_basic),
         ("seedream_55", "model_seedream_55", "✨ Seedream 5.5", preset_manager.get_generation_cost("seedream_55_2k")),
-        ("seedream_55_layers", "model_seedream_55_layers", "🧩 Seedream 5.5 — слои", preset_manager.get_generation_cost("seedream_55_2k")),
         ("banana_pro", "model_banana_pro", "💎 Nano Banana Pro", banana_pro_cost),
         ("banana_2", "model_banana_2", "🍌 Nano Banana 2", banana_2_cost),
         ("seedream_edit", "model_seedream_edit", "🖌 Seedream 4.5", preset_manager.get_generation_cost("seedream_edit")),
@@ -779,7 +778,7 @@ def get_image_model_selection_keyboard(
     ]
     for model_row in model_rows:
         model_key, callback_data, label, cost = model_row[:4]
-        check = "✅ " if current_service == model_key else ""
+        check = "✅ " if current_service == model_key or (model_key == "seedream_55" and current_service == "seedream_55_layers") else ""
         price_text = (
             f"Basic {seedream_basic:g}🍌 / High {seedream_high:g}🍌"
             if model_key == "seedream_5_pro" else f"{cost:g}🍌"
@@ -820,6 +819,13 @@ def get_create_image_keyboard(
             InlineKeyboardButton(text=("◉ 4K" if q == "4K" else "○ 4K"), callback_data="img_quality_4k"),
         )
     if current_service in {"seedream_55", "seedream_55_layers"}:
+        builder.row(
+            InlineKeyboardButton(
+                text=("🖼 Обычная генерация" if current_service == "seedream_55_layers"
+                      else "🧩 Разделить на слои"),
+                callback_data="seedream55_toggle_layers_mode",
+            )
+        )
         quality_buttons = []
         for choice, callback in (("1K", "img_quality_1k"), ("1.5K", "img_quality_1_5k"), ("2K", "img_quality_2k")):
             marker = "◉" if str(img_quality) == choice else "○"
