@@ -1,12 +1,11 @@
 """Creator tariff: independent Seedream 5.5 output + reference charges."""
 
+import json
 from copy import deepcopy
 from types import SimpleNamespace
-import json
-
-import aiosqlite
 from unittest.mock import AsyncMock
 
+import aiosqlite
 import pytest
 
 from bot import creator_tariff, creator_tariff_display
