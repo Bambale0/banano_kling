@@ -43,17 +43,26 @@ def input_image_price() -> float:
 
 def image_generation_cost(
     model: str, quality: str, *, reference_count: int = 0, max_images: int = 30,
+    tariff: str = "standard",
 ) -> float:
     if model not in SEEDREAM55_KEYS:
         raise ValueError("Not a Seedream 5.5 model")
+    if tariff not in {"standard", "creator", "admin"}:
+        raise ValueError("Invalid Seedream 5.5 price profile")
     rates = quality_prices()
+    ref_price = input_image_price()
+    if tariff == "creator":
+        from bot.creator_tariff import image_quality_rates, image_reference_unit_rate
+
+        rates = image_quality_rates("seedream_55", tariff=tariff)
+        ref_price = image_reference_unit_rate("seedream_55", tariff=tariff)
     if quality not in rates and not (model == "seedream_55_layers" and quality == "auto"):
         raise ValueError("Unsupported Seedream 5.5 quality")
     if model == "seedream_55_layers":
         if reference_count != 1 or type(max_images) is not int or not 2 <= max_images <= 100:
             raise ValueError("Layers require one reference and 2–100 max images")
         # Worst-case reserve includes the composite image. Reconcile actual count after success.
-        return round(max_images * rates.get(quality, rates["2K"]) + input_image_price(), 3)
+        return round(max_images * rates.get(quality, rates["2K"]) + ref_price, 3)
     if type(reference_count) is not int or not 0 <= reference_count <= 10:
         raise ValueError("Unsupported Seedream 5.5 reference count")
-    return round(rates[quality] + reference_count * input_image_price(), 3)
+    return round(rates[quality] + reference_count * ref_price, 3)

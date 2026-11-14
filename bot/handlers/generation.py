@@ -1261,7 +1261,11 @@ def _resolve_image_unit_cost(
     max_images: int = 30,
 ) -> float:
     if img_service in {"seedream_55", "seedream_55_layers"}:
-        return seedream55_cost(img_service, img_quality, reference_count=reference_count, max_images=max_images)
+        return seedream55_cost(
+            img_service, img_quality,
+            reference_count=reference_count, max_images=max_images,
+            tariff=tariff,
+        )
     if tariff == "creator":
         from bot.creator_tariff import resolve_image_unit_cost
 
@@ -1418,12 +1422,14 @@ async def _start_image_generation_task(
             "error": policy_error,
         }
     img_ratio = _resolve_image_aspect_ratio(runtime_img_service, img_ratio, prompt)
+    seedream55_tariff = "standard"
     if runtime_img_service in {"seedream_55", "seedream_55_layers"}:
         try:
+            seedream55_tariff = await get_actor_tariff(telegram_id)
             calculated_cost = seedream55_cost(
                 runtime_img_service, img_quality,
                 reference_count=len(reference_images),
-                max_images=img_layers_max_images,
+                max_images=img_layers_max_images, tariff=seedream55_tariff,
             )
             if abs(float(unit_cost) - calculated_cost) > 0.00001:
                 logger.error("Seedream 5.5 charge mismatch: task model=%s expected=%s actual=%s",
@@ -1493,12 +1499,18 @@ async def _start_image_generation_task(
             "img_layers_max_images": img_layers_max_images,
             "img_layers_text_recognition": img_layers_text_recognition,
             "seedream55_reserved_cost": float(unit_cost),
+            "seedream55_tariff": seedream55_tariff,
             "seedream55_output_unit_cost": seedream55_cost(
                 "seedream_55", img_quality, reference_count=0,
+                tariff=seedream55_tariff,
             ),
             "seedream55_input_unit_cost": seedream55_cost(
                 "seedream_55", img_quality, reference_count=1,
-            ) - seedream55_cost("seedream_55", img_quality, reference_count=0),
+                tariff=seedream55_tariff,
+            ) - seedream55_cost(
+                "seedream_55", img_quality, reference_count=0,
+                tariff=seedream55_tariff,
+            ),
             "seedream55_charge_exempt": bool(config.is_admin(telegram_id)),
         } if runtime_img_service in {"seedream_55", "seedream_55_layers"} else {}),
         "img_nsfw_checker": img_nsfw_checker,

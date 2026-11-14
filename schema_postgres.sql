@@ -462,6 +462,24 @@ CREATE TABLE IF NOT EXISTS vk_feed_generation_likes (
 );
 
 -- ============================================================
+-- NATIVE VK PUBLIC FEED COMMENTS
+-- Actor-neutral author, additive to legacy Telegram feed_comments.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS vk_feed_comments (
+    id BIGSERIAL PRIMARY KEY,
+    generation_id BIGINT NOT NULL REFERENCES generation_tasks(id) ON DELETE CASCADE,
+    vk_user_id BIGINT NOT NULL,
+    text TEXT NOT NULL,
+    client_request_id TEXT NOT NULL,
+    cooldown_bucket BIGINT NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (vk_user_id, client_request_id),
+    UNIQUE (vk_user_id, cooldown_bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_vk_feed_comments_generation_created
+    ON vk_feed_comments(generation_id, created_at DESC, id DESC);
+
+-- ============================================================
 -- FEED REMIX EVENTS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS feed_remix_events (

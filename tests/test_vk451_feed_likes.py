@@ -78,6 +78,21 @@ async def test_vk_feed_like_concurrent_retries_update_counter_exactly_once(nativ
 
 
 @pytest.mark.asyncio
+async def test_vk_feed_like_many_simultaneous_actors_keep_independent_reactions(native_feed_db):
+    """Regression: SQLite WAL initialization must not race before busy_timeout."""
+    actors = [2090, 2091, 2092, 2093, 2094]
+    # Each actor has several concurrent retries. Every DB open must finish,
+    # every unique actor should increment exactly once and no worker thread
+    # may remain blocked by a failed PRAGMA journal_mode change.
+    requests = [like_public_vk_feed(actor, 41) for actor in actors for _ in range(5)]
+    totals = await asyncio.wait_for(asyncio.gather(*requests), timeout=8)
+    assert all(type(total) is int and 4 <= total <= 8 for total in totals)
+    with sqlite3.connect(native_feed_db) as conn:
+        assert conn.execute("SELECT likes_count FROM generation_tasks WHERE id=41").fetchone()[0] == 8
+        assert conn.execute("SELECT COUNT(*) FROM vk_feed_generation_likes").fetchone()[0] == 5
+
+
+@pytest.mark.asyncio
 async def test_vk_likes_fail_closed_for_unpublished_or_adult_source(native_feed_db):
     assert await like_public_vk_feed(2001, 42) is None
     assert await like_public_vk_feed(2001, 43) is None
