@@ -3,10 +3,11 @@ import '@testing-library/jest-dom'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { renderToString } from 'react-dom/server'
 import { AccountPlatformEntry } from '../account-platform-entry'
-import { fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
+import { fetchVkSavedReferences, fetchVkPublicDiscovery, fetchVkNativeState, startAccountAppSession, stopAccountAppSession } from '@/lib/shared-account-api'
 import { incomingAccountLink } from '@/lib/account-platform'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   startAccountAppSession: jest.fn(),
   stopAccountAppSession: jest.fn(),
   fetchVkPublicDiscovery: jest.fn(),
@@ -29,6 +30,7 @@ afterEach(() => {
   delete window.__BANANO_INITIAL_LAUNCH__
   delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
 })
 
 test('VK server first paint is readable without JavaScript instead of blank', () => {

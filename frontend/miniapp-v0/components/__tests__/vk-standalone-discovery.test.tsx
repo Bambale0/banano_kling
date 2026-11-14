@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage } from '@/lib/shared-account-api'
+import { fetchVkSavedReferences, fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage, likeVkFeed } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
   fetchVkPublicTrend: jest.fn(),
@@ -18,6 +19,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   generateVkVideo: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
   uploadVkImage: jest.fn(),
+  likeVkFeed: jest.fn(),
 }))
 
 const card = (id: number, title: string) => ({
@@ -30,6 +32,8 @@ const card = (id: number, title: string) => ({
 beforeEach(() => {
   window.history.replaceState({}, '', '/')
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
+  jest.mocked(likeVkFeed).mockResolvedValue({ ok: true, liked: true, likes_count: 5 })
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: true, balance: 12.5, is_blocked: false,
     tasks: [{ task_id: 7, task_type: 'photo', model: 'nano_banana_pro',
@@ -390,7 +394,8 @@ test.each([
   expect(detail).not.toHaveTextContent('Тренд по ссылке')
   expect(within(detail).queryByRole('button', { name: /Повторить|Оплатить|Создать за/ })).not.toBeInTheDocument()
   if (kind === 'remix') {
-    expect(detail).toHaveTextContent('Повтор этой публикации в VK Mini App пока не подключён')
+    expect(detail).toHaveTextContent('Повтор этой публикации пока недоступен для VK-аккаунта.')
+    expect(detail).toHaveTextContent('Скрытые автором промпт и референсы не раскрываются.')
   }
   expect(screen.queryByText('HIDDEN_AUTHOR_PROMPT')).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Вернуться к ленте' }))
@@ -538,4 +543,86 @@ test('native VK Photo tab mounts the common native composer only when backend ad
   expect(await screen.findByRole('button', { name: 'Создать фото' })).toBeInTheDocument()
   await waitFor(() => expect(fetchVkModelCatalog).toHaveBeenCalled())
   expect(screen.queryByText('Ретро портрет')).not.toBeInTheDocument()
+})
+
+test('VK-only feed publication has a verified native share link, not a trend/remix URL', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 145, generation_type: 'video', preview_url: null, result_url: null,
+      likes_count: 4, share_link: 'https://vk.com/app54880352_-239915802#feed_145',
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ссылка на публикацию #145' }))
+  expect(screen.getByRole('dialog', { name: 'Поделиться публикацией' })).toBeInTheDocument()
+  expect(screen.getByRole('textbox', { name: 'Ссылка на публикацию' })).toHaveValue(
+    'https://vk.com/app54880352_-239915802#feed_145',
+  )
+  expect(screen.getByText('Ссылка на «Публикация #145»')).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Повторить|Оплатить/ })).not.toBeInTheDocument()
+  expect(repeatVkTrend).not.toHaveBeenCalled()
+})
+
+test.each([
+  'https://t.me/fake_bot?startapp=feed_145',
+  'https://evil.example/steal#feed_145',
+  'https://vk.com/app54880352#prompt_145',
+  'https://vk.com/app54880352#feed_146',
+])('VK feed sharing refuses unexpected or cross-namespace link %s', async share_link => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 145, generation_type: 'image', preview_url: null, result_url: null,
+      likes_count: 0, share_link,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ссылка на публикацию #145' }))
+  expect(screen.queryByRole('dialog', { name: 'Поделиться публикацией' })).not.toBeInTheDocument()
+})
+
+test('VK native feed like is sent once by signed actor and updates the visible counter', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 19, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/19.jpg', likes_count: 4, can_like_in_app: true,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Нравится' }))
+  await waitFor(() => expect(likeVkFeed).toHaveBeenCalledWith(19))
+  expect(await screen.findByText(/❤ 5/)).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Вам нравится' })).toBeDisabled()
+  expect(likeVkFeed).toHaveBeenCalledTimes(1)
+})
+
+test('native VK feed never offers a reaction when the server write flag is absent', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 20, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/20.jpg', likes_count: 0,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  expect(await screen.findByText(/❤ 0/)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Нравится' })).not.toBeInTheDocument()
+  expect(likeVkFeed).not.toHaveBeenCalled()
+})
+
+test('native VK reaction failure does not claim a successful social write', async () => {
+  jest.mocked(likeVkFeed).mockRejectedValueOnce(new Error('Сеть недоступна'))
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 21, generation_type: 'video', preview_url: null,
+      result_url: 'https://example.test/21.mp4', likes_count: 7, can_like_in_app: true,
+    }] }
+    : { ok: true, can_generate_in_app: false, categories: [] })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Нравится' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Сеть недоступна')
+  expect(screen.getByText(/❤ 7/)).toBeInTheDocument()
 })
