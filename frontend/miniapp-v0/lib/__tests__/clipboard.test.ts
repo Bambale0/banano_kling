@@ -72,6 +72,7 @@ it('uses the native Clipboard API first in a regular desktop browser', async () 
 })
 
 it('falls through to the Clipboard API when synchronous copying is blocked', async () => {
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: { WebApp: { platform: 'tdesktop' } } })
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
