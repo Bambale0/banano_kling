@@ -182,3 +182,26 @@ separate actor/media adapters. `VK_MINIAPP_VIDEO_WRITES_ENABLED` remains
 OFF by default, on both BFF and native worker. A public repeat affordance is
 only preliminary; native catalog validation and quote are authoritative.
 No expanded full `VK_FULL_APP_OPERATIONS` readiness is claimed.
+
+
+## 2026-11-14 — VK shared public feed comments (incremental)
+
+Signed independent VK visitors can read the same public feed comments as
+Telegram, excluding private/profile-only, unpublished and adult posts.
+Legacy Telegram comment IDs remain numeric; VK comments are namespaced
+as vk:<numeric>. No public comment response leaks actor IDs, recipes,
+provider references or referral codes.
+
+The additive vk_feed_comments table provides actor-neutral VK comment
+writes without inserting a synthetic ID into Telegram feed_comments.user_id.
+Both platform feed readers and counts include both tables, with is_mine
+computed from the signed platform identity. Native posts verify publication
+visibility again within the SQL INSERT, while unique actor+request and
+actor+cooldown constraints protect retries and concurrent abuse. The client
+keeps the same request key after uncertain POSTs.
+
+VK_MINIAPP_FEED_COMMENTS_ENABLED defaults OFF. The VK browser displays
+its comment composer only when a server-owned read capability authorizes
+writing. No checkout, provider, Telegram linking, credit transfer or
+full-app readiness is enabled by this slice. Full ten-domain parity still
+requires genuine signed VK WebView and financial/provider acceptance.

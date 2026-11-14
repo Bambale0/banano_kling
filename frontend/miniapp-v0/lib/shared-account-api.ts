@@ -47,6 +47,15 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
       ? 'Сначала подключите отправителя выбранного сообщества ВК на сервере.'
       : 'Проверьте значения настроек и текст сообщения ВК.')
   }
+  if (path === 'vk-feed-comment' && response.status === 429) {
+    throw new Error('Слишком частые комментарии. Повторите позже с тем же запросом.')
+  }
+  if (path === 'vk-feed-comment' && response.status === 409) {
+    throw new Error('Этот запрос уже использован для другого комментария. Проверьте ленту.')
+  }
+  if (path === 'vk-feed-comment' && response.status === 404) {
+    throw new Error('Публикация скрыта или комментарии ВКонтакте пока недоступны.')
+  }
   if (response.status === 409 && path.startsWith('vk-deliveries/')) {
     const result = await response.json().catch(() => ({}))
     throw new Error(result.error_code === 'vk_delivery_uncertain'
@@ -65,6 +74,7 @@ async function request<T>(path: string, init: RequestInit): Promise<T> {
   if (response.status === 404 && path.startsWith('trends?view=feed_item&gen_id=')) {
     throw new Error('Публикация не найдена.')
   }
+  if (response.status === 404 && path.startsWith('vk-feed-comments?')) throw new Error('Публикация скрыта или удалена.')
   if (response.status === 404) throw new Error(path.startsWith('vk-deliveries/')
     ? 'Результат или доставка сейчас недоступны. Обновите список задач.' : 'Проверка аккаунтов пока выключена.')
   if (!response.ok) throw new Error('Не удалось выполнить запрос. Попробуйте ещё раз.')
@@ -505,6 +515,92 @@ export async function likeVkFeed(feedGenId: number, signal?: AbortSignal): Promi
       body: JSON.stringify({ feed_gen_id: feedGenId }), signal,
     },
   ), signal)
+}
+
+/** Public comments on a shared feed post, not an owner's profile/private work.
+ * This is a read-only VK actor route; posting must wait for native ownership.
+ */
+export interface VkPublicFeedComment {
+  id: number | string
+  is_mine?: boolean
+  author: string
+  text: string
+  created_at: string
+}
+
+export interface VkPublicFeedCommentsPage {
+  ok: true
+  can_comment_in_app?: boolean
+  comments_count: number
+  comments: VkPublicFeedComment[]
+}
+
+export async function fetchVkPublicFeedComments(
+  feedGenId: number, signal?: AbortSignal,
+): Promise<VkPublicFeedCommentsPage> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId < 1) {
+    throw new Error('Некорректная публикация из ленты.')
+  }
+  const result = await withPreviewSession(headers => request<VkPublicFeedCommentsPage>(
+    'vk-feed-comments?feed_gen_id=' + feedGenId, { headers, signal },
+  ), signal)
+  if (!Array.isArray(result.comments)
+    || !Number.isSafeInteger(result.comments_count) || result.comments_count < 0
+    || result.comments.some(item => !item || typeof item !== 'object' || !(typeof item.id === 'number' && Number.isSafeInteger(item.id) && item.id > 0
+        || typeof item.id === 'string' && /^vk:[1-9][0-9]*$/.test(item.id))
+      || typeof item.author !== 'string' || typeof item.text !== 'string'
+      || typeof item.created_at !== 'string')) {
+    throw new Error('Сервер вернул неполный список комментариев.')
+  }
+  return result
+}
+
+/** VK comment actor is resolved from the signed launch; no Telegram user ID. */
+export interface VkNativeFeedComment {
+  id: string
+  gen_id: number
+  author: string
+  text: string
+  is_mine: boolean
+  created_at: string
+  author_referral_code?: null
+}
+
+export interface VkNativeFeedCommentWriteResult {
+  ok: true
+  comments_count: number
+  comment: VkNativeFeedComment
+}
+
+export async function postVkPublicFeedComment(
+  feedGenId: number, text: string, clientRequestId: string, signal?: AbortSignal,
+): Promise<VkNativeFeedCommentWriteResult> {
+  const normalized = typeof text === 'string' ? text.trim().replace(/\s+/g, ' ') : ''
+  if (!Number.isSafeInteger(feedGenId) || feedGenId <= 0) {
+    throw new Error('Некорректная публикация для комментария.')
+  }
+  if (normalized.length < 1 || normalized.length > 500) {
+    throw new Error('Комментарий должен содержать от 1 до 500 символов.')
+  }
+  if (typeof clientRequestId !== 'string' || !/^[A-Za-z0-9_-]{16,80}$/.test(clientRequestId)) {
+    throw new Error('Некорректный ключ запроса комментария.')
+  }
+  const result = await withPreviewSession(headers => request<VkNativeFeedCommentWriteResult>(
+    'vk-feed-comment', {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        feed_gen_id: feedGenId, text: normalized, client_request_id: clientRequestId,
+      }), signal,
+    },
+  ), signal)
+  if (!result.comment || !/^vk:[1-9][0-9]*$/.test(result.comment.id)
+    || result.comment.gen_id !== feedGenId || result.comment.text !== normalized
+    || result.comment.is_mine !== true
+    || typeof result.comment.author !== 'string'
+    || !Number.isSafeInteger(result.comments_count) || result.comments_count < 1) {
+    throw new Error('Сервер не подтвердил комментарий. Проверьте ленту перед повтором.')
+  }
+  return result
 }
 
 export async function fetchVkPublicFeedItem(

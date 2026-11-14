@@ -521,6 +521,34 @@ async def _ensure_vk_feed_likes_schema(db: db_backend.Connection) -> None:
     """)
 
 
+async def _ensure_vk_feed_comments_schema(db: db_backend.Connection) -> None:
+    """Actor-neutral VK comments; PostgreSQL requires native DDL.
+
+    This migration is additive: legacy feed_comments.user_id stays Telegram
+    owned, and existing rows remain unchanged.
+    """
+    ddl = db.execute_native_ddl if db_backend.is_postgres() else db.execute
+    native_pk = "BIGSERIAL PRIMARY KEY" if db_backend.is_postgres() else "INTEGER PRIMARY KEY AUTOINCREMENT"
+    await ddl(f"""
+        CREATE TABLE IF NOT EXISTS vk_feed_comments (
+            id {native_pk},
+            generation_id BIGINT NOT NULL
+              REFERENCES generation_tasks(id) ON DELETE CASCADE,
+            vk_user_id BIGINT NOT NULL,
+            text TEXT NOT NULL,
+            client_request_id TEXT NOT NULL,
+            cooldown_bucket BIGINT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (vk_user_id, client_request_id),
+            UNIQUE (vk_user_id, cooldown_bucket)
+        )
+    """)
+    await ddl("""
+        CREATE INDEX IF NOT EXISTS idx_vk_feed_comments_generation_created
+        ON vk_feed_comments(generation_id, created_at DESC, id DESC)
+    """)
+
+
 async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     await db.execute("""
         CREATE TABLE IF NOT EXISTS user_prompts (
@@ -1272,6 +1300,8 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_feed_comments_generation_created ON feed_comments(generation_id, created_at DESC)"
         )
+
+        await _ensure_vk_feed_comments_schema(db)
 
         # Backfill missing referral codes for existing users later in get_or_create_user
 
@@ -7966,9 +7996,10 @@ async def get_feed_generations(
                          AND child.status = 'completed'
                    ) AS remix_count,
                    (
-                       SELECT COUNT(*)
-                       FROM feed_comments fc
-                       WHERE fc.generation_id = gt.id
+                       (SELECT COUNT(*) FROM feed_comments fc
+                        WHERE fc.generation_id = gt.id)
+                       + (SELECT COUNT(*) FROM vk_feed_comments vfc
+                          WHERE vfc.generation_id = gt.id)
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
@@ -8063,9 +8094,10 @@ async def get_user_feed_generations(
                          AND child.status = 'completed'
                    ) AS remix_count,
                    (
-                       SELECT COUNT(*)
-                       FROM feed_comments fc
-                       WHERE fc.generation_id = gt.id
+                       (SELECT COUNT(*) FROM feed_comments fc
+                        WHERE fc.generation_id = gt.id)
+                       + (SELECT COUNT(*) FROM vk_feed_comments vfc
+                          WHERE vfc.generation_id = gt.id)
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
@@ -8152,9 +8184,10 @@ async def get_feed_generation_card(
                          AND child.status = 'completed'
                    ) AS remix_count,
                    (
-                       SELECT COUNT(*)
-                       FROM feed_comments fc
-                       WHERE fc.generation_id = gt.id
+                       (SELECT COUNT(*) FROM feed_comments fc
+                        WHERE fc.generation_id = gt.id)
+                       + (SELECT COUNT(*) FROM vk_feed_comments vfc
+                          WHERE vfc.generation_id = gt.id)
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
@@ -8205,9 +8238,10 @@ async def get_profile_generation_card(
                          AND child.status = 'completed'
                    ) AS remix_count,
                    (
-                       SELECT COUNT(*)
-                       FROM feed_comments fc
-                       WHERE fc.generation_id = gt.id
+                       (SELECT COUNT(*) FROM feed_comments fc
+                        WHERE fc.generation_id = gt.id)
+                       + (SELECT COUNT(*) FROM vk_feed_comments vfc
+                          WHERE vfc.generation_id = gt.id)
                    ) AS comments_count
             FROM generation_tasks gt
             LEFT JOIN users u ON u.id = gt.user_id
@@ -8262,6 +8296,7 @@ async def get_feed_comments(
     *,
     limit: int = 80,
     viewer_user_id: Optional[int] = None,
+    viewer_vk_user_id: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     safe_limit = min(max(int(limit or 80), 1), 150)
     try:
@@ -8286,10 +8321,29 @@ async def get_feed_comments(
             (internal_id, safe_limit),
         )
         rows = await cursor.fetchall()
-    return [
+        native = await db.execute(
+            """SELECT id, generation_id, vk_user_id, text, created_at
+               FROM vk_feed_comments WHERE generation_id = ?
+               ORDER BY created_at DESC, id DESC LIMIT ?""",
+            (internal_id, safe_limit),
+        )
+        native_rows = await native.fetchall()
+    from bot.shared_accounts.vk_feed_comments import _native_comment_payload
+
+    merged = [
         _feed_comment_row_to_payload(row, viewer_user_id=viewer_user_id)
-        for row in reversed(rows)
+        for row in rows
+    ] + [
+        _native_comment_payload(row, viewer_vk_user_id=viewer_vk_user_id)
+        for row in native_rows
     ]
+    # Stable cross-platform order, newest N comments, then chronological for UI.
+    merged.sort(key=lambda item: (
+        str(item["created_at"]),
+        1 if isinstance(item["id"], str) else 0,
+        int(str(item["id"]).rsplit(":", 1)[-1]),
+    ))
+    return merged[-safe_limit:]
 
 
 async def add_feed_comment(

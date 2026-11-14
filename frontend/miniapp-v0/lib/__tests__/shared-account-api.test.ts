@@ -1,3 +1,4 @@
+import { fetchVkPublicFeedComments } from '../shared-account-api'
 import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, likeVkFeed, fetchVkGenerationClaim, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 import { platformMiniAppUrl } from '../account-platform'
@@ -465,4 +466,41 @@ test('native VK feed like sends signed owner session and publication id only', a
 test('invalid VK publication reaction is rejected before network access', async () => {
   await expect(likeVkFeed(-1)).rejects.toThrow('Некорректная публикация')
   expect(global.fetch).not.toHaveBeenCalled()
+})
+
+
+test('VK public feed comments use signed bearer and no Telegram actor or writer', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'vk-session-only', account: { id: 'vk' } }))
+    .mockResolvedValueOnce(reply(200, {
+      comments_count: 1,
+      comments: [{ id: 9, text: 'Класс', author: 'Автор', created_at: '2026-11-14' }],
+    })).mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicFeedComments(41)).resolves.toEqual({
+    ok: true, comments_count: 1,
+    comments: [{ id: 9, text: 'Класс', author: 'Автор', created_at: '2026-11-14' }],
+  })
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-feed-comments?feed_gen_id=41')
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: 'Bearer vk-session-only',
+  }))
+  expect(fetch.mock.calls[1][1]?.method).toBeUndefined()
+  expect(fetch.mock.calls.every(([url]) => !String(url).includes('vk-session-only'))).toBe(true)
+})
+
+test.each([0, -1, Number.NaN, 1.25, Number.MAX_SAFE_INTEGER + 1])(
+  'invalid VK feed comments ID %s is rejected before any request', async id => {
+    await expect(fetchVkPublicFeedComments(id)).rejects.toThrow('Некорректная публикация')
+    expect(global.fetch).not.toHaveBeenCalled()
+  },
+)
+
+test('malformed native public comment payload fails closed and does not display foreign identity', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, { session_token: 'session', account: { id: 'vk' } }))
+    .mockResolvedValueOnce(reply(200, {
+      comments_count: 1,
+      comments: [{ id: 1, author: 'Автор', text: null, created_at: '' }],
+    })).mockResolvedValueOnce(reply(200))
+  await expect(fetchVkPublicFeedComments(41)).rejects.toThrow('неполный список комментариев')
 })

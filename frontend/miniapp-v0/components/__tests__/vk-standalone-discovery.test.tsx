@@ -1,10 +1,11 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { VkStandaloneDiscovery } from '../vk-standalone-discovery'
-import { fetchVkSavedReferences, fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage, likeVkFeed } from '@/lib/shared-account-api'
+import { fetchVkPublicFeedComments, fetchVkSavedReferences, fetchVkPublicCategory, fetchVkPublicDiscovery, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkNativeState, fetchVkNativeCommerce, fetchVkModelCatalog, createVkInvoice, repeatVkTrend, generateVkImage, generateVkVideo, uploadVkImage, likeVkFeed } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
   fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
+  fetchVkPublicFeedComments: jest.fn(),
   fetchVkPublicDiscovery: jest.fn(),
   fetchVkPublicCategory: jest.fn(),
   fetchVkPublicTrend: jest.fn(),
@@ -625,4 +626,35 @@ test('native VK reaction failure does not claim a successful social write', asyn
   fireEvent.click(await screen.findByRole('button', { name: 'Нравится' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('Сеть недоступна')
   expect(screen.getByText(/❤ 7/)).toBeInTheDocument()
+})
+
+
+test('independent VK viewer opens the same public-feed comments without any Telegram account', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockImplementation(async view => view === 'feed'
+    ? { ok: true, can_generate_in_app: false, items: [{
+      id: 271, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/public.jpg', likes_count: 3,
+    }] } : { ok: true, can_generate_in_app: false, categories: [] })
+  jest.mocked(fetchVkPublicFeedItem).mockResolvedValue({
+    ok: true, item: {
+      id: 271, model: 'banana_pro', generation_type: 'image',
+      preview_url: null, result_url: 'https://example.test/public.jpg',
+      likes_count: 3, shares_count: 0, comments_count: 2,
+      aspect_ratio: '1:1', feed_blurred: false, media_unavailable: false,
+      share_link: 'https://vk.com/app123#feed_271', can_repeat_in_app: false,
+    },
+  })
+  jest.mocked(fetchVkPublicFeedComments).mockResolvedValue({
+    ok: true, comments_count: 2,
+    comments: [{ id: 7, author: 'Автор', text: 'Один и тот же комментарий', created_at: '2026-11-14' }],
+  })
+  render(<VkStandaloneDiscovery surface="feed" />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Открыть публикацию #271' }))
+  const button = await screen.findByRole('button', { name: 'Комментарии (2)' })
+  expect(fetchVkPublicFeedComments).not.toHaveBeenCalled()
+  fireEvent.click(button)
+  expect(await screen.findByText('Один и тот же комментарий')).toBeInTheDocument()
+  expect(fetchVkPublicFeedComments).toHaveBeenCalledWith(271, expect.anything())
+  expect(screen.queryByRole('textbox', { name: /Новый комментарий/ })).not.toBeInTheDocument()
+  expect(screen.queryByText(/привяжите Telegram/i)).not.toBeInTheDocument()
 })
