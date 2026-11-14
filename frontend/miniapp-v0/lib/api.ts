@@ -52,6 +52,32 @@ declare global {
 
 const INIT_DATA_STORAGE_KEY = '__banano_tg_init_data'
 
+// Only a browser-side freshness check; the backend still verifies HMAC and
+// identity for every operation. Match the backend's 24-hour WebApp session TTL.
+const TELEGRAM_INIT_DATA_MAX_AGE_SECONDS = 24 * 60 * 60
+
+function telegramAuthDate(initData: string): number | null {
+  const value = new URLSearchParams(initData).get('auth_date')
+  if (!value || !/^\d{1,12}$/.test(value)) return null
+  const timestamp = Number(value)
+  return Number.isSafeInteger(timestamp) && timestamp > 0 ? timestamp : null
+}
+
+function isExpiredTelegramInitData(initData: string): boolean {
+  const timestamp = telegramAuthDate(initData)
+  return timestamp !== null
+    && Math.abs(Date.now() / 1000 - timestamp) > TELEGRAM_INIT_DATA_MAX_AGE_SECONDS
+}
+
+function isUsableCachedTelegramInitData(initData: string): boolean {
+  const params = new URLSearchParams(initData)
+  return telegramAuthDate(initData) !== null
+    && !isExpiredTelegramInitData(initData)
+    && Boolean(params.get('hash'))
+    && Boolean(params.get('user'))
+}
+
+
 function getWebApp() {
   if (typeof window === 'undefined') {
     return null
@@ -105,7 +131,12 @@ function getInitDataFromLocation(): string {
   for (const key of ['__banano_initial_hash', '__banano_initial_search']) {
     try {
       const fromStorageSnapshot = parseLaunch(window.sessionStorage.getItem(key) || '')
-      if (fromStorageSnapshot) return fromStorageSnapshot
+      // A snapshot from a previous WebView launch may be older than the
+      // backend's auth window. It must not shadow a fresh Telegram SDK token.
+      if (fromStorageSnapshot && isUsableCachedTelegramInitData(fromStorageSnapshot)) {
+        return fromStorageSnapshot
+      }
+      if (fromStorageSnapshot) window.sessionStorage.removeItem(key)
     } catch {}
   }
 
@@ -129,16 +160,31 @@ export function getInitData(): string {
     : ''
   if (/^vk_session:[A-Za-z0-9_-]{43}$/.test(platformSession)) return platformSession
 
-  // Prefer initData from location hash (tgWebAppData) — it's available
-  // before window.Telegram.WebApp is fully initialized. This is critical
-  // on slow networks/VPN where the Telegram SDK CDN may be delayed.
+  // The URL is available before Telegram's SDK finishes initializing, but
+  // the SDK can subsequently provide a *newer* signed launch. A previous
+  // URL snapshot or stored token must never shadow newer WebApp credentials.
   const fromLocation = getInitDataFromLocation()
   const fromTelegram = getWebApp()?.initData || ''
-  const fromWindow =
-    typeof window !== 'undefined'
-      ? String(window.__BANANO_TG_INIT_DATA__ || '').trim()
-      : ''
-  const initData = fromLocation || fromTelegram || fromWindow
+  const fromWindow = typeof window !== 'undefined'
+    ? String(window.__BANANO_TG_INIT_DATA__ || '').trim()
+    : ''
+
+  let initData = ''
+  for (const [candidate, cached] of [
+    [fromLocation, false],
+    [fromTelegram, false],
+    [fromWindow, true],
+  ] as const) {
+    if (!candidate) continue
+    if (cached && !isUsableCachedTelegramInitData(candidate)) {
+      if (typeof window !== 'undefined') delete window.__BANANO_TG_INIT_DATA__
+      continue
+    }
+    if (isExpiredTelegramInitData(candidate)) continue
+    const timestamp = telegramAuthDate(candidate) ?? 0
+    if (!initData || timestamp > (telegramAuthDate(initData) ?? 0)) initData = candidate
+  }
+
   if (initData && typeof window !== 'undefined') {
     try {
       window.__BANANO_TG_INIT_DATA__ = initData
@@ -154,10 +200,11 @@ export function getInitData(): string {
   if (typeof window !== 'undefined') {
     try {
       const fromStorage = window.sessionStorage.getItem(INIT_DATA_STORAGE_KEY) || ''
-      if (fromStorage) {
+      if (isUsableCachedTelegramInitData(fromStorage)) {
         window.__BANANO_TG_INIT_DATA__ = fromStorage
         return fromStorage
       }
+      if (fromStorage) window.sessionStorage.removeItem(INIT_DATA_STORAGE_KEY)
     } catch {}
   }
   return ''
