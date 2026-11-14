@@ -265,3 +265,43 @@ async def test_partial_bootstrap_does_not_enable_photo_payment_or_other_domain(m
         assert response.status == 503
         legacy.assert_not_awaited()
         state.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_native_bootstrap_preserves_provider_configured_reference_limits(monkeypatch):
+    """A signed VK model catalogue can advertise >4 references; no UI hard cap."""
+    monkeypatch.setenv("VK_NATIVE_BOOTSTRAP_ENABLED", "1")
+    models_payload = {
+        "ok": True,
+        "photo_models": [{
+            "id": "native_photo", "label": "Native photo", "ratios": ["1:1"],
+            "max_references": 10, "resolutions": ["1024"],
+            "quality_costs": {"1024": 2}, "cost": 2,
+        }],
+        "video_models": [{
+            "id": "native_video", "label": "Native video", "ratios": ["16:9"],
+            "max_image_references": 12, "durations": [5],
+            "scenarios": ["image_to_video"], "costs": {"5": 5},
+        }],
+    }
+    client, auth, legacy, *_ = await _client_with_native_bootstrap(models=models_payload)
+    monkeypatch.setattr(gateway, "resolve_platform_actor", auth)
+    async with client:
+        response = await client.post("/mini-app/api/bootstrap", json={
+            "init_data": "vk_session:verified-native-actor",
+        })
+        assert response.status == 200, await response.text()
+        result = await response.json()
+        assert result["image_models"][0]["max_references"] == 10
+        assert result["video_models"][0]["max_image_references"] == 12
+        legacy.assert_not_awaited()
+
+
+@pytest.mark.parametrize("invalid", [True, -1, 1.5, "10"])
+def test_native_bootstrap_rejects_malformed_reference_limits(invalid):
+    from bot.shared_accounts.native_bootstrap import _model_identity
+
+    assert not _model_identity({
+        "id": "test", "label": "Test", "ratios": ["1:1"],
+        "max_references": invalid,
+    }, "max_references")
