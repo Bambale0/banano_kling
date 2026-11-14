@@ -12,12 +12,14 @@
 
 - Treat a legacy Telegram gate without Telegram credentials as a recoverable launch state rather than forcing an unrelated VK user to sign into Telegram.
 - Add a visible **Войти через ВКонтакте** recovery action using the existing same-origin `/mini-app/api/account-preview/vk-login` endpoint and top-level navigation. That server endpoint uses the current configured VK app/community IDs and issues a 303 to the VK platform; the following VK launch is still verified by signature, timestamp and revocable session. Browser-supplied IDs and balances remain untrusted.
-- Preserve the normal Telegram Login Widget and flow. Do not infer a VK actor from referrer, user agent or browser state. Never construct an unsigned VK identity.
+- In the already-authenticated VK platform case, the common shell may still enter locked mode (e.g. a legacy-linked Telegram bootstrap fails). Route that locked state to a dedicated VK-only recovery gate, **not** TelegramOpenGate. This avoids a misleading Telegram requirement even when the VK launch parameters were valid.
+- Preserve the normal Telegram Login Widget and flow for Telegram platform. Do not infer a VK actor from referrer, user agent or browser state. Never construct an unsigned VK identity.
 - `VK_FULL_APP_PARITY_ENABLED`, checkout, video writes, feed comment writes and partial bootstrap flags remain OFF. No prices, provider settings, ledger, schema or secrets changed.
 
 ## Test plan and evidence
 
 - Added component regression `telegram-open-gate-vk-recovery.test.tsx`: VK recovery link is available in the locked Telegram UI, points to trusted same-origin API route and navigates the top-level browsing context; Telegram login script remains in place.
+- Added `vk-login-recovery-gate.test.tsx` to assert that the VK-only locked gate contains the server-controlled VK login route and no Telegram requirement. Updated `MiniAppShell` locked branch to select the appropriate gate by `currentAccountPlatform()`.
 - Test file committed before the implementation file (test-first change order). **No local RED run claimed.** GitHub CI on the PR is the mandatory executable verification, including Jest, TypeScript, build and browser regression.
 - Post-merge require exact deployed SHA and public link smoke; this change alone cannot fix an incorrect VK developer-panel URL or prove native signed VK acceptance.
 
