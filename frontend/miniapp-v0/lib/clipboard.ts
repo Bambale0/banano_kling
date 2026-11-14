@@ -46,11 +46,19 @@ export async function copyTextToClipboard(
   const value = String(text || '').trim()
   if (!value || typeof document === 'undefined') throw new Error('Ссылка пока недоступна')
 
-  // Telegram Desktop/Android, iOS and embedded browsers may lose transient
-  // user activation while waiting for navigator.clipboard.writeText to reject.
-  // Run both synchronous selection attempts within the original click first.
-  if (tryCopySelection(value, visibleField)) return
-  if (visibleField && tryCopySelection(value)) return
+  const platform = typeof window !== 'undefined' ? window.Telegram?.WebApp?.platform : undefined
+  const isIOS = platform === 'ios'
+    || (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent))
+  // The visible publication field (or a known Telegram WebView) needs legacy
+  // copying synchronously in the user's original tap. Ordinary desktop browsers
+  // must prefer the modern API: execCommand can report success without writing.
+  const needsSynchronousFallback = Boolean(
+    visibleField || isIOS || platform === 'tdesktop' || platform === 'macos' || platform === 'android',
+  )
+  if (needsSynchronousFallback) {
+    if (tryCopySelection(value, visibleField)) return
+    if (visibleField && tryCopySelection(value)) return
+  }
 
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
@@ -61,5 +69,6 @@ export async function copyTextToClipboard(
     }
   }
 
+  if (!needsSynchronousFallback && tryCopySelection(value)) return
   throw new Error('Не удалось скопировать ссылку')
 }
