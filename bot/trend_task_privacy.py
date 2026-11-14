@@ -98,12 +98,21 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
         async with db_backend.connect() as db:
             for offset in range(0, len(candidate_prompts), 200):
                 batch = candidate_prompts[offset:offset + 200]
-                placeholders = ",".join("?" for _ in batch)
+                # The historical classifier compares stripped strings. An
+                # equality filter would miss approved recipes with leading or
+                # trailing whitespace, potentially exposing a legacy secret.
+                # LIKE is only a conservative prefilter; Python still checks
+                # stripped exact equality and original author ownership.
+                patterns = [
+                    "%" + prompt.replace("!", "!!").replace("%", "!%").replace("_", "!_") + "%"
+                    for prompt in batch
+                ]
+                predicate = " OR ".join("prompt_text LIKE ? ESCAPE '!'" for _ in patterns)
                 cursor = await db.execute(
                     f"""SELECT prompt_text, author_id FROM user_prompts
                        WHERE status = 'approved' AND is_public = 1
-                         AND tags LIKE ? AND prompt_text IN ({placeholders})""",
-                    ('%"trend"%', *batch),
+                         AND tags LIKE ? AND ({predicate})""",
+                    ('%"trend"%', *patterns),
                 )
                 for recipe in await cursor.fetchall():
                     trend_authors.setdefault(str(recipe[0] or "").strip(), set()).add(recipe[1])
