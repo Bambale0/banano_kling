@@ -2,7 +2,10 @@
 import pytest
 
 from bot.services.seedream55_service import (
-    EDIT_MODEL, LAYERS_MODEL, TEXT_MODEL, Seedream55Service,
+    EDIT_MODEL,
+    LAYERS_MODEL,
+    TEXT_MODEL,
+    Seedream55Service,
 )
 
 

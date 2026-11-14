@@ -1,8 +1,5 @@
 """TDD regression: complete layer output, archive, and exactly-once refund."""
-import asyncio
-import io
 import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import aiosqlite

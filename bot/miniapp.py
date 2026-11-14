@@ -156,14 +156,6 @@ from bot.payment_utils import (
     total_package_credits,
 )
 from bot.quality_pricing import QUALITY_COSTS, SEEDREAM_5_PRO_QUALITY_COSTS
-from bot.services.seedream55_pricing import (
-    quality_prices as seedream55_quality_prices,
-    input_image_price as seedream55_input_price,
-    image_generation_cost as seedream55_cost,
-)
-from bot.repeat_personalization import (
-    admin_preview_enabled as repeat_personalization_preview_enabled,
-)
 from bot.repeat_personalization import (
     clear_repeat_fields,  # noqa: F401 - re-exported to publication compatibility patch
     get_repeat_fields,
@@ -192,6 +184,15 @@ from bot.services.photo_prompt_billing import (
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
 from bot.services.remix_prompt import compose_feed_remix_prompt
+from bot.services.seedream55_pricing import (
+    image_generation_cost as seedream55_cost,
+)
+from bot.services.seedream55_pricing import (
+    input_image_price as seedream55_input_price,
+)
+from bot.services.seedream55_pricing import (
+    quality_prices as seedream55_quality_prices,
+)
 from bot.services.subscription_service import (
     REQUIRED_CHANNEL_USERNAME,
     check_required_channel_subscription,
@@ -5199,7 +5200,12 @@ async def miniapp_feed_remix(request: web.Request) -> web.Response:
                 {"ok": False, "error": "Добавьте своё фото или референс для повтора"}, status=400,
             )
         if img_service in {"seedream_55", "seedream_55_layers"}:
-            from bot.services.seedream55_service import SIZES, RATIOS, FORMATS, BACKGROUNDS
+            from bot.services.seedream55_service import (
+                BACKGROUNDS,
+                FORMATS,
+                RATIOS,
+                SIZES,
+            )
             if (img_quality not in SIZES
                 or img_output_format not in FORMATS
                 or img_background not in BACKGROUNDS
@@ -5481,7 +5487,12 @@ async def miniapp_generate_image(request: web.Request) -> web.Response:
             )
 
         if img_service in {"seedream_55", "seedream_55_layers"}:
-            from bot.services.seedream55_service import SIZES, RATIOS, FORMATS, BACKGROUNDS
+            from bot.services.seedream55_service import (
+                BACKGROUNDS,
+                FORMATS,
+                RATIOS,
+                SIZES,
+            )
             if (img_quality not in SIZES
                 or img_output_format not in FORMATS
                 or img_background not in BACKGROUNDS

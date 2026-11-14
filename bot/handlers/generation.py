@@ -8,7 +8,6 @@ import os
 import random
 import re
 import subprocess
-import time
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -92,9 +91,9 @@ from bot.services.nano_banana_2_service import nano_banana_2_service
 from bot.services.nano_banana_pro_service import nano_banana_pro_service
 from bot.services.preset_manager import preset_manager
 from bot.services.reference_storage_service import save_reference_file
-from bot.services.seedream_service import seedream_service
-from bot.services.seedream55_service import seedream55_service
 from bot.services.seedream55_pricing import image_generation_cost as seedream55_cost
+from bot.services.seedream55_service import seedream55_service
+from bot.services.seedream_service import seedream_service
 from bot.services.telegram_transport import telegram_api_call
 from bot.services.veo_service import veo_service
 from bot.services.wan27_service import wan27_service
@@ -106,7 +105,6 @@ from bot.utils.help_texts import (
     get_reference_images_help,
 )
 from bot.utils.user_facing_errors import make_user_friendly_generation_error
-from bot.utils.validators import detect_explicit_prompt_policy_violation
 from bot.video_reference_policy import (
     choose_video_reference_model,
     get_max_video_image_references,
@@ -6220,9 +6218,8 @@ async def handle_seedream55_options(callback: types.CallbackQuery, state: FSMCon
             values = (5, 10, 30, 100)
             old = data.get("img_layers_max_images", 30)
             await state.update_data(img_layers_max_images=values[(values.index(old) + 1) % len(values)] if old in values else 30)
-    elif callback.data == "seedream55_toggle_text":
-        if model == "seedream_55_layers":
-            await state.update_data(img_layers_text_recognition=not bool(data.get("img_layers_text_recognition", False)))
+    elif callback.data == "seedream55_toggle_text" and model == "seedream_55_layers":
+        await state.update_data(img_layers_text_recognition=not bool(data.get("img_layers_text_recognition", False)))
     await _show_image_creation_screen(callback, state)
     await callback.answer()
 

@@ -23,7 +23,7 @@ MAX_TOTAL_BYTES = 500 * 1024 * 1024
 def extract_layers(result_json: dict) -> tuple[list[str], list[dict]]:
     """Use resultUrls for ordering; preserve KIE per-layer metadata."""
     if not isinstance(result_json, dict):
-        raise ValueError("Invalid KIE result JSON")
+        raise TypeError("Invalid KIE result JSON")
     urls = result_json.get("resultUrls") or []
     if not isinstance(urls, list) or not 2 <= len(urls) <= 100:
         raise ValueError("Layer decomposition must return 2–100 URLs")

@@ -16,7 +16,11 @@ from bot.database import (
     mark_task_delivery_status,
 )
 from bot.services.feed_persist import persist_feed_result_urls
-from bot.services.seedream55_results import extract_layers, make_layers_archive, settle_layers
+from bot.services.seedream55_results import (
+    extract_layers,
+    make_layers_archive,
+    settle_layers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +99,7 @@ async def deliver_layer_task(request: web.Request, task) -> web.Response:
     )
     try:
         await bot.send_message(telegram_id, message, parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - external Telegram transport can raise many API/network errors.
         logger.warning("Seedream 5.5 layers Telegram delivery retry: task=%s error=%s", task_id, type(exc).__name__)
         await mark_task_delivery_status(task_id, "pending", error=type(exc).__name__)
         return web.Response(status=503)
