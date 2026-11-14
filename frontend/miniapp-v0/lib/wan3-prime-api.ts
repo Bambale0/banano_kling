@@ -397,10 +397,12 @@ function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
       // once, before any upload session or provider charge is created.
       reader.onload = reader.onerror = reader.onabort = null
       if (typeof file.arrayBuffer !== 'function') { fail(); return }
-      void file.arrayBuffer().then(
-        bytes => { if (signal.aborted) abort(); else accept(bytes) },
-        () => fail(),
-      )
+      try {
+        void file.arrayBuffer().then(
+          bytes => { if (signal.aborted) abort(); else accept(bytes) },
+          () => fail(),
+        )
+      } catch { fail() }
     }
     reader.onerror = useBlobFallback
     reader.onabort = () => { if (signal.aborted) abort(); else useBlobFallback() }
