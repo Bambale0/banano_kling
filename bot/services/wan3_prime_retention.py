@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,7 @@ from bot.services.wan3_prime_media import canonical_child_path
 from bot.services.wan3_prime_storage_policy import lock_storage, positive_setting
 
 logger = logging.getLogger(__name__)
+_PG_UNUSED_MEDIA_SCAN_DEFER_LOGGED = False
 
 
 async def _table_exists(db, name: str) -> bool:
@@ -88,6 +90,21 @@ async def cleanup_expired(*, limit: int = 100) -> dict[str, int]:
                              "WHERE upload_id = ?", (stamp, session['upload_id']))
             await db.commit()
             removed_sessions += 1
+
+    # An unindexed LIKE against generation_tasks.request_data re-reads every
+    # large JSON document on each candidate (twice for actual deletions). On
+    # production PostgreSQL this can consume seconds every 30-second recovery
+    # iteration and delay unrelated Telegram/Mini App requests. Preserve media
+    # until an indexed ownership lookup exists. Expired chunk sessions above
+    # must still be reclaimed; opting in is only for small/provisioned DBs.
+    if db_backend.is_postgres() and os.getenv("WAN3_PG_UNUSED_MEDIA_FULL_SCAN_ENABLED", "0") != "1":
+        global _PG_UNUSED_MEDIA_SCAN_DEFER_LOGGED
+        if not _PG_UNUSED_MEDIA_SCAN_DEFER_LOGGED:
+            logger.warning(
+                "Wan3 unused media expiry deferred: PostgreSQL unindexed generation_tasks scan disabled"
+            )
+            _PG_UNUSED_MEDIA_SCAN_DEFER_LOGGED = True
+        return {'removed_sessions': removed_sessions, 'removed_media': 0}
 
     # Claim a bounded page, then release both the global quota lock AND the
     # cursor write transaction before scanning recipe/history text. Otherwise
