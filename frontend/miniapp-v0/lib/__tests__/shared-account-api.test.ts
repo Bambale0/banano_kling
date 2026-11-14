@@ -331,6 +331,119 @@ test('signed public feed HTTP 404 gives a publication-specific error and revokes
   )
 })
 
+test('overlapping signed VK logins cannot install an older response over the newer actor', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=verified')
+  const aToken = 'a'.repeat(43)
+  const bToken = 'b'.repeat(43)
+  let resolveOldSession!: (response: Response) => void
+  const oldSession = new Promise<Response>(resolve => { resolveOldSession = resolve })
+  const calls: string[] = []
+  let logins = 0
+  jest.mocked(global.fetch).mockImplementation(async (input, options) => {
+    const url = String(input)
+    const token = String((options?.headers as Record<string, string>)?.Authorization || '')
+    calls.push(url + ' ' + token)
+    if (url.endsWith('/session')) {
+      logins += 1
+      return logins === 1
+        ? oldSession
+        : reply(200, { session_token: bToken, account: { id: 'new-vk-owner' } })
+    }
+    if (url.endsWith('/me')) {
+      return reply(200, {
+        account: { id: token === 'Bearer ' + aToken ? 'old-vk-owner' : 'new-vk-owner' },
+        preview: { revision: 1, vk_app_id: 123, telegram_linked: false, telegram_bot_username: 'test_bot' },
+      })
+    }
+    if (url.endsWith('/vk-native-state')) {
+      return reply(200, { registered: true, balance: token === 'Bearer ' + bToken ? 21 : 999, tasks: [] })
+    }
+    return reply(200)
+  })
+  const older = startAccountAppSession()
+  const newer = startAccountAppSession()
+  const access = await newer
+  expect(access.telegram_linked).toBe(false)
+  resolveOldSession(reply(200, { session_token: aToken, account: { id: 'old-vk-owner' } }))
+  await expect(older).rejects.toThrow()
+  const state = await fetchVkNativeState()
+  expect(state.balance).toBe(21)
+  expect(calls.filter(value => value.includes('/logout'))).toEqual([
+    expect.stringContaining('Bearer ' + aToken),
+  ])
+  expect(calls.some(value => value.includes('Bearer ' + bToken) && value.includes('/logout'))).toBe(false)
+  await stopAccountAppSession()
+  expect(calls.filter(value => value.includes('/logout'))).toHaveLength(2)
+})
+
+test('aborted old VK profile response cannot overwrite another active VK session', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=verified')
+  const aToken = 'c'.repeat(43)
+  const bToken = 'd'.repeat(43)
+  let resolveOldProfile!: (response: Response) => void
+  const oldProfile = new Promise<Response>(resolve => { resolveOldProfile = resolve })
+  const loggedOut: string[] = []
+  let logins = 0
+  jest.mocked(global.fetch).mockImplementation(async (input, options) => {
+    const url = String(input)
+    const token = String((options?.headers as Record<string, string>)?.Authorization || '')
+    if (url.endsWith('/session')) {
+      logins += 1
+      return reply(200, {
+        session_token: logins === 1 ? aToken : bToken,
+        account: { id: logins === 1 ? 'old-owner' : 'new-owner' },
+      })
+    }
+    if (url.endsWith('/me')) return token === 'Bearer ' + aToken ? oldProfile : reply(200, {
+      account: { id: 'new-owner' },
+      preview: { revision: 1, vk_app_id: 123, telegram_linked: false, telegram_bot_username: 'test_bot' },
+    })
+    if (url.endsWith('/logout')) { loggedOut.push(token); return reply(200) }
+    if (url.endsWith('/vk-native-state')) return reply(200, { balance: token === 'Bearer ' + bToken ? 5 : -1, registered: true, tasks: [] })
+    return reply(200)
+  })
+  const controller = new AbortController()
+  const first = startAccountAppSession(controller.signal)
+  // Wait until the first request reaches its profile read.
+  await Promise.resolve()
+  await Promise.resolve()
+  controller.abort()
+  await stopAccountAppSession()
+  await startAccountAppSession()
+  resolveOldProfile(reply(200, {
+    account: { id: 'old-owner' },
+    preview: { revision: 1, vk_app_id: 123, telegram_linked: false, telegram_bot_username: 'test_bot' },
+  }))
+  await expect(first).rejects.toThrow()
+  expect((await fetchVkNativeState()).balance).toBe(5)
+  expect(loggedOut).toContain('Bearer ' + aToken)
+  expect(loggedOut).not.toContain('Bearer ' + bToken)
+  await stopAccountAppSession()
+})
+
+test('unmount invalidates a pending VK login even if the server ignores abort', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=456&vk_ts=1000&sign=verified')
+  const token = 'e'.repeat(43)
+  let resolveSession!: (response: Response) => void
+  const pending = new Promise<Response>(resolve => { resolveSession = resolve })
+  const logouts: string[] = []
+  jest.mocked(global.fetch).mockImplementation(async (input, options) => {
+    const url = String(input)
+    if (url.endsWith('/session')) return pending
+    if (url.endsWith('/logout')) {
+      logouts.push(String((options?.headers as Record<string, string>)?.Authorization))
+      return reply(200)
+    }
+    throw new Error('Stale session must not call profile or paid VK API')
+  })
+  const opened = startAccountAppSession()
+  await stopAccountAppSession()
+  resolveSession(reply(200, { session_token: token, account: { id: 'stale-vk-owner' } }))
+  await expect(opened).rejects.toThrow()
+  expect(logouts).toEqual(['Bearer ' + token])
+  await stopAccountAppSession()
+})
+
 test('native VK feed like sends signed owner session and publication id only', async () => {
   const fetch = jest.mocked(global.fetch)
   fetch.mockResolvedValueOnce(reply(200, {
