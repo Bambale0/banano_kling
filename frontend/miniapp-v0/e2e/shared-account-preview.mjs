@@ -389,7 +389,12 @@ try {
       // readiness. Without it, the same VK native discovery stays in control.
       await page.getByRole('heading', { name: 'Создавайте в ВКонтакте', exact: true }).waitFor()
       await page.getByText('VK тест тренда', { exact: true }).waitFor()
-      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 0)
+      // The native VK actor now sees the SAME seven-tab visual navigation.
+      // This does NOT grant an incomplete shared Telegram wallet adapter.
+      const nav = page.getByRole('navigation', { name: 'Разделы приложения' })
+      assert.equal(await nav.locator('button').count(), 7)
+      assert.equal(await page.getByRole('button', { name: 'Motion', exact: true }).count(), 0)
+      assert.equal(await page.getByRole('button', { name: 'Профиль', exact: true }).count(), 1)
       assert.equal(await page.getByRole('link', { name: 'Генерировать в боте ВКонтакте' }).getAttribute('href'),
         'https://vk.com/im?sel=-239915802')
       assert.equal(requests.filter(path => path.endsWith('/bootstrap')).length, 0,
