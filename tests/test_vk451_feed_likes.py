@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -163,3 +165,38 @@ def test_public_feed_like_flag_only_advertised_by_server(monkeypatch):
     c = api._vk_public_feed_card(card, vk_app_id=123)
     assert c["can_like_in_app"] is True
     assert "prompt" not in c and "reference_images" not in c
+
+
+@pytest.mark.asyncio
+async def test_vk_feed_likes_sqlite_ddl_is_executed(monkeypatch):
+    monkeypatch.setattr(database.db_backend, "is_postgres", lambda: False)
+    conn = SimpleNamespace(execute=AsyncMock())
+    await database._ensure_vk_feed_likes_schema(conn)
+    statement = conn.execute.await_args.args[0]
+    assert "CREATE TABLE IF NOT EXISTS vk_feed_generation_likes" in statement
+    assert "PRIMARY KEY (vk_user_id, generation_task_id)" in statement
+    assert "REFERENCES generation_tasks (id) ON DELETE CASCADE" in statement
+    assert "REFERENCES users" not in statement
+
+
+@pytest.mark.asyncio
+async def test_vk_feed_likes_postgres_migration_bypasses_sqlite_ddl_translation(monkeypatch):
+    monkeypatch.setattr(database.db_backend, "is_postgres", lambda: True)
+    conn = SimpleNamespace(
+        execute=AsyncMock(side_effect=AssertionError("SQLite CREATE is skipped on PostgreSQL")),
+        execute_native_ddl=AsyncMock(),
+    )
+    await database._ensure_vk_feed_likes_schema(conn)
+    conn.execute.assert_not_awaited()
+    statement = conn.execute_native_ddl.await_args.args[0]
+    assert "CREATE TABLE IF NOT EXISTS vk_feed_generation_likes" in statement
+    assert "PRIMARY KEY (vk_user_id, generation_task_id)" in statement
+    assert "REFERENCES generation_tasks (id) ON DELETE CASCADE" in statement
+    assert "REFERENCES users" not in statement
+
+
+def test_postgres_initial_bootstrap_includes_vk_feed_likes():
+    schema = (Path(__file__).resolve().parents[1] / "schema_postgres.sql").read_text()
+    assert "CREATE TABLE IF NOT EXISTS vk_feed_generation_likes" in schema
+    assert "PRIMARY KEY (vk_user_id, generation_task_id)" in schema
+    assert "REFERENCES generation_tasks(id) ON DELETE CASCADE" in schema
