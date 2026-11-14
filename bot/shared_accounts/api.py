@@ -23,6 +23,7 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
+from .vk_feed_repeat import build_vk_feed_repeat, native_vk_feed_repeat_model
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
     create_native_vk_invoice,
@@ -350,6 +351,48 @@ async def vk_native_image(request: web.Request) -> web.Response:
     return response({'ok': True, **result})
 
 
+async def vk_native_feed_repeat(request: web.Request) -> web.Response:
+    """Signed VK owner repeats a *public, explicitly visible* photo publication.
+
+    This is NOT a trend ID: the public source may not provide hidden/private
+    prompts or inherited references. Never create a Telegram user/task/charge.
+    A distinct feature flag stays OFF until native paid WebView tests pass.
+    """
+    actor_id = await _vk_writer_actor(request)
+    if (os.getenv("VK_MINIAPP_FEED_REPEAT_ENABLED") != "1"
+            or os.getenv("VK_MINIAPP_WRITES_ENABLED") != "1"):
+        return response({"ok": False, "error": "VK feed repeat unavailable"}, 404)
+    data = await _body(request)
+    if set(data) - {
+        "feed_gen_id", "reference_urls", "quote_only",
+        "client_request_id", "expected_cost",
+    }:
+        raise ValueError("Invalid VK feed repeat request")
+    gen_id = data.get("feed_gen_id")
+    if type(gen_id) is not int or not 0 < gen_id < 2**63:
+        raise ValueError("Invalid public feed ID")
+    if type(data.get("quote_only")) is not bool:
+        raise ValueError("Invalid quote mode")
+    # Check public visibility on every quote AND paid submission. An author
+    # can unpublish, blur or hide a prompt between the two requests.
+    from bot.database import get_feed_generation_card
+    source = await get_feed_generation_card(gen_id, viewer_user_id=None)
+    if source is None or native_vk_feed_repeat_model(source) is None:
+        raise ValueError("Feed repeat not permitted")
+    # Only new, owner-verified photo uploads may enter the native worker.
+    # Their total count is validated against the current model catalogue.
+    refs = verified_image_urls(actor_id, data.get("reference_urls", []))
+    catalog = await fetch_native_vk_models(actor_id)
+    payload = build_vk_feed_repeat(
+        source, catalog, refs,
+        quote_only=data["quote_only"],
+        client_request_id=data.get("client_request_id"),
+        expected_cost=data.get("expected_cost"),
+    )
+    result = await submit_native_vk_image(actor_id, payload)
+    return response({"ok": True, **result})
+
+
 async def vk_generation_claim(request: web.Request) -> web.Response:
     """Look up a verified VK owner's native generation after an uncertain POST.
 
@@ -501,9 +544,13 @@ def _vk_public_feed_card(card: dict, *, vk_app_id: int,
         'feed_blurred': bool(card.get('feed_blurred')),
         'media_unavailable': bool(card.get('media_unavailable')),
         'share_link': feed_link(None, int(card['id']), platform='vk', vk_app_id=vk_app_id, vk_community_id=vk_community_id),
-        # Never interpret visible content or public status as authorization
-        # for a paid remix. That is a separate actor/ledger/ref contract.
-        'can_repeat_in_app': False,
+        # This is a separate server-owned native repeat, never a trend ID.
+        # Private prompts, source references and Telegram wallet are excluded.
+        'can_repeat_in_app': (
+            os.getenv('VK_MINIAPP_FEED_REPEAT_ENABLED') == '1'
+            and os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+            and native_vk_feed_repeat_model(card) is not None
+        ),
     }
 
 
@@ -609,6 +656,11 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'preview_url': card.get('preview_url'),
                 'result_url': card.get('result_url'),
                 'likes_count': int(card.get('likes_count') or 0),
+                'can_repeat_in_app': (
+                    os.getenv('VK_MINIAPP_FEED_REPEAT_ENABLED') == '1'
+                    and os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+                    and native_vk_feed_repeat_model(card) is not None
+                ),
             }
             for card in cards if card.get('gen_type') in {'image', 'video'}
         ]
@@ -784,6 +836,7 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/vk-generation-claim', _guard(vk_generation_claim))
     app.router.add_post(root + '/vk-video', _guard(vk_native_video))
     app.router.add_post(root + '/vk-trend', _guard(vk_native_trend))
+    app.router.add_post(root + '/vk-feed-repeat', _guard(vk_native_feed_repeat))
     app.router.add_post(root + '/logout', _guard(logout))
     app.router.add_get(root + '/wallet', _guard(wallet))
     app.router.add_post(root + '/wallet', _guard(wallet))
