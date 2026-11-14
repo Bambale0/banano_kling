@@ -1,7 +1,7 @@
 /**
- * Legacy clipboard write must run synchronously within the user's tap on iOS.
- * Telegram's iOS WKWebView can reject the async Clipboard API, and trying the
- * fallback only after awaiting that rejection loses transient user activation.
+ * Legacy clipboard write must run synchronously in the original user tap.
+ * Telegram Desktop, Android and iOS WebViews may deny async Clipboard API;
+ * awaiting that denial before trying a fallback loses transient activation.
  */
 function tryCopySelection(value: string, visibleField?: HTMLInputElement | null): boolean {
   if (typeof document.execCommand !== 'function') return false
@@ -49,12 +49,13 @@ export async function copyTextToClipboard(
   const platform = typeof window !== 'undefined' ? window.Telegram?.WebApp?.platform : undefined
   const isIOS = platform === 'ios'
     || (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent))
-  // A visible share input is also selected synchronously on Android; copying
-  // still works when Telegram grants only a short-lived tap permission.
-  // Prefer selecting the on-screen field while the browser still has the
-  // user's tap activation. If Telegram disallows copying a visible input,
-  // retry with a temporary editable textarea before awaiting a permission API.
-  if (isIOS || visibleField) {
+  // The visible publication field (or a known Telegram WebView) needs legacy
+  // copying synchronously in the user's original tap. Ordinary desktop browsers
+  // must prefer the modern API: execCommand can report success without writing.
+  const needsSynchronousFallback = Boolean(
+    visibleField || isIOS || platform === 'tdesktop' || platform === 'macos' || platform === 'android',
+  )
+  if (needsSynchronousFallback) {
     if (tryCopySelection(value, visibleField)) return
     if (visibleField && tryCopySelection(value)) return
   }
@@ -68,6 +69,6 @@ export async function copyTextToClipboard(
     }
   }
 
-  if (!isIOS && !visibleField && tryCopySelection(value)) return
+  if (!needsSynchronousFallback && tryCopySelection(value)) return
   throw new Error('Не удалось скопировать ссылку')
 }

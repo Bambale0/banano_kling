@@ -72,6 +72,7 @@ export function TaskDetailPanel() {
   const [adultContent, setAdultContent] = useState(false)
   const [publicationEditorOpen, setPublicationEditorOpen] = useState(false)
   const [publicationLink, setPublicationLink] = useState<string | null>(null)
+  const publicationLinkInputRef = useRef<HTMLInputElement>(null)
   const [selectedReferenceImages, setSelectedReferenceImages] = useState<Set<number>>(new Set())
   const [selectedReferenceVideos, setSelectedReferenceVideos] = useState<Set<number>>(new Set())
   const [selectedRepeatReferenceImages, setSelectedRepeatReferenceImages] = useState<Set<number>>(new Set())
@@ -345,10 +346,15 @@ export function TaskDetailPanel() {
   const handleCopyPublicationLink = async () => {
     if (!publicationLink) return
     try {
-      await copyTextToClipboard(publicationLink)
+      await copyTextToClipboard(publicationLink, publicationLinkInputRef.current)
       toast.success('Ссылка скопирована')
-    } catch (e) {
-      toast.error(personalizationError(e, 'Не удалось скопировать ссылку'))
+    } catch {
+      // Keep the published URL usable even when the host WebView denies both APIs.
+      publicationLinkInputRef.current?.focus()
+      publicationLinkInputRef.current?.select()
+      toast.error('Копирование заблокировано браузером', {
+        description: 'Ссылка выделена ниже — скопируйте её вручную.',
+      })
     }
   }
 
@@ -1011,6 +1017,16 @@ export function TaskDetailPanel() {
                         <Copy className="h-4 w-4" />
                         Скопировать
                       </Button>
+                      <input
+                        ref={publicationLinkInputRef}
+                        aria-label="Ссылка на публикацию"
+                        type="text"
+                        readOnly
+                        value={publicationLink}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onClick={(event) => event.currentTarget.select()}
+                        className="col-span-2 w-full min-w-0 rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                      />
                     </div>
                   ) : null}
                   {(canPublishToFeed || canSavePrompt) && (

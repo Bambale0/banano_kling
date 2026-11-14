@@ -7,6 +7,7 @@ const legacyCopy = jest.fn()
 
 beforeEach(() => {
   jest.resetAllMocks()
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: undefined })
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' })
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: nativeCopy } })
   Object.defineProperty(document, 'execCommand', { configurable: true, value: legacyCopy })
@@ -35,6 +36,54 @@ it('copies synchronously on iOS Telegram before awaiting a denied Clipboard API 
   expect(document.querySelector('textarea[data-clipboard-fallback]')).toBeNull()
 })
 
+it('copies before losing the click activation in Telegram Desktop WebView', async () => {
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: { WebApp: { platform: 'tdesktop' } } })
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  const events: string[] = []
+  let tapActive = true
+  nativeCopy.mockImplementation(async () => {
+    events.push('async-denied')
+    throw new DOMException('Denied by WebView', 'NotAllowedError')
+  })
+  legacyCopy.mockImplementation(() => {
+    events.push('legacy')
+    return tapActive
+  })
+
+  const copying = copyTextToClipboard(link)
+  tapActive = false // async rejection occurs after transient activation has expired
+  await expect(copying).resolves.toBeUndefined()
+  expect(events).toEqual(['legacy'])
+  expect(nativeCopy).not.toHaveBeenCalled()
+})
+
+it('uses the native Clipboard API first in a regular desktop browser', async () => {
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  nativeCopy.mockResolvedValue(undefined)
+  await expect(copyTextToClipboard(link)).resolves.toBeUndefined()
+  expect(nativeCopy).toHaveBeenCalledWith(link)
+  expect(legacyCopy).not.toHaveBeenCalled()
+})
+
+it('falls through to the Clipboard API when synchronous copying is blocked', async () => {
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: { WebApp: { platform: 'tdesktop' } } })
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  legacyCopy.mockReturnValue(false)
+  nativeCopy.mockResolvedValue(undefined)
+  await expect(copyTextToClipboard(link)).resolves.toBeUndefined()
+  expect(legacyCopy).toHaveBeenCalledWith('copy')
+  expect(nativeCopy).toHaveBeenCalledWith(link)
+})
+
 it('copies the visible selected link on iOS in the original click without a hidden textarea', async () => {
   const field = document.createElement('input')
   field.value = link
@@ -49,6 +98,24 @@ it('copies the visible selected link on iOS in the original click without a hidd
   await expect(copyTextToClipboard(link, field)).resolves.toBeUndefined()
   expect(legacyCopy).toHaveBeenCalledWith('copy')
   expect(nativeCopy).not.toHaveBeenCalled()
+  field.remove()
+})
+
+it('leaves a visible publication link selectable when both copy APIs deny access', async () => {
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  const field = document.createElement('input')
+  field.value = link
+  field.readOnly = true
+  document.body.appendChild(field)
+  legacyCopy.mockReturnValue(false)
+
+  await expect(copyTextToClipboard(link, field)).rejects.toThrow('Не удалось скопировать ссылку')
+  expect(field.selectionStart).toBe(0)
+  expect(field.selectionEnd).toBe(link.length)
+  expect(nativeCopy).toHaveBeenCalledWith(link)
   field.remove()
 })
 
