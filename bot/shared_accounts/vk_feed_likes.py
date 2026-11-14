@@ -4,8 +4,18 @@ from __future__ import annotations
 from bot import database
 from bot import db as db_backend
 
+from .vk_sqlite_writer import sqlite_vk_writer_lock
+
 
 async def like_public_vk_feed(vk_actor_id: int, gen_id: int) -> int | None:
+    """Serialize concurrent native VK likes on SQLite; PostgreSQL stays concurrent."""
+    if db_backend.is_postgres():
+        return await _like_public_vk_feed_inner(vk_actor_id, gen_id)
+    async with sqlite_vk_writer_lock():
+        return await _like_public_vk_feed_inner(vk_actor_id, gen_id)
+
+
+async def _like_public_vk_feed_inner(vk_actor_id: int, gen_id: int) -> int | None:
     """Like once per VK actor, atomically adjusting the existing feed counter.
 
     VK identities are represented in a separate table, never converted to a

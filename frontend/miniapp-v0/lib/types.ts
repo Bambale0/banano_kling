@@ -390,7 +390,8 @@ export interface FeedDeepLink {
 }
 
 export interface FeedComment {
-  id: number
+  // Legacy Telegram comment or actor-neutral VK comment (vk:<id>).
+  id: number | string
   gen_id: number
   text: string
   author: string
