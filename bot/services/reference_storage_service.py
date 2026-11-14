@@ -58,9 +58,14 @@ async def save_reference_file(
         file_hash = hashlib.sha256(bytes(file_bytes)).hexdigest()
         existing = await get_saved_reference_by_hash(telegram_id, normalized_kind, file_hash)
         if existing:
-            local_path = resolve_local_upload_path(existing.file_url)
+            # May materialize a missing S3 object; never block the event loop.
+            local_path = await asyncio.to_thread(
+                resolve_local_upload_path, existing.file_url
+            )
             if local_path and os.path.exists(local_path):
-                public_url = _provider_safe_reference_url(existing.file_url, normalized_kind)
+                public_url = await asyncio.to_thread(
+                    _provider_safe_reference_url, existing.file_url, normalized_kind
+                )
                 await touch_saved_references(
                     telegram_id, [existing.file_url], kind=normalized_kind
                 )
@@ -92,7 +97,9 @@ async def save_reference_file(
             )
         else:
             original_public_url = _build_reference_public_url(relative_path)
-        public_url = _provider_safe_reference_url(original_public_url, normalized_kind)
+        public_url = await asyncio.to_thread(
+            _provider_safe_reference_url, original_public_url, normalized_kind
+        )
         persisted_content_type = (
             "image/png"
             if normalized_kind == "image" and public_url != original_public_url
