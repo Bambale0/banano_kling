@@ -550,6 +550,19 @@ def _miniapp_package_lava_foreign_offer_config(
     return product_id, "USD" if product_id else ""
 
 
+def _runtime_image_model_metadata(item: dict) -> dict:
+    """Return live prices, never the frozen module-import snapshot."""
+    if item.get("id") not in {"seedream_55", "seedream_55_layers"}:
+        return item
+    quality_prices = seedream55_quality_prices()
+    return {
+        **item,
+        "cost": quality_prices["2K"],
+        "quality_costs": quality_prices,
+        "reference_unit_cost": seedream55_input_price(),
+    }
+
+
 IMAGE_MODELS = (
     {
         "id": "nano-banana-2-lite",
@@ -3646,7 +3659,7 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                     item,
                     tariff=tariff,
                 )
-                for item in IMAGE_MODELS
+                for item in (_runtime_image_model_metadata(model) for model in IMAGE_MODELS)
             ],
             "video_models": [
                 creator_tariff_display.price_video_model_metadata({

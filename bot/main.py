@@ -5724,6 +5724,8 @@ _KIE_WATCHDOG_RECOVERY_MODELS = {
     "banana_2_lite",
     "seedream_5_pro",
     "seedream_edit",
+    "seedream_55",
+    "seedream_55_layers",
     "seedance_2",
     "seedance_2_5",
     "wan_27",

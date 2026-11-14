@@ -1288,6 +1288,33 @@ def _resolve_image_unit_cost(
     return preset_manager.get_generation_cost(img_service)
 
 
+def _seedream55_repeat_quote_options(
+    img_service: str, reference_images: list[str], request_data: dict,
+) -> dict:
+    """Match repeat quotes to the selected refs and the original layer limit."""
+    if img_service not in {"seedream_55", "seedream_55_layers"}:
+        return {}
+    return {
+        "reference_count": (
+            max(1, len(reference_images))
+            if img_service == "seedream_55_layers"
+            else len(reference_images)
+        ),
+        "max_images": int(request_data.get("img_layers_max_images", 30)),
+    }
+
+
+def _seedream55_repeat_launch_options(img_service: str, request_data: dict) -> dict:
+    if img_service not in {"seedream_55", "seedream_55_layers"}:
+        return {}
+    return {
+        "img_output_format": str(request_data.get("img_output_format", "png")),
+        "img_background": str(request_data.get("img_background", "auto")),
+        "img_layers_max_images": int(request_data.get("img_layers_max_images", 30)),
+        "img_layers_text_recognition": bool(request_data.get("img_layers_text_recognition", False)),
+    }
+
+
 async def _resolve_repeat_image_unit_cost(
     actor_id: int,
     img_service: str,
@@ -1920,6 +1947,7 @@ async def _restore_image_task_to_state(
         "img_count": 1,
         "reference_images": reference_images,
         "img_quality": img_quality,
+        **_seedream55_repeat_launch_options(img_service, request_data),
         "img_nsfw_checker": img_nsfw_checker,
         "nsfw_enabled": nsfw_enabled,
         "preset_id": "new",
@@ -2597,6 +2625,10 @@ async def _show_repeat_image_screen(
             str(data.get("img_service") or "banana_pro"),
             str(data.get("img_quality") or "2K"),
             data.get("repeat_unit_cost"),
+            **_seedream55_repeat_quote_options(
+                str(data.get("img_service") or "banana_pro"),
+                list(data.get("reference_images") or []), data,
+            ),
         )
         if unit_cost != data.get("repeat_unit_cost"):
             await state.update_data(repeat_unit_cost=unit_cost)
@@ -2868,6 +2900,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
         img_service,
         img_quality,
         task.cost or 0,
+        **_seedream55_repeat_quote_options(img_service, reference_images, request_data),
     )
 
     if missing_reference_images:
@@ -2955,6 +2988,7 @@ async def run_repeat_image_generation(callback: types.CallbackQuery, state: FSMC
             reference_images=reference_images,
             unit_cost=unit_cost,
             img_quality=img_quality,
+            **_seedream55_repeat_launch_options(img_service, request_data),
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=callback_url,
@@ -3084,13 +3118,6 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
     img_ratio = request_data.get("img_ratio", task.aspect_ratio or "1:1")
     img_quality = request_data.get("img_quality", "2K")
     is_admin = config.is_admin(callback.from_user.id)
-    unit_cost = await _resolve_repeat_image_unit_cost(
-        callback.from_user.id,
-        img_service,
-        img_quality,
-        task.cost or 0,
-    )
-
     if task.user_id == user.id:
         reference_images = _source_reference_images_from_request(request_data)
     else:
@@ -3098,6 +3125,13 @@ async def quick_repeat_image_result(callback: types.CallbackQuery, state: FSMCon
     reference_images, missing_reference_images = _available_reference_images(reference_images)
     if missing_reference_images:
         reference_images = []
+    unit_cost = await _resolve_repeat_image_unit_cost(
+        callback.from_user.id,
+        img_service,
+        img_quality,
+        task.cost or 0,
+        **_seedream55_repeat_quote_options(img_service, reference_images, request_data),
+    )
 
     cost_line = "бесплатно" if unit_cost <= 0 or is_admin else f"{unit_cost}🍌"
     warning_line = ""
@@ -3170,13 +3204,6 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     img_quality = request_data.get("img_quality", "2K")
     img_nsfw_checker = bool(request_data.get("img_nsfw_checker", False))
     nsfw_enabled = bool(request_data.get("nsfw_enabled", False))
-    unit_cost = await _resolve_repeat_image_unit_cost(
-        callback.from_user.id,
-        img_service,
-        img_quality,
-        task.cost or 0,
-    )
-
     if task.user_id == user.id:
         reference_images = _source_reference_images_from_request(request_data)
     else:
@@ -3205,6 +3232,13 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
     if len(reference_images) > _get_max_image_references(img_service):
         await callback.answer("Слишком много референсов для выбранной модели.", show_alert=True)
         return
+    unit_cost = await _resolve_repeat_image_unit_cost(
+        callback.from_user.id,
+        img_service,
+        img_quality,
+        task.cost or 0,
+        **_seedream55_repeat_quote_options(img_service, reference_images, request_data),
+    )
     is_admin = config.is_admin(callback.from_user.id)
     if unit_cost > 0 and not is_admin:
         can_afford = await check_can_afford(callback.from_user.id, unit_cost)
@@ -3250,6 +3284,7 @@ async def quick_repeat_image_confirm(callback: types.CallbackQuery, state: FSMCo
             reference_images=reference_images,
             unit_cost=unit_cost,
             img_quality=img_quality,
+            **_seedream55_repeat_launch_options(img_service, request_data),
             img_nsfw_checker=img_nsfw_checker,
             nsfw_enabled=nsfw_enabled,
             callback_url=callback_url,
