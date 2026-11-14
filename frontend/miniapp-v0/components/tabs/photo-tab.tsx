@@ -19,6 +19,10 @@ export function PhotoTab() {
     model: string
     ratio: string
     quality: string
+    outputFormat: string
+    background: string
+    layersMaxImages: number
+    layersTextRecognition: boolean
     count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
@@ -45,6 +49,10 @@ export function PhotoTab() {
               model: data.model,
               ratio: data.ratio,
               quality: data.quality,
+              outputFormat: data.outputFormat,
+              background: data.background,
+              layersMaxImages: data.layersMaxImages,
+              layersTextRecognition: data.layersTextRecognition,
               prompt: data.prompt,
               repeatUserValues: data.repeatUserValues,
               references: data.references,
@@ -53,6 +61,10 @@ export function PhotoTab() {
               model: data.model,
               ratio: data.ratio,
               quality: data.quality,
+              outputFormat: data.outputFormat,
+              background: data.background,
+              layersMaxImages: data.layersMaxImages,
+              layersTextRecognition: data.layersTextRecognition,
               nsfwChecker: data.nsfwChecker,
               nsfwEnabled: data.nsfwEnabled,
               promptId: data.promptId,
