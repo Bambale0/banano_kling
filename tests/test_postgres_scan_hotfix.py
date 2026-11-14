@@ -55,3 +55,36 @@ async def test_postgres_referral_reconciliation_advances_ineligible_fair_batch(m
     assert "SET last_checked_at = CURRENT_TIMESTAMP" in sql
     assert "ORDER BY task.id LIMIT 1" in sql
     assert commits == [True]
+
+
+@pytest.mark.asyncio
+async def test_postgres_unused_media_cleanup_skips_unindexed_history_scan_but_keeps_sessions(monkeypatch):
+    from bot.services import wan3_prime_retention as media_retention
+
+    monkeypatch.setattr(media_retention.db_backend, "is_postgres", lambda: True)
+    monkeypatch.delenv("WAN3_PG_UNUSED_MEDIA_FULL_SCAN_ENABLED", raising=False)
+    statements = []
+
+    class Cursor:
+        async def fetchall(self):
+            return []
+
+    class Connection:
+        row_factory = None
+
+        async def execute(self, query, params=()):
+            statements.append(query)
+            assert "wan3_prime_media" not in query
+            assert "generation_tasks" not in query
+            return Cursor()
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield Connection()
+
+    monkeypatch.setattr(media_retention.db_backend, "connect", connect)
+    assert await media_retention.cleanup_expired(limit=50) == {
+        "removed_sessions": 0, "removed_media": 0
+    }
+    assert len(statements) == 1
+    assert "wan3_prime_upload_sessions" in statements[0]

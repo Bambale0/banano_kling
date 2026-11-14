@@ -320,6 +320,7 @@ async def test_postgres_upload_utc_expiry_survives_session_timezone_and_dst(monk
 
 @pytest.mark.asyncio
 async def test_postgres_reference_upload_is_not_blocked_by_retention_scan(tmp_path, monkeypatch):
+    monkeypatch.setenv('WAN3_PG_UNUSED_MEDIA_FULL_SCAN_ENABLED', '1')
     from tests.test_wan3_retention import (
         assert_upload_admitted_during_protected_media_scan,
     )
