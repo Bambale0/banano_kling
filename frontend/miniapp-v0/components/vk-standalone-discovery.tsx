@@ -445,7 +445,7 @@ export function VkStandaloneDiscovery() {
         {linkedFeed.can_like_in_app && <button type="button" disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
           onClick={() => void likeFeed(linkedFeed.id)} className="rounded-lg border border-border px-3 py-2 text-sm">
           {likedIds.has(linkedFeed.id) ? 'Вам нравится' : 'Нравится'}
-        </button>
+        </button>}
         {linkedFeed.can_repeat_in_app && linkedFeed.generation_type === 'image'
           ? <button type="button"
               onClick={() => setFeedRepeatId(linkedFeed.id)}
