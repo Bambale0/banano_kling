@@ -24,8 +24,10 @@ CANONICAL_IMAGE_ALIASES = {
     "seedream_45": "seedream_45",
     "seedream_edit": "seedream_edit",
     "seedream_5_pro": "seedream_edit",
-    "seedream_55": "seedream_55",
-    "seedream_55_layers": "seedream_55_layers",
+    # Display aliases target the 2K admin price cell. Runtime billing for
+    # variable resolutions/references remains in seedream55_pricing.
+    "seedream_55": "seedream_55_2k",
+    "seedream_55_layers": "seedream_55_2k",
     "flux_pro": "flux_pro",
     "grok_imagine_i2i": "grok_imagine_i2i",
     "wan_27": "wan_27",

@@ -98,3 +98,12 @@ def test_old_persistent_price_file_supports_seedream55_without_overwriting(tmp_p
     assert prices["seedream_55_2k"] == 3.0
     assert prices["seedream_55_ref"] == 0.5
     assert json.loads(price_path.read_text()) == persisted  # no startup write
+
+
+def test_seedream55_has_admin_model_tariff_destination():
+    from bot.services.preset_manager import CANONICAL_IMAGE_ALIASES, preset_manager
+
+    image_prices = preset_manager.get_price_config()["costs_reference"]["image_models"]
+    for model in ("seedream_55", "seedream_55_layers"):
+        assert CANONICAL_IMAGE_ALIASES[model] in image_prices
+        assert preset_manager.get_generation_cost(model) == image_prices["seedream_55_2k"]
