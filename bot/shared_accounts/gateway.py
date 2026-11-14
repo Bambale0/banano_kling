@@ -53,6 +53,8 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
     native_task_paths = frozenset({
         base + 'task-history', base + 'task-detail',
     })
+    native_bootstrap_path = base + 'bootstrap'
+    native_partial_paths = native_task_paths | {native_bootstrap_path}
 
     @web.middleware
     async def middleware(request: web.Request, handler):
@@ -74,15 +76,27 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
             os.getenv('VK_NATIVE_TASKS_ENABLED') == '1'
             and request.path in native_task_paths
         )
-        if not full_enabled and not native_tasks_enabled:
-            # A disabled VK-native task adapter must not fall through to
-            # legacy Telegram history/detail. A linked VK actor still owns
-            # a separate native SQLite task ledger.
-            if request.path in native_task_paths:
+        native_bootstrap_enabled = (
+            os.getenv('VK_NATIVE_BOOTSTRAP_ENABLED') == '1'
+            and request.path == native_bootstrap_path
+        )
+        if not full_enabled and not native_tasks_enabled and not native_bootstrap_enabled:
+            # A partially activated VK gateway cannot route a signed VK
+            # actor to ANY Telegram-owned legacy route. This also blocks
+            # bootstrap and history if their own native switch is disabled.
+            partial_enabled = (
+                os.getenv('VK_NATIVE_BOOTSTRAP_ENABLED') == '1'
+                or os.getenv('VK_NATIVE_TASKS_ENABLED') == '1'
+            )
+            if partial_enabled or request.path in native_partial_paths:
                 supplied = request.headers.get('X-Telegram-Init-Data', '')
                 if not supplied and request.content_type == 'application/json':
                     if (request.content_length is not None
                         and request.content_length > MAX_GATEWAY_JSON_BYTES):
+                        if request.path in native_partial_paths:
+                            return web.json_response({
+                                'ok': False, 'error': 'Request too large',
+                            }, status=413, headers={'Cache-Control': 'no-store'})
                         return await handler(request)
                     try:
                         body = await request.json()
@@ -92,7 +106,7 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
                         supplied = body.get('init_data', '')
                 if isinstance(supplied, str) and supplied.startswith('vk_session:'):
                     return web.json_response({
-                        'ok': False, 'error': 'VK native task history unavailable',
+                        'ok': False, 'error': 'VK native operation unavailable',
                     }, status=503, headers={'Cache-Control': 'no-store'})
             return await handler(request)
         if (request.method == 'OPTIONS'
@@ -160,6 +174,15 @@ def vk_miniapp_gateway(miniapp_root: str = '/mini-app') -> Callable:
         adapter = full_vk_adapter(request.app)
         # Linked VK identity must never escape into Telegram legacy handlers
         # when full native VK parity is requested but its adapter is incomplete.
+        if adapter is None and native_bootstrap_enabled:
+            # The already implemented native bootstrap owns only the current
+            # VK actor's actual native wallet/models/history. Never advertise
+            # the remaining 8 domains as ready and never create a TG actor.
+            native_adapter = request.app.get('vk_full_app_adapter')
+            if (getattr(native_adapter, 'ready_operations', None) ==
+                    frozenset({'bootstrap', 'tasks'})
+                and callable(getattr(native_adapter, 'handle', None))):
+                adapter = native_adapter
         if adapter is None and native_tasks_enabled:
             task_adapter = request.app.get('vk_native_tasks_adapter')
             if (getattr(task_adapter, 'ready_operations', None) == frozenset({'tasks'})

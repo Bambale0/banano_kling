@@ -31,6 +31,9 @@ def test_explicit_legacy_link_remains_available_only_while_native_switches_are_o
     monkeypatch.setenv("VK_NATIVE_TASKS_ENABLED", "1")
     assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
     monkeypatch.setenv("VK_NATIVE_TASKS_ENABLED", "0")
+    monkeypatch.setenv("VK_NATIVE_BOOTSTRAP_ENABLED", "1")
+    assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
+    monkeypatch.setenv("VK_NATIVE_BOOTSTRAP_ENABLED", "0")
     monkeypatch.setenv("VK_FULL_APP_PARITY_ENABLED", "1")
     assert not _vk_legacy_linked_studio_available(platform="vk", telegram_linked=True)
 

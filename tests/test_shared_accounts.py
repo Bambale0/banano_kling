@@ -1656,8 +1656,10 @@ async def test_platform_gateway_rejects_invalid_vk_session_and_unready_adapter(m
         fallback = await client.post('/mini-app/api/bootstrap', json={
             'init_data': 'vk_session:' + token,
         })
-        assert fallback.status == 200
-        legacy.assert_awaited_once()
+        # Native bootstrap is disabled; it must fail closed, not silently
+        # enter the Telegram-owned legacy endpoint with a VK credential.
+        assert fallback.status == 503
+        legacy.assert_not_awaited()
 
 def test_actual_miniapp_setup_installs_single_shared_vk_gateway():
     from bot import miniapp

@@ -159,7 +159,8 @@ def _vk_legacy_linked_studio_available(*, platform: str, telegram_linked: bool) 
     """
     return (platform == 'vk' and telegram_linked
             and os.getenv('VK_FULL_APP_PARITY_ENABLED') != '1'
-            and os.getenv('VK_NATIVE_TASKS_ENABLED') != '1')
+            and os.getenv('VK_NATIVE_TASKS_ENABLED') != '1'
+            and os.getenv('VK_NATIVE_BOOTSTRAP_ENABLED') != '1')
 
 
 async def profile(request: web.Request) -> web.Response:
