@@ -388,7 +388,7 @@ function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
       try { reader.abort() } catch { /* Reader may already have failed. */ }
       reject(new DOMException('Aborted', 'AbortError'))
     }
-    const useBlobFallback = () => {
+    const tryBlobFallback = () => {
       if (settled || fallbackStarted) return
       if (signal.aborted) { abort(); return }
       fallbackStarted = true
@@ -404,13 +404,13 @@ function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
         )
       } catch { fail() }
     }
-    reader.onerror = useBlobFallback
-    reader.onabort = () => { if (signal.aborted) abort(); else useBlobFallback() }
+    reader.onerror = tryBlobFallback
+    reader.onabort = () => { if (signal.aborted) abort(); else tryBlobFallback() }
     reader.onload = () => accept(reader.result)
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) { abort(); return }
     // Snapshot immediately after the native picker, not after an await.
-    try { reader.readAsArrayBuffer(file) } catch { useBlobFallback() }
+    try { reader.readAsArrayBuffer(file) } catch { tryBlobFallback() }
   })
 }
 
