@@ -88,18 +88,25 @@ async def _protected_task_ids(task_ids: list[str]) -> set[str]:
             legacy_candidates[task_id] = (prompt, row["user_id"])
 
     if legacy_candidates:
-        # Privacy only needs recipes, not public cards, settings or success metrics.
-        # Do not paginate: historical matches must remain protected beyond page one.
-        async with db_backend.connect() as db:
-            cursor = await db.execute(
-                """SELECT prompt_text, author_id FROM user_prompts
-                   WHERE status = 'approved' AND is_public = 1 AND tags LIKE ?""",
-                ('%"trend"%',),
-            )
-            recipes = await cursor.fetchall()
+        # Fetch all matching authors, not the whole global trend catalog on
+        # every bootstrap. Batch for SQLite variable limits while preserving
+        # the historical privacy check beyond any catalog page boundary.
+        candidate_prompts = list(dict.fromkeys(
+            prompt for prompt, _owner_id in legacy_candidates.values()
+        ))
         trend_authors: dict[str, set[int]] = {}
-        for recipe in recipes:
-            trend_authors.setdefault(str(recipe[0] or "").strip(), set()).add(recipe[1])
+        async with db_backend.connect() as db:
+            for offset in range(0, len(candidate_prompts), 200):
+                batch = candidate_prompts[offset:offset + 200]
+                placeholders = ",".join("?" for _ in batch)
+                cursor = await db.execute(
+                    f"""SELECT prompt_text, author_id FROM user_prompts
+                       WHERE status = 'approved' AND is_public = 1
+                         AND tags LIKE ? AND prompt_text IN ({placeholders})""",
+                    ('%"trend"%', *batch),
+                )
+                for recipe in await cursor.fetchall():
+                    trend_authors.setdefault(str(recipe[0] or "").strip(), set()).add(recipe[1])
         # Publishing a trend must not retroactively turn its author's ordinary
         # originals into foreign repeats. Explicit privacy markers above win.
         protected.update(

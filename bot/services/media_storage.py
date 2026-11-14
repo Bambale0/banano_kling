@@ -403,19 +403,33 @@ def persist_upload_file(
     )
     source_digest = file_sha256(source)
     extra["Metadata"] = {"sha256": source_digest}
+    # Reused reference PNGs are normalized on every submission. Checking the
+    # durable remote digest avoids re-uploading several megabytes per request.
+    # A matching byte count without a trusted digest is NOT sufficient.
+    remote_unchanged = False
     try:
-        _s3_client(settings).upload_file(
-            str(source), settings.bucket, key, ExtraArgs=extra or None
+        remote_unchanged = remote_upload_fingerprint(relative) == (
+            source.stat().st_size, source_digest
         )
-    except Exception:
-        logger.exception(
-            "Media storage upload failed: backend=s3 key=%s bytes=%s",
-            key,
-            source.stat().st_size,
+    except Exception as exc:
+        logger.warning(
+            "Media storage remote fingerprint unavailable: key=%s error=%s; uploading",
+            key, type(exc).__name__,
         )
-        raise
+    if not remote_unchanged:
+        try:
+            _s3_client(settings).upload_file(
+                str(source), settings.bucket, key, ExtraArgs=extra or None
+            )
+        except Exception:
+            logger.exception(
+                "Media storage upload failed: backend=s3 key=%s bytes=%s",
+                key,
+                source.stat().st_size,
+            )
+            raise
     if file_sha256(source) != source_digest:
-        raise OSError("Media source changed while uploading to S3")
+        raise OSError("Media source changed while verifying S3 content")
     local_target = local_upload_path(relative)
     try:
         if source.resolve() == local_target.resolve():
@@ -425,12 +439,15 @@ def persist_upload_file(
                 _mark_materialized_cache(source)
     except OSError:
         logger.warning("Media cache marker update failed: key=%s", key)
-    logger.info(
-        "Media storage upload: backend=s3 key=%s bytes=%s duration_ms=%s",
-        key,
-        source.stat().st_size,
-        round((time.monotonic() - started) * 1000),
-    )
+    if remote_unchanged:
+        logger.debug("Media storage upload skipped (unchanged remote): key=%s", key)
+    else:
+        logger.info(
+            "Media storage upload: backend=s3 key=%s bytes=%s duration_ms=%s",
+            key,
+            source.stat().st_size,
+            round((time.monotonic() - started) * 1000),
+        )
     return public_upload_url(relative)
 
 

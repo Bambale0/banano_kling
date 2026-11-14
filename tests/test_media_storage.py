@@ -426,3 +426,93 @@ def test_s3_upload_contains_sha256_fingerprint(monkeypatch, tmp_path):
     media_storage.persist_upload_bytes("feed/hashed.jpg", b"hello")
 
     assert fake.put_calls[0]["Metadata"]["sha256"] == hashlib.sha256(b"hello").hexdigest()
+
+def test_s3_persist_upload_file_is_idempotent_for_identical_content(monkeypatch, tmp_path):
+    from bot.services import media_storage
+
+    monkeypatch.chdir(tmp_path)
+    fake = FakeS3Client()
+    configure_s3(monkeypatch, fake)
+    source = Path("static/uploads/refs/image/42/repeat.png")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"same-image")
+
+    first_url = media_storage.persist_upload_file("refs/image/42/repeat.png", source)
+    second_url = media_storage.persist_upload_file("refs/image/42/repeat.png", source)
+
+    assert first_url == second_url
+    assert len(fake.put_calls) == 1
+    assert fake.objects[("neuromix-media", "uploads/refs/image/42/repeat.png")] == b"same-image"
+
+
+def test_s3_persist_upload_file_reuploads_when_content_changes(monkeypatch, tmp_path):
+    from bot.services import media_storage
+
+    monkeypatch.chdir(tmp_path)
+    fake = FakeS3Client()
+    configure_s3(monkeypatch, fake)
+    source = Path("static/uploads/refs/image/42/changed.png")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"first")
+    media_storage.persist_upload_file("refs/image/42/changed.png", source)
+
+    source.write_bytes(b"other")  # Same byte length: content hash still must be checked.
+    media_storage.persist_upload_file("refs/image/42/changed.png", source)
+
+    assert len(fake.put_calls) == 2
+    assert fake.objects[("neuromix-media", "uploads/refs/image/42/changed.png")] == b"other"
+
+
+def test_s3_persist_upload_file_reuploads_without_verified_remote_hash(monkeypatch, tmp_path):
+    from bot.services import media_storage
+
+    monkeypatch.chdir(tmp_path)
+    fake = FakeS3Client()
+    configure_s3(monkeypatch, fake)
+    source = Path("static/uploads/refs/image/42/unverified.png")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"same-size")
+    key = ("neuromix-media", "uploads/refs/image/42/unverified.png")
+    fake.objects[key] = b"old-value"  # same number of bytes, no trusted SHA metadata
+
+    media_storage.persist_upload_file("refs/image/42/unverified.png", source)
+
+    assert fake.objects[key] == b"same-size"
+    assert len(fake.put_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_reference_normalization_does_not_block_event_loop(monkeypatch, tmp_path):
+    import asyncio
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+    from bot.services import reference_storage_service as service
+
+    local = tmp_path / "reference.png"
+    local.write_bytes(b"mock-image")
+    existing = SimpleNamespace(
+        file_url="https://media.example.test/uploads/refs/image/42/reference.png",
+        content_type="image/png",
+    )
+    monkeypatch.setattr(
+        service, "get_saved_reference_by_hash", AsyncMock(return_value=existing)
+    )
+    monkeypatch.setattr(service, "touch_saved_references", AsyncMock())
+    def simulate_slow_resolve(_url):
+        time.sleep(0.08)
+        return str(local)
+
+    monkeypatch.setattr(service, "resolve_local_upload_path", simulate_slow_resolve)
+
+    def simulate_slow_s3(url, kind):
+        time.sleep(0.08)
+        return url
+
+    monkeypatch.setattr(service, "_provider_safe_reference_url", simulate_slow_s3)
+    saving = asyncio.create_task(service.save_reference_file(42, b"mock-image", file_ext="png"))
+    await asyncio.sleep(0.02)
+    assert not saving.done(), "Slow S3 work blocked the event loop"
+    url, saved = await saving
+    assert url == existing.file_url
+    assert saved is existing
