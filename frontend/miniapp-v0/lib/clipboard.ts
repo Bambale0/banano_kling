@@ -1,7 +1,7 @@
 /**
- * Legacy clipboard write must run synchronously within the user's tap on iOS.
- * Telegram's iOS WKWebView can reject the async Clipboard API, and trying the
- * fallback only after awaiting that rejection loses transient user activation.
+ * Legacy clipboard write must run synchronously in the original user tap.
+ * Telegram Desktop, Android and iOS WebViews may deny async Clipboard API;
+ * awaiting that denial before trying a fallback loses transient activation.
  */
 function tryCopySelection(value: string, visibleField?: HTMLInputElement | null): boolean {
   if (typeof document.execCommand !== 'function') return false
