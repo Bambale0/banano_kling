@@ -87,6 +87,24 @@ it('copies the visible selected link on iOS in the original click without a hidd
   field.remove()
 })
 
+it('leaves a visible publication link selectable when both copy APIs deny access', async () => {
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  const field = document.createElement('input')
+  field.value = link
+  field.readOnly = true
+  document.body.appendChild(field)
+  legacyCopy.mockReturnValue(false)
+
+  await expect(copyTextToClipboard(link, field)).rejects.toThrow('Не удалось скопировать ссылку')
+  expect(field.selectionStart).toBe(0)
+  expect(field.selectionEnd).toBe(link.length)
+  expect(nativeCopy).toHaveBeenCalledWith(link)
+  field.remove()
+})
+
 it('does not falsely report a copy when both clipboard APIs deny access', async () => {
   legacyCopy.mockReturnValue(false)
   await expect(copyTextToClipboard(link)).rejects.toThrow('Не удалось скопировать ссылку')
