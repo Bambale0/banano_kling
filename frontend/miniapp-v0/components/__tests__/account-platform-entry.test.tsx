@@ -19,7 +19,6 @@ jest.mock('../shared-account-link-preview', () => ({ SharedAccountLinkPreview: (
   <><p>Связать аккаунты {telegramBotUsername}</p>{onCommitted ? <button onClick={onCommitted}>Привязка подтверждена</button> : null}</> }))
 
 beforeEach(() => {
-  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.mocked(fetchVkNativeState).mockResolvedValue({
     ok: true, registered: false, balance: null, is_blocked: false, tasks: [],
   })
@@ -31,6 +30,7 @@ afterEach(() => {
   delete window.__BANANO_INITIAL_LAUNCH__
   delete process.env.NEXT_PUBLIC_MINIAPP_PLATFORM
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
 })
 
 test('VK server first paint is readable without JavaScript instead of blank', () => {
@@ -234,4 +234,20 @@ test('Telegram direct Mini App startapp invitation enters confirmation instead o
   fireEvent.click(screen.getByRole('button', { name: 'Привязка подтверждена' }))
   expect(screen.getByText('Общая студия')).toBeInTheDocument()
   expect(startAccountAppSession).not.toHaveBeenCalled()
+})
+
+test('unmount invalidates a pending VK login, not only an established one', async () => {
+  window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001&vk_ts=1794400000&sign=example')
+  let finish!: (value: Awaited<ReturnType<typeof startAccountAppSession>>) => void
+  jest.mocked(startAccountAppSession).mockReturnValue(new Promise(resolve => { finish = resolve }))
+  const mounted = render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(startAccountAppSession).toHaveBeenCalledTimes(1)
+  const signal = jest.mocked(startAccountAppSession).mock.calls[0][0]
+  expect(signal?.aborted).toBe(false)
+  mounted.unmount()
+  expect(signal?.aborted).toBe(true)
+  expect(stopAccountAppSession).toHaveBeenCalledTimes(1)
+  finish({ revision: 1, vk_app_id: 123, telegram_linked: false, telegram_bot_username: 'test_bot' })
+  await Promise.resolve()
+  expect(stopAccountAppSession).toHaveBeenCalledTimes(1)
 })
