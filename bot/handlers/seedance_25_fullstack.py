@@ -723,6 +723,8 @@ async def _send_seedance25_results(
     last_frame_url: str | None,
     request_data: dict[str, Any],
 ) -> bool:
+    from bot.services.telegram_video_geometry import telegram_video_geometry
+
     bot = app["bot"]
     output_format = str(request_data.get("output_format") or _extension_from_url(video_url) or "mp4").lower()
     resolution = str(request_data.get("resolution") or "720p")
@@ -754,6 +756,7 @@ async def _send_seedance25_results(
             await tracked_telegram_send(request_data, True, bot.send_video,
                 telegram_id,
                 video=video_url,
+                **(await telegram_video_geometry(video_url)),
                 caption=caption,
                 parse_mode="HTML",
                 supports_streaming=True,
@@ -777,9 +780,11 @@ async def _send_seedance25_results(
         if tmp_path:
             try:
                 if output_format == "mp4":
+                    video_file = FSInputFile(tmp_path)
                     await tracked_telegram_send(request_data, True, bot.send_video,
                         telegram_id,
-                        video=FSInputFile(tmp_path),
+                        video=video_file,
+                        **(await telegram_video_geometry(video_file)),
                         caption=caption,
                         parse_mode="HTML",
                         supports_streaming=True,

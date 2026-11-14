@@ -68,7 +68,9 @@ async def telegram_video_geometry(source: str | FSInputFile) -> dict[str, int]:
     if isinstance(source, FSInputFile):
         path = str(source.path)
     elif isinstance(source, str):
-        path = media_input_utils.resolve_local_upload_path(source)
+        # Resolving our /uploads links may materialize an S3 file.
+        # Never perform that network/disk I/O on the Telegram event loop.
+        path = await asyncio.to_thread(media_input_utils.resolve_local_upload_path, source)
     else:
         path = None
     if not path:
