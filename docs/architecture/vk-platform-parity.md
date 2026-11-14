@@ -205,3 +205,23 @@ its comment composer only when a server-owned read capability authorizes
 writing. No checkout, provider, Telegram linking, credit transfer or
 full-app readiness is enabled by this slice. Full ten-domain parity still
 requires genuine signed VK WebView and financial/provider acceptance.
+
+
+## 2026-11-14 — independent VK bootstrap on the common API route
+
+A signed VK actor can be dispatched to the existing native bootstrap adapter
+through the same /mini-app/api/bootstrap path used by Telegram, but only under
+the default-OFF VK_NATIVE_BOOTSTRAP_ENABLED switch. The returned models,
+history, payment packages and later read native VK balance come from the
+authoritative VK backend, never a synthesized Telegram user or second wallet.
+This deliberately does NOT make full_app_ready true or mount common
+TabContent: eight remaining native domain contracts are not yet ready.
+When the native path is gated off or a signed VK actor calls an unsupported
+shared domain, the shared gateway now fails closed rather than falling
+through to a TG-owned endpoint. Linked VK users cannot use legacy TG studio
+under a partial native bootstrap switch. No money writes or provider calls.
+
+Reference counts in shared bootstrap are read from the signed native model
+catalogue. The common VK adapter does not introduce a separate four-reference
+ceiling; malformed, negative and non-integer limits are rejected. Actual
+upload eligibility and provider limits remain enforced by the native worker.
