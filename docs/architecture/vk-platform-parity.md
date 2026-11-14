@@ -220,3 +220,8 @@ When the native path is gated off or a signed VK actor calls an unsupported
 shared domain, the shared gateway now fails closed rather than falling
 through to a TG-owned endpoint. Linked VK users cannot use legacy TG studio
 under a partial native bootstrap switch. No money writes or provider calls.
+
+Reference counts in shared bootstrap are read from the signed native model
+catalogue. The common VK adapter does not introduce a separate four-reference
+ceiling; malformed, negative and non-integer limits are rejected. Actual
+upload eligibility and provider limits remain enforced by the native worker.
