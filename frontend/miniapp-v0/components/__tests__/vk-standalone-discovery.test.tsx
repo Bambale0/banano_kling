@@ -13,6 +13,7 @@ jest.mock('@/lib/shared-account-api', () => ({
   createVkInvoice: jest.fn(),
   fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
+  repeatVkFeed: jest.fn(),
   generateVkImage: jest.fn(),
   generateVkVideo: jest.fn(),
   fetchVkGenerationClaim: jest.fn(),
@@ -431,6 +432,57 @@ test('VK-only video action uses the existing studio panel when backend is ready'
   expect(screen.getByRole('region', { name: 'Создание видео' })).toBeInTheDocument()
   expect(screen.getByLabelText('Фото-референсы')).toBeDisabled()
   expect(generateVkVideo).not.toHaveBeenCalled()
+})
+
+test('feed card opens a real public FEED link and repeats only a server-authorized image', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: false, items: [{
+      id: 81, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/photo.jpg', likes_count: 2,
+      can_repeat_in_app: true,
+    }],
+  })
+  jest.mocked(fetchVkPublicFeedItem).mockResolvedValue({
+    ok: true,
+    item: {
+      id: 81, model: 'banana_pro', generation_type: 'image',
+      preview_url: null, result_url: 'https://example.test/photo.jpg',
+      likes_count: 2, shares_count: 0, comments_count: 0,
+      aspect_ratio: '1:1', feed_blurred: false, media_unavailable: false,
+      share_link: 'https://vk.com/app123#feed_81', can_repeat_in_app: true,
+    },
+  })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Открыть публикацию #81' }))
+  expect(await screen.findByRole('button', { name: 'Повторить публикацию #81' })).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Повторить публикацию #81' }))
+  expect(screen.getByRole('region', { name: 'Повтор публикации из ленты' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Повторить тренд/ })).not.toBeInTheDocument()
+})
+
+test('hidden feed recipes never display a native paid repeat action', async () => {
+  jest.mocked(fetchVkPublicDiscovery).mockResolvedValue({
+    ok: true, can_generate_in_app: false, items: [{
+      id: 82, generation_type: 'image', preview_url: null,
+      result_url: 'https://example.test/private.jpg', likes_count: 2,
+    }],
+  })
+  jest.mocked(fetchVkPublicFeedItem).mockResolvedValue({
+    ok: true,
+    item: {
+      id: 82, model: 'banana_pro', generation_type: 'image',
+      preview_url: null, result_url: 'https://example.test/private.jpg',
+      likes_count: 2, shares_count: 0, comments_count: 0,
+      aspect_ratio: '1:1', feed_blurred: false, media_unavailable: false,
+      share_link: 'https://vk.com/app123#feed_82', can_repeat_in_app: false,
+    },
+  })
+  render(<VkStandaloneDiscovery />)
+  fireEvent.click(screen.getByRole('button', { name: 'Лента' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Открыть публикацию #82' }))
+  await screen.findByText(/❤ 2/)
+  expect(screen.queryByRole('button', { name: /Повторить публикацию/ })).not.toBeInTheDocument()
 })
 
 test('VK-only feed publication has a verified native share link, not a trend/remix URL', async () => {
