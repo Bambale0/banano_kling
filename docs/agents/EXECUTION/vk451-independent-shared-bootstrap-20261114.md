@@ -1,7 +1,8 @@
 # VK #451 — actor-neutral shared Mini App bootstrap slice
 
-Base: tanyapi@aa60ac1b6015c3ec673482f30bc698484a9371c9
-Branch: feat/vk451-independent-shared-bootstrap-20261114
+Original baseline: tanyapi@aa60ac1b6015c3ec673482f30bc698484a9371c9 (#516)
+Canonical integration baseline: tanyapi@15d847e9152a6c78e146ab8bcdd4d2012358bbeb (#520)
+Branch: fix/vk451-bootstrap-rebase-20261114
 
 ## Goal
 
@@ -69,3 +70,23 @@ and native wallet smoke. Disable this one flag to roll back native bootstrap,
 with no data migration or financial side effects.
 Full #451 remains OPEN for photo/video/service/feed/profile/payments/referrals
 and real end-to-end shared TabContent parity, admin, delivery and VK acceptance.
+
+
+## Follow-up — 2026-11-14 rebased integration and reference contract
+
+- #516 was behind current tanyapi after #514 merged. Canonical #520
+  replays its seven-file implementation onto a fresh tanyapi baseline
+  with the #514 comment writer and shared-feed frontend preserved.
+- Verified GitHub compare: seven original touched paths; after the
+  reference validation fix, eight paths. No unrelated legacy file rollback.
+- Native bootstrap previously rejected signed catalogue models with
+  max_references/max_image_references greater than four. This was an
+  independent hardcoded BFF limit, not the native provider's dynamic
+  model limit. Removed it while retaining strict nonnegative integer
+  validation and upstream catalogue authority.
+- Added HTTP regression exercising a photo model with ten references
+  and video with twelve image references, plus malformed-number cases.
+- Current #520 protected GitHub CI must run on the new head. Previous
+  #516 passes do not prove this exact revision passed.
+- No VK_FULL_APP_PARITY_ENABLED, VK_NATIVE_BOOTSTRAP_ENABLED or
+  any money/write flag was enabled in production by this change.
