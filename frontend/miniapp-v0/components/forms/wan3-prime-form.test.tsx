@@ -2,7 +2,7 @@ import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Wan3PrimeForm } from './wan3-prime-form'
 import { normalizeWan3ImageForRetry } from '@/lib/wan3-image-normalize'
-import { Wan3PrimeApiError, Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
+import { Wan3ImageReadError, Wan3PrimeApiError, Wan3PrimeUploadCleanupError, fetchWan3PrimeRepeatPlan, generateWan3Prime, importWan3PrimeReference, quoteWan3Prime, uploadWan3PrimeReference } from '@/lib/wan3-prime-api'
 
 jest.mock('@/lib/wan3-prime-api', () => ({
   ...jest.requireActual('@/lib/wan3-prime-api'),
@@ -289,6 +289,34 @@ test('photo failure and retry stay visible beside the input with the original Cy
   expect(field.queryByRole('status')).not.toBeInTheDocument()
   expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(2)
   expect((uploadWan3PrimeReference as jest.Mock).mock.calls[1][1].name).toBe('Фото.jpg')
+})
+
+test('unreadable iOS picker photo must be reselected, never retried with the stale handle', async () => {
+  render(<Wan3PrimeForm credits={1000} />)
+  fireEvent.click(screen.getByRole('button', { name: 'По референсам' }))
+  const field = within(screen.getByRole('region', { name: 'Фото-референсы' }))
+  const input = field.getByLabelText('Загрузить фото-референсы') as HTMLInputElement
+  const stale = new File(['photo'], 'old.png', { type: 'image/png' })
+  Object.defineProperty(stale, 'arrayBuffer', { value: jest.fn().mockRejectedValue(new Error('Native picker handle expired')) })
+  const readerSpy = jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    this.onerror?.(new ProgressEvent('error'))
+  })
+  try {
+    fireEvent.change(input, { target: { files: [stale] } })
+    expect(await field.findByRole('alert')).toHaveTextContent('Выберите его заново')
+    expect(field.queryByRole('button', { name: 'Повторить загрузку' })).not.toBeInTheDocument()
+    expect(field.getByRole('button', { name: 'Выбрать фото заново' })).toBeEnabled()
+    expect(input).toBeEnabled()
+    expect(uploadWan3PrimeReference).not.toHaveBeenCalled()
+  } finally {
+    readerSpy.mockRestore()
+  }
+
+  fireEvent.change(input, { target: { files: [new File(['fresh'], 'new.png', { type: 'image/png' })] } })
+  await field.findByText('new.png')
+  expect(field.queryByRole('alert')).not.toBeInTheDocument()
+  expect(field.queryByRole('button', { name: 'Выбрать фото заново' })).not.toBeInTheDocument()
+  expect(uploadWan3PrimeReference).toHaveBeenCalledTimes(1)
 })
 
 test('multi-file retry uploads only the unfinished files, preserving the accepted video once', async () => {
