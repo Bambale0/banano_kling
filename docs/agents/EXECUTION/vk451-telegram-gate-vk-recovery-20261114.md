@@ -21,6 +21,7 @@
 - Added component regression `telegram-open-gate-vk-recovery.test.tsx`: VK recovery link is available in the locked Telegram UI, points to trusted same-origin API route and navigates the top-level browsing context; Telegram login script remains in place.
 - Added `vk-login-recovery-gate.test.tsx` to assert that the VK-only locked gate contains the server-controlled VK login route and no Telegram requirement. Updated `MiniAppShell` locked branch to select the appropriate gate by `currentAccountPlatform()`.
 - Test file committed before the implementation file (test-first change order). **No local RED run claimed.** GitHub CI on the PR is the mandatory executable verification, including Jest, TypeScript, build and browser regression.
+- The protected `.github/workflows/miniapp-ci.yml` regression list is explicit; added both new test paths to that list so passing existing tests does not silently omit this fix.
 - Post-merge require exact deployed SHA and public link smoke; this change alone cannot fix an incorrect VK developer-panel URL or prove native signed VK acceptance.
 
 ## Remaining root-cause and acceptance work
