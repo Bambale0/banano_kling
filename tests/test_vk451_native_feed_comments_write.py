@@ -16,7 +16,9 @@ from bot import database
 from bot.shared_accounts import api
 from bot.shared_accounts.actor import PlatformActor
 from bot.shared_accounts.vk_feed_comments import (
-    VkCommentConflict, VkCommentCooldown, create_public_vk_comment,
+    VkCommentConflict,
+    VkCommentCooldown,
+    create_public_vk_comment,
 )
 
 ACTOR = PlatformActor("vk", 2001, "independent-vk", ("vk",), None)
