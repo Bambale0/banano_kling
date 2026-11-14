@@ -1403,10 +1403,32 @@ def _update_price_value(target: str, key: str, field: str, value):
     if target == "image":
         image_models = price_config["costs_reference"]["image_models"]
         if key not in image_models:
-            raise KeyError("image")
+            # Production price.json is volume-backed. New Seedream 5.5 price
+            # cells are provided in memory on startup to preserve admin edits,
+            # so their first edit must materialize them in the persisted file.
+            # Do not seed unrelated/unknown model keys.
+            from bot.services.seedream55_pricing import (
+                INPUT_PRICE_KEY,
+                QUALITY_PRICE_KEYS,
+            )
+
+            seedream55_keys = (*QUALITY_PRICE_KEYS.values(), INPUT_PRICE_KEY)
+            if key not in seedream55_keys:
+                raise KeyError("image")
+            live_models = (
+                preset_manager.get_price_config()
+                .get("costs_reference", {})
+                .get("image_models", {})
+            )
+            if not all(cell in live_models for cell in seedream55_keys):
+                raise KeyError("Seedream 5.5 tariff missing")
+            for cell in seedream55_keys:
+                image_models.setdefault(cell, live_models[cell])
+
         old_value = image_models[key]
         image_models[key] = value
-        preset_manager.update_price_config(price_config)
+        if not preset_manager.update_price_config(price_config):
+            raise RuntimeError("price config reload failed")
         return old_value
 
     if target == "video":
