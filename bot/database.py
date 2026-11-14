@@ -502,6 +502,25 @@ def derive_description(prompt_text: str) -> str:
     return (text[:197] + "...") if len(text) > 200 else text
 
 
+async def _ensure_vk_feed_likes_schema(db: db_backend.Connection) -> None:
+    """Ensure VK-owned feed reactions exist on both SQLite and PostgreSQL.
+
+    PostgreSQL's compatibility execute() intentionally skips SQLite CREATE
+    statements, so new deployments and existing DB upgrades need native DDL.
+    This owns no Telegram user IDs or wallet columns.
+    """
+    ddl = db.execute_native_ddl if db_backend.is_postgres() else db.execute
+    await ddl("""
+        CREATE TABLE IF NOT EXISTS vk_feed_generation_likes (
+            vk_user_id BIGINT NOT NULL,
+            generation_task_id BIGINT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (vk_user_id, generation_task_id),
+            FOREIGN KEY (generation_task_id) REFERENCES generation_tasks (id) ON DELETE CASCADE
+        )
+    """)
+
+
 async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
     await db.execute("""
         CREATE TABLE IF NOT EXISTS user_prompts (
@@ -644,17 +663,8 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
             UNIQUE(user_id, generation_task_id)
         )
     """)
-    # Cross-platform public feed reactions never use the Telegram users.id
-    # foreign key. One VK owner can like a public item only once.
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS vk_feed_generation_likes (
-            vk_user_id BIGINT NOT NULL,
-            generation_task_id BIGINT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (vk_user_id, generation_task_id),
-            FOREIGN KEY (generation_task_id) REFERENCES generation_tasks (id) ON DELETE CASCADE
-        )
-    """)
+    # Cross-platform reactions never reference Telegram users.id.
+    await _ensure_vk_feed_likes_schema(db)
 
     await db.execute("""
         CREATE TABLE IF NOT EXISTS feed_remix_events (
