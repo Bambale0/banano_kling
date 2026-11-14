@@ -451,6 +451,17 @@ CREATE TABLE IF NOT EXISTS feed_generation_likes (
 );
 
 -- ============================================================
+-- VK NATIVE PUBLIC FEED LIKES
+-- VK actor IDs are independent of legacy Telegram users.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS vk_feed_generation_likes (
+    vk_user_id BIGINT NOT NULL,
+    generation_task_id BIGINT NOT NULL REFERENCES generation_tasks(id) ON DELETE CASCADE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (vk_user_id, generation_task_id)
+);
+
+-- ============================================================
 -- FEED REMIX EVENTS
 -- ============================================================
 CREATE TABLE IF NOT EXISTS feed_remix_events (
