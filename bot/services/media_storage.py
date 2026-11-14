@@ -411,7 +411,7 @@ def persist_upload_file(
         remote_unchanged = remote_upload_fingerprint(relative) == (
             source.stat().st_size, source_digest
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - unknown S3 HEAD failure; PUT is fallback
         logger.warning(
             "Media storage remote fingerprint unavailable: key=%s error=%s; uploading",
             key, type(exc).__name__,

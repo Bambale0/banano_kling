@@ -487,6 +487,7 @@ async def test_existing_reference_normalization_does_not_block_event_loop(monkey
     import time
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
+
     from bot.services import reference_storage_service as service
 
     local = tmp_path / "reference.png"
