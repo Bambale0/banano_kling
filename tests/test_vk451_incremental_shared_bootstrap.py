@@ -305,3 +305,92 @@ def test_native_bootstrap_rejects_malformed_reference_limits(invalid):
         "id": "test", "label": "Test", "ratios": ["1:1"],
         "max_references": invalid,
     }, "max_references")
+
+
+@pytest.mark.asyncio
+async def test_vk_hmac_model_bridge_preserves_native_reference_limits(monkeypatch):
+    """HMAC catalogue transport must not invent a four-reference UI ceiling."""
+    from bot.shared_accounts import vk_native
+
+    photo = {
+        "id": "native_photo", "label": "Photo", "ratios": ["1:1"],
+        "resolutions": ["2K"], "max_references": 14,
+    }
+    video = {
+        "id": "native_video", "label": "Video", "ratios": ["16:9"],
+        "scenarios": ["imgtxt"], "duration_min": 5, "duration_max": 15,
+        "max_image_references": 9,
+    }
+
+    class NativeResponse:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def json(self):
+            return {
+                "ok": True, "photo_models": [photo],
+                "video_models": [video],
+            }
+
+    class NativeSession:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, *args, **kwargs):
+            return NativeResponse()
+
+    monkeypatch.setenv("INTERNAL_API_SECRET", "isolated-test-only")
+    monkeypatch.setenv("VK_NATIVE_INTERNAL_ORIGIN", "http://127.0.0.1:1777")
+    monkeypatch.setattr(vk_native.aiohttp, "ClientSession", NativeSession)
+    result = await vk_native.fetch_native_vk_models(2001)
+    assert result["photo_models"][0]["max_references"] == 14
+    assert result["video_models"][0]["max_image_references"] == 9
+
+
+@pytest.mark.asyncio
+async def test_vk_hmac_model_bridge_rejects_negative_or_boolean_reference_counts(monkeypatch):
+    """Malformed native capabilities must still fail closed."""
+    from bot.shared_accounts import vk_native
+
+    class NativeResponse:
+        status = 200
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        async def json(self):
+            return {
+                "ok": True,
+                "photo_models": [{
+                    "id": "bad", "label": "Bad", "ratios": ["1:1"],
+                    "resolutions": ["2K"], "max_references": True,
+                }],
+                "video_models": [],
+            }
+
+    class NativeSession:
+        def __init__(self, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+        def get(self, *args, **kwargs):
+            return NativeResponse()
+
+    monkeypatch.setenv("INTERNAL_API_SECRET", "isolated-test-only")
+    monkeypatch.setenv("VK_NATIVE_INTERNAL_ORIGIN", "http://127.0.0.1:1777")
+    monkeypatch.setattr(vk_native.aiohttp, "ClientSession", NativeSession)
+    with pytest.raises(RuntimeError, match="Invalid VK native photo model"):
+        await vk_native.fetch_native_vk_models(2001)
