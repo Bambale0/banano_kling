@@ -10,15 +10,20 @@ beforeEach(() => {
 })
 
 test('VK application credential is memory-only and wins over cached Telegram data', () => {
-  window.sessionStorage.setItem('__banano_tg_init_data', 'old-telegram-session')
+  const cachedTelegram = new URLSearchParams({
+    auth_date: String(Math.floor(Date.now() / 1000)),
+    user: JSON.stringify({ id: 12 }),
+    hash: 'b'.repeat(64),
+  }).toString()
+  window.sessionStorage.setItem('__banano_tg_init_data', cachedTelegram)
   setPlatformSessionToken('a'.repeat(43))
 
   expect(getInitData()).toBe('vk_session:' + 'a'.repeat(43))
   expect(window.sessionStorage.getItem('__banano_platform_init_data')).toBeNull()
-  expect(window.sessionStorage.getItem('__banano_tg_init_data')).toBe('old-telegram-session')
+  expect(window.sessionStorage.getItem('__banano_tg_init_data')).toBe(cachedTelegram)
 
   clearPlatformSessionToken()
-  expect(getInitData()).toBe('old-telegram-session')
+  expect(getInitData()).toBe(cachedTelegram)
 })
 
 test('invalid platform tokens are rejected without changing authentication', () => {
