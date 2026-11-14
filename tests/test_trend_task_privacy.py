@@ -306,3 +306,29 @@ async def test_mixed_privacy_lookup_checks_only_unresolved_tasks(monkeypatch) ->
     assert response["recent_tasks"][0]["prompt_preview"] == ""
     assert response["recent_tasks"][1]["prompt_preview"] == "show"
     assert response["recent_tasks"][2]["prompt_preview"] == ""
+
+
+@pytest.mark.asyncio
+async def test_legacy_prompt_match_preserves_outer_unicode_whitespace(monkeypatch):
+    from bot import database
+    from bot import db as db_backend
+
+    owner = await database.get_or_create_user(920102)
+    stranger = await database.get_or_create_user(920103)
+    prompt = "movie with snow % and _ literal"
+    async with db_backend.connect(database.DATABASE_PATH) as connection:
+        await connection.execute(
+            "INSERT INTO user_prompts (author_id, title, prompt_text, tags, status, is_public) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (owner.id, "Padded private recipe", "\t" + prompt + "\n", '["trend"]', "approved", 1),
+        )
+        await connection.commit()
+    await database.add_generation_task(
+        stranger.id, stranger.telegram_id, "padded-private-trend",
+        "image", "test", prompt=prompt,
+    )
+    payload = await trend_task_privacy.sanitize_task_api_payload({
+        "task": {"task_id": "padded-private-trend", "prompt_preview": prompt}
+    })
+    assert payload["task"]["prompt_hidden"] is True
+    assert payload["task"]["prompt_preview"] == ""
