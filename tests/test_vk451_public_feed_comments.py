@@ -1,6 +1,5 @@
 """VK-only actors can read common public-feed comments without TG identity."""
 import json
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 

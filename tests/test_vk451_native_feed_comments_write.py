@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import sqlite3
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -170,9 +172,6 @@ async def test_native_vk_comment_http_uses_signed_owner_and_flag_off_fail_closed
 
 
 def test_native_vk_comments_schema_supports_postgres_migration_and_bootstrap():
-    from bot import database
-    import inspect
-    from pathlib import Path
     source = inspect.getsource(database._ensure_vk_feed_comments_schema)
     schema = (Path(database.__file__).parents[1] / "schema_postgres.sql").read_text()
     assert "execute_native_ddl" in source

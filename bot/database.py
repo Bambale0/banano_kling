@@ -8296,7 +8296,7 @@ async def get_feed_comments(
     *,
     limit: int = 80,
     viewer_user_id: Optional[int] = None,
-    viewer_vk_user_id: Optional[int] = None,
+    viewer_vk_user_id: int | None = None,
 ) -> list[dict[str, Any]]:
     safe_limit = min(max(int(limit or 80), 1), 150)
     try:

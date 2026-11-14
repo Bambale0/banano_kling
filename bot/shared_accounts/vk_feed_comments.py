@@ -10,8 +10,8 @@ import asyncio
 import os
 import re
 import time
-from weakref import WeakValueDictionary
 from typing import Any
+from weakref import WeakValueDictionary
 
 from bot import database
 from bot import db as db_backend

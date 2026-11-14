@@ -23,12 +23,12 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
-from .vk_feed_likes import like_public_vk_feed
 from .vk_feed_comments import (
     VkCommentConflict,
     VkCommentCooldown,
     create_public_vk_comment,
 )
+from .vk_feed_likes import like_public_vk_feed
 from .vk_feed_repeat import build_vk_feed_repeat, native_vk_feed_repeat_model
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
