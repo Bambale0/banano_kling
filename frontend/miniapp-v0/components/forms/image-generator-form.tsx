@@ -19,6 +19,10 @@ interface ImageGeneratorFormProps {
     model: string
     ratio: string
     quality: string
+    outputFormat: string
+    background: string
+    layersMaxImages: number
+    layersTextRecognition: boolean
     count: number
     nsfwChecker: boolean
     nsfwEnabled: boolean
@@ -49,6 +53,10 @@ export function ImageGeneratorForm({
   const [selectedModel, setSelectedModel] = useState(models[0]?.id || '')
   const [selectedRatio, setSelectedRatio] = useState('1:1')
   const [selectedQuality, setSelectedQuality] = useState('basic')
+  const [outputFormat, setOutputFormat] = useState('png')
+  const [background, setBackground] = useState('auto')
+  const [layersMaxImages, setLayersMaxImages] = useState(30)
+  const [layersTextRecognition, setLayersTextRecognition] = useState(false)
   const [selectedCount, setSelectedCount] = useState(1)
   const [nsfwChecker, setNsfwChecker] = useState(false)
   const [nsfwEnabled, setNsfwEnabled] = useState(false)
@@ -63,10 +71,16 @@ export function ImageGeneratorForm({
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
 
-  const unitCost = Number(
+  const baseUnitCost = Number(
     (selectedQuality ? model?.quality_costs?.[selectedQuality] : undefined) ?? (model?.cost || 0)
   )
-  const cost = unitCost * selectedCount
+  const refFee = Number(model?.reference_unit_cost || 0)
+  const unitCost = model?.supports_layers
+    ? baseUnitCost * layersMaxImages + refFee
+    : model?.id === 'seedream_55'
+      ? baseUnitCost + references.length * refFee
+      : baseUnitCost
+  const cost = Math.round(unitCost * selectedCount * 1000) / 1000
   const canAfford = credits >= cost
   const isFeedRemix = sourceFeedGenId !== null
   const requiresPersonalPhoto = isFeedRemix && repeatUserFields.some(field => field.image_choices?.length)
@@ -74,8 +88,11 @@ export function ImageGeneratorForm({
   const requiresLocalReference = requiresPersonalPhoto || (Boolean(model?.requires_reference) && !isFeedRemix)
   const needsReference = requiresLocalReference && references.length === 0
   const referencesUploading = references.some((reference) => reference.uploading)
-  const hasPrompt = prompt.trim().length > 0 || isFeedRemix
+  const hasPrompt = prompt.trim().length > 0 || isFeedRemix || Boolean(model?.supports_layers)
   const isValid = hasPrompt && canAfford && !needsReference && !referencesUploading
+    && !(model?.id === 'seedream_55' && references.length === 0 && selectedRatio === 'auto')
+    && !(model?.supports_background && background === 'transparent' && outputFormat !== 'png')
+    && !((model?.id === 'seedream_55' && prompt.length > 5000) || (model?.supports_layers && prompt.length > 2000))
     && repeatValuesComplete(repeatUserFields, repeatUserValues)
 
   const CHANGE_CHIPS = [
@@ -139,7 +156,7 @@ export function ImageGeneratorForm({
 
   useEffect(() => {
     if (!model) return
-    if (!model.ratios.includes(selectedRatio)) {
+    if (!model.ratios.includes(selectedRatio) || (model.id === 'seedream_55' && references.length === 0 && selectedRatio === 'auto')) {
       setSelectedRatio(model.ratios[0] || '1:1')
     }
     const bananaQualities = ['1K', '2K', '4K']
@@ -157,7 +174,7 @@ export function ImageGeneratorForm({
     if (!(model.supports_nsfw_mode || model.id === 'grok_imagine_i2i')) {
       setNsfwEnabled(false)
     }
-  }, [model, selectedQuality, selectedRatio])
+  }, [model, selectedQuality, selectedRatio, references.length])
 
   const toggleChange = (chipId: string, insert: string) => {
     const isActive = activeChanges.has(chipId)
@@ -184,6 +201,10 @@ export function ImageGeneratorForm({
       model: selectedModel,
       ratio: selectedRatio,
       quality: selectedQuality,
+      outputFormat,
+      background,
+      layersMaxImages,
+      layersTextRecognition,
       count: selectedCount,
       nsfwChecker,
       nsfwEnabled,
@@ -208,6 +229,10 @@ export function ImageGeneratorForm({
     selectedModel,
     selectedRatio,
     selectedQuality,
+    outputFormat,
+    background,
+    layersMaxImages,
+    layersTextRecognition,
     selectedCount,
     nsfwChecker,
     nsfwEnabled,
@@ -240,7 +265,9 @@ export function ImageGeneratorForm({
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Формат</label>
             <RatioSelect
-              ratios={model?.ratios || ['1:1']}
+              ratios={(model?.id === 'seedream_55' && !references.length
+                ? (model?.ratios || ['1:1']).filter((ratio) => ratio !== 'auto')
+                : (model?.ratios || ['1:1']))}
               value={selectedRatio}
               onChange={setSelectedRatio}
             />
@@ -273,6 +300,56 @@ export function ImageGeneratorForm({
           )}
         </div>
 
+        {model?.supports_output_format && (
+          <div className="grid gap-3 lg:grid-cols-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-foreground">Формат файла</label>
+              <div className="flex gap-2">
+                {(['png', 'jpeg'] as const).map((format) => (
+                  <button key={format} type="button" onClick={() => {
+                    setOutputFormat(format)
+                    if (format === 'jpeg' && background === 'transparent') setBackground('auto')
+                  }} className={cn('rounded-xl border px-4 py-2 text-sm', outputFormat === format
+                    ? 'border-gold/50 bg-gold/15 text-gold'
+                    : 'border-border/50 bg-secondary/30 text-muted-foreground')}>
+                    {format.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {model.supports_background && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-foreground">Фон</label>
+                <select value={background} onChange={e => {
+                  setBackground(e.target.value)
+                  if (e.target.value === 'transparent') setOutputFormat('png')
+                }} className="w-full rounded-xl border border-border/50 bg-secondary px-4 py-2 text-sm">
+                  <option value="auto">Авто</option>
+                  <option value="transparent">Прозрачный PNG</option>
+                  <option value="opaque">Непрозрачный</option>
+                </select>
+              </div>
+            )}
+          </div>
+        )}
+        {model?.supports_layers && (
+          <div className="rounded-xl border border-border/50 bg-secondary/20 p-3 space-y-3">
+            <label className="block text-sm font-medium text-foreground" htmlFor="seedream55-layers-count">
+              Максимум изображений: {layersMaxImages} (2–100)
+            </label>
+            <input id="seedream55-layers-count" type="number" min={2} max={100}
+              value={layersMaxImages} onChange={e => setLayersMaxImages(Math.max(2, Math.min(100, Number(e.target.value) || 2)))}
+              className="rounded-lg border border-border/50 bg-secondary/40 px-3 py-2 w-24 text-sm" />
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={layersTextRecognition}
+                onChange={e => setLayersTextRecognition(e.target.checked)} />
+              Распознавать текст и выделять его в отдельные слои
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Сперва резервируется максимум стоимости. После получения результата неиспользованная часть возвращается на баланс.
+            </p>
+          </div>
+        )}
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm font-medium text-foreground">Количество</label>
@@ -456,7 +533,7 @@ export function ImageGeneratorForm({
                   ? 'Используется промпт из библиотеки'
                   : prompt.trim().length > 0
                     ? 'Промпт готов к запуску'
-                    : 'Пустой prompt не отправится'}
+                    : (model?.supports_layers ? 'Промпт необязателен' : 'Пустой prompt не отправится')}
             </span>
             <span>{prompt.length} симв.</span>
           </div>
@@ -485,7 +562,7 @@ export function ImageGeneratorForm({
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-sm text-muted-foreground">Стоимость</span>
+          <span className="text-sm text-muted-foreground">{model?.supports_layers ? "Максимальный резерв" : "Стоимость"}</span>
           <div className="flex items-center gap-1.5">
             <Banana className="w-4 h-4 text-gold" />
             <span className="text-lg font-semibold text-gold">{cost}</span>
