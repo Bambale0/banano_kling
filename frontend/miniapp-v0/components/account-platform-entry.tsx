@@ -30,11 +30,9 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController()
-    let sessionStarted = false
     reportVkLaunchStage('vk-session-start')
     startAccountAppSession(controller.signal).then(result => {
-      if (controller.signal.aborted) { void stopAccountAppSession(); return }
-      sessionStarted = true
+      if (controller.signal.aborted) return
       reportVkLaunchStage('vk-session-ok')
       setAccess(result)
     }).catch(error => {
@@ -45,7 +43,9 @@ function VkAccountGate({ children }: { children: ReactNode }) {
     })
     return () => {
       controller.abort()
-      if (sessionStarted) void stopAccountAppSession()
+      // Invalidate even a pending /session response: its server-side token
+      // must not resurrect the previous VK actor after unmount or retry.
+      void stopAccountAppSession()
     }
   }, [retry])
 
