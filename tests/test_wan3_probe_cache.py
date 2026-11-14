@@ -75,3 +75,108 @@ async def test_expensive_probe_slots_are_bounded_per_user_and_globally(monkeypat
     # Both admission counters must be released even after exceptions.
     async with probe_slot(100):
         pass
+
+
+async def _evict_owned_media_into_fake_s3(actor, saved, monkeypatch):
+    """Simulate a valid Wan upload already migrated out of the local cache."""
+    from bot import db as db_backend
+    from tests.test_media_storage import FakeS3Client, configure_s3
+
+    async with db_backend.connect(database.DATABASE_PATH) as db:
+        row = await (await db.execute(
+            "SELECT local_path FROM wan3_prime_media WHERE public_url = ?",
+            (saved['url'],),
+        )).fetchone()
+    local = Path(row[0])
+    relative = local.resolve().relative_to(Path('static/uploads').resolve()).as_posix()
+    original_bytes = local.read_bytes()
+    fake = FakeS3Client()
+    fake.objects[('neuromix-media', f'uploads/{relative}')] = original_bytes
+    configure_s3(monkeypatch, fake)
+    local.unlink()
+    assert not local.exists()
+    return local, original_bytes, fake
+
+
+@pytest.mark.asyncio
+async def test_migrated_owned_wan_media_is_restored_from_s3_before_quote(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    actor, saved = await owned_input()
+    local, original, _fake = await _evict_owned_media_into_fake_s3(actor, saved, monkeypatch)
+
+    probe = ActualWan3PrimeProbe(wan3_prime_storage, actor)
+    info = await probe.probe_url(saved['url'], kind='image')
+
+    assert info.width == 320
+    assert info.height == 240
+    assert info.size_bytes == len(original)
+    assert local.read_bytes() == original
+    assert local.with_name(f'.{local.name}.s3-cache').is_file()
+
+
+@pytest.mark.asyncio
+async def test_migrated_wan_media_cannot_be_materialized_by_another_user(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    actor, saved = await owned_input()
+    local, _original, fake = await _evict_owned_media_into_fake_s3(actor, saved, monkeypatch)
+    download = Mock(wraps=fake.download_file)
+    monkeypatch.setattr(fake, 'download_file', download)
+
+    foreign = Wan3PrimeActor(actor.user_id + 1, actor.telegram_id + 1)
+    with pytest.raises(Wan3PrimeValidationError, match='another user') as rejected:
+        await ActualWan3PrimeProbe(wan3_prime_storage, foreign).probe_url(saved['url'], kind='image')
+
+    assert rejected.value.status == 403
+    assert not local.exists()
+    download.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_migrated_wan_media_with_wrong_s3_digest_fails_closed(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    actor, saved = await owned_input()
+    _local, original, fake = await _evict_owned_media_into_fake_s3(actor, saved, monkeypatch)
+    key = next(iter(fake.objects))
+    fake.objects[key] = original[:-1] + bytes([original[-1] ^ 1])
+
+    with pytest.raises(Wan3PrimeValidationError, match='changed') as rejected:
+        await ActualWan3PrimeProbe(wan3_prime_storage, actor).probe_url(saved['url'], kind='image')
+
+    assert rejected.value.status == 409
+
+
+@pytest.mark.asyncio
+async def test_s3_only_wan_reference_can_be_quoted_without_reupload(monkeypatch, tmp_path):
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycle
+    from tests.test_wan3_prime_lifecycle import Prices, Provider
+
+    monkeypatch.chdir(tmp_path)
+    actor, saved = await owned_input()
+    local, _original, fake = await _evict_owned_media_into_fake_s3(actor, saved, monkeypatch)
+    probe = ActualWan3PrimeProbe(wan3_prime_storage)
+    lifecycle = Wan3PrimeLifecycle(probe=probe, preset_manager=Prices(rates={'480p': 2}), transport=Provider())
+
+    quote = await lifecycle.quote(actor, {
+        'model': 'wan_3_prime', 'scenario': 'reference',
+        'prompt': 'Keep the original scene',
+        'reference_image_urls': [saved['url']],
+        'resolution': '480P', 'duration': 13, 'audio': True,
+    })
+
+    assert quote.billable_seconds_reserved == 13
+    assert local.is_file()
+    assert len(fake.objects) == 1
+
+
+@pytest.mark.asyncio
+async def test_s3_unavailable_owned_wan_media_preserves_retryable_error(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    actor, saved = await owned_input()
+    local, _original, fake = await _evict_owned_media_into_fake_s3(actor, saved, monkeypatch)
+    fake.objects.clear()
+
+    with pytest.raises(Wan3PrimeValidationError, match='temporarily unavailable') as rejected:
+        await ActualWan3PrimeProbe(wan3_prime_storage, actor).probe_url(saved['url'], kind='image')
+
+    assert rejected.value.status == 503
+    assert not local.exists()
