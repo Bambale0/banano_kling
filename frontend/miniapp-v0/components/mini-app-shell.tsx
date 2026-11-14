@@ -13,7 +13,6 @@ import { currentAccountPlatform } from '@/lib/account-platform'
 import { ClientErrorBoundary } from './client-error-boundary'
 import { MiniAppLoader } from './mini-app-loader'
 import { TelegramOpenGate } from './telegram-open-gate'
-import { VkLoginRecoveryGate } from './vk-login-recovery-gate'
 import { PartnerApprovalSheet } from './partner-approval-sheet'
 import { GenjutsuEntry } from './genjutsu-entry'
 import { BotWriteAccessGate } from './bot-write-access-gate'
@@ -65,7 +64,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
       {isBootstrapping ? (
         <MiniAppLoader />
       ) : isLocked ? (
-        isVk ? <VkLoginRecoveryGate /> : <TelegramOpenGate />
+        <TelegramOpenGate />
       ) : (
         <>
           <div className="relative flex flex-col min-h-screen safe-top min-w-0 overflow-x-hidden">

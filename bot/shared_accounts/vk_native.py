@@ -107,7 +107,7 @@ async def fetch_native_vk_models(vk_user_id: int) -> dict:
             or not isinstance(item.get('ratios'),list)
             or not isinstance(item.get('resolutions'),list)
             or type(item.get('max_references')) is not int
-            or item['max_references'] < 0):
+            or not 0<=item['max_references']<=4):
             raise RuntimeError('Invalid VK native photo model')
     for item in videos:
         if (not isinstance(item,dict) or type(item.get('id')) is not str
@@ -118,7 +118,7 @@ async def fetch_native_vk_models(vk_user_id: int) -> dict:
             or type(item.get('duration_max')) is not int
             or not 1<=item['duration_min']<=item['duration_max']<=60
             or type(item.get('max_image_references')) is not int
-            or item['max_image_references'] < 0):
+            or not 0<=item['max_image_references']<=4):
             raise RuntimeError('Invalid VK native video model')
     # Never forward additional provider fields, secrets or private account data.
     return {'ok':True,'photo_models':photos,'video_models':videos}

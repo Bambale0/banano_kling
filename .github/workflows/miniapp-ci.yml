@@ -64,8 +64,6 @@ jobs:
         run: >-
           npm test -- --runInBand
           components/__tests__/account-platform-entry.test.tsx
-          components/__tests__/telegram-open-gate-vk-recovery.test.tsx
-          components/__tests__/vk-login-recovery-gate.test.tsx
           components/__tests__/shared-account-link-preview.test.tsx
           components/__tests__/shared-account-preview.test.tsx
           components/__tests__/vk-chat-delivery.test.tsx
