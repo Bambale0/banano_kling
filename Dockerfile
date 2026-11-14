@@ -45,17 +45,21 @@ ENV PATH="/opt/venv/bin:${PATH}" \
     WEBHOOK_BIND_HOST=0.0.0.0 \
     WEBHOOK_PORT=1888
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+# PGDG signing-key downloads can fail with curl (18) on HTTP/2.
+# Preserve signed APT and the PostgreSQL 16 version check; retry only transport.
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates curl \
     && install -d /usr/share/postgresql-common/pgdg \
-    && curl --fail --silent --show-error \
+    && curl --fail --silent --show-error --location --http1.1 \
+        --retry 5 --retry-all-errors --retry-delay 2 \
+        --connect-timeout 15 --max-time 60 \
         -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
         https://www.postgresql.org/media/keys/ACCC4CF8.asc \
     && . /etc/os-release \
     && printf 'Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: %s-pgdg\nComponents: main\nSigned-By: /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc\n' "$VERSION_CODENAME" \
         > /etc/apt/sources.list.d/pgdg.sources \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         ffmpeg \
         gzip \
         postgresql-client-16 \
