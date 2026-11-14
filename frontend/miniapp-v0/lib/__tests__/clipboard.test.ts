@@ -7,6 +7,7 @@ const legacyCopy = jest.fn()
 
 beforeEach(() => {
   jest.resetAllMocks()
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: undefined })
   Object.defineProperty(navigator, 'userAgent', { configurable: true, value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)' })
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: nativeCopy } })
   Object.defineProperty(document, 'execCommand', { configurable: true, value: legacyCopy })
@@ -36,6 +37,7 @@ it('copies synchronously on iOS Telegram before awaiting a denied Clipboard API 
 })
 
 it('copies before losing the click activation in Telegram Desktop WebView', async () => {
+  Object.defineProperty(window, 'Telegram', { configurable: true, value: { WebApp: { platform: 'tdesktop' } } })
   Object.defineProperty(navigator, 'userAgent', {
     configurable: true,
     value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -56,6 +58,17 @@ it('copies before losing the click activation in Telegram Desktop WebView', asyn
   await expect(copying).resolves.toBeUndefined()
   expect(events).toEqual(['legacy'])
   expect(nativeCopy).not.toHaveBeenCalled()
+})
+
+it('uses the native Clipboard API first in a regular desktop browser', async () => {
+  Object.defineProperty(navigator, 'userAgent', {
+    configurable: true,
+    value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+  })
+  nativeCopy.mockResolvedValue(undefined)
+  await expect(copyTextToClipboard(link)).resolves.toBeUndefined()
+  expect(nativeCopy).toHaveBeenCalledWith(link)
+  expect(legacyCopy).not.toHaveBeenCalled()
 })
 
 it('falls through to the Clipboard API when synchronous copying is blocked', async () => {
