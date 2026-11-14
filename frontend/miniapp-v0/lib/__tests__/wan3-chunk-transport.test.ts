@@ -204,6 +204,16 @@ test('unreadable picked photo fails before reserving server quota', async () => 
   expect(api.wan3SafeError(new api.Wan3ImageReadError(), 'fallback')).toContain('Выберите его заново')
 })
 
+test('synchronous Blob fallback failure does not reserve upload quota', async () => {
+  const unreadable = new File(['photo'], 'photo.jpeg', { type: 'image/jpeg' })
+  Object.defineProperty(unreadable, 'arrayBuffer', { value: () => { throw new Error('Expired native file') } })
+  jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    this.onerror?.(new ProgressEvent('error'))
+  })
+  await expect(api.uploadWan3PrimeReference('image', unreadable)).rejects.toBeInstanceOf(api.Wan3ImageReadError)
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
 test('cancelling the initial picked-photo read creates no server reservation', async () => {
   let reader: FileReader | undefined
   global.FileReader = class {
