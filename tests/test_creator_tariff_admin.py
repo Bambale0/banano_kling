@@ -355,6 +355,7 @@ async def test_genjutsu_creator_editor_rejects_fractional_step_rate(editor):
         ("nano-banana-pro", "4K", "1.5"),
         ("banana_2", "2K", "1.25"),
         ("seedream_5_pro", "high", "2.25"),
+        ("seedream_55", "2K", "1.75"),
     ],
 )
 async def test_creator_editor_supports_image_model_prices(
@@ -376,3 +377,31 @@ async def test_creator_editor_supports_image_model_prices(
     tariff = writes[0]["creator_tariff"]
     assert tariff["image_models"][model]["quality_costs"][quality] == float(value)
 
+
+
+@pytest.mark.asyncio
+async def test_seedream55_reference_creator_price_is_admin_editable_and_preserves_standard(editor):
+    state, cb, writes, before = editor
+    await admin.open_creator_tariff(cb, state)
+    await click(state, cb, "prices")
+    menu = cb.message.edit_text.await_args.args[0]
+    assert "Seedream 5.5 · 1K" in menu
+    assert "Seedream 5.5 · 1.5K" in menu
+    assert "Seedream 5.5 · 2K" in menu
+    assert "Seedream 5.5 · референс" in menu
+    await click(state, cb, "rate", "seedream_55", "ref")
+    await admin.creator_tariff_message(message("0,75"), state)
+    assert len(writes) == 1
+    assert {key: value for key, value in writes[0].items() if key != "creator_tariff"} == before
+    model = writes[0]["creator_tariff"]["image_models"]["seedream_55"]
+    assert model == {"quality_costs": {}, "reference_unit_cost": 0.75}
+
+
+@pytest.mark.asyncio
+async def test_seedream55_reference_creator_invalid_price_is_rejected(editor):
+    state, cb, writes, _ = editor
+    await admin.open_creator_tariff(cb, state)
+    await click(state, cb, "prices")
+    await click(state, cb, "rate", "seedream_55", "ref")
+    await admin.creator_tariff_message(message("0"), state)
+    assert not writes

@@ -3329,3 +3329,11 @@ private references and browser-provided actor information fail closed.
   frontend full 106 suites / 814 tests GREEN, TypeScript and ESLint clean.
 - Release: protected CI, exact merge SHA deploy and owner/auth smoke. Do NOT
   activate full-app, video-write or checkout gates without financial E2E.
+
+## 2026-11-14 — Seedream 5.5 Creator tariff pricing
+- Baseline: tanyapi@eac97cb44c81cbd1e6e14fb2b6edfe930dcada23; task branch feature/seedream55-creator-tariff-20261114. User requested separate Creator rates, no hardcoded discount.
+- Preflight: Creator price editor supports three image models; Seedream 5.5 bypassed Creator quote in Telegram/Mini App and task checks. Existing layers settlement already freezes cost snapshot and refunds unused reserve.
+- Contract: one Creator model seedream_55 with 1K / 1.5K / 2K output rates and optional reference_unit_cost. Layers mode shares these rates. Missing Creator cells use ordinary prices. No automatic tariff activation.
+- Implementation: Creator validation and aliases, admin editor, actor-resolved Telegram/Mini App quotes, per-viewer bootstrap, Telegram model picker, launch quote revalidation, persisted unit-price snapshot.
+- Tests: test_seedream55_creator_tariff initially failed for missing Creator model; 19 new tests green. Creator/Seedream/Admin regression suites 161 and 103 passing on matching source. CI and deploy pending.
+- Release: PR to tanyapi, mandatory checks, auto-merge, exact SHA production verification. No new prices applied to runtime data or wallets.

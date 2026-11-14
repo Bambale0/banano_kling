@@ -41,6 +41,7 @@ MODEL_LABELS = {
     "nano-banana-pro": "Nano Banana Pro",
     "banana_2": "Nano Banana 2",
     "seedream_5_pro": "Seedream 5 Pro",
+    "seedream_55": "Seedream 5.5",
     "genjutsu/motion_transfer": "Genjutsu · Motion Transfer",
     "genjutsu/object_swap": "Genjutsu · Object Swap",
     "genjutsu/restyle": "Genjutsu · Restyle",
@@ -48,9 +49,15 @@ MODEL_LABELS = {
 
 
 def _editable_qualities(status):
+    image_qualities = {
+        model: list(qualities)
+        for model, qualities in status.get("image_qualities", {}).items()
+    }
+    if "seedream_55" in image_qualities:
+        image_qualities["seedream_55"].append("ref")
     return {
         **status['required_qualities'],
-        **status.get('image_qualities', {}),
+        **image_qualities,
         **{
             f'genjutsu/{operation}': qualities
             for operation, qualities in GENJUTSU_QUALITIES.items()
@@ -65,6 +72,12 @@ def _is_image_model(model: str) -> bool:
 def _rate_help(model):
     if model.startswith('genjutsu/'):
         return 'Целое число от 1 до 10000. Ставка шага умножается на его длительность и число вариантов.'
+    if model == "seedream_55":
+        return (
+            "Цена за одно выходное изображение или один входной референс в 🍌. "
+            "В режиме слоёв резервируется выбранный максимум изображений; "
+            "неиспользованная часть возвращается. Незаданные ставки — обычные."
+        )
     if _is_image_model(model):
         return 'Положительная цена в 🍌 за одно изображение. Незаданные качества используют обычную цену.'
     if model in {'wan_3', 'wan_3_prime'}:
@@ -227,13 +240,20 @@ async def _prices(event, state, notice=""):
         if model.startswith('genjutsu/'):
             rates = status.get('genjutsu', {}).get('prices', {}).get(model.split('/', 1)[1], {})
         elif _is_image_model(model):
-            rates = status.get('image_models', {}).get(model, {}).get('quality_costs', {})
+            entry = status.get('image_models', {}).get(model, {})
+            rates = dict(entry.get('quality_costs', {}))
+            if model == "seedream_55":
+                rates["ref"] = entry.get("reference_unit_cost")
         else:
             rates = status['video_models'].get(model, {}).get('quality_costs', {})
         for quality in qualities:
             rate = rates.get(quality)
-            label = f"{MODEL_LABELS.get(model, model)} · {quality}"
-            unit = "🍌/изобр." if _is_image_model(model) else "🍌/сек"
+            label = f"{MODEL_LABELS.get(model, model)} · {'референс' if quality == 'ref' else quality}"
+            unit = (
+                "🍌/реф." if model == "seedream_55" and quality == "ref"
+                else "🍌/изобр." if _is_image_model(model)
+                else "🍌/сек"
+            )
             value = f"{rate:g} {unit}" if isinstance(rate, (int, float)) and not isinstance(rate, bool) and math.isfinite(rate) and rate > 0 else "не задано"
             lines.append(f"{html.escape(label)}: <b>{value}</b>")
             rows.append([_button(f"✏️ {label}", _cb("rate", token, model, quality))])
@@ -341,7 +361,11 @@ async def _handle_callback(callback, state, data, parts):
             raise CreatorTariffConfigConflict("Цены уже изменились. Откройте раздел заново.")
         token = await _screen(state, creator_model=model, creator_quality=quality, creator_config_fingerprint=expected)
         await state.set_state(CreatorTariffAdminStates.price)
-        unit = "🍌/изображение" if _is_image_model(model) else "🍌/сек"
+        unit = (
+            "🍌/референс" if model == "seedream_55" and quality == "ref"
+            else "🍌/изображение" if _is_image_model(model)
+            else "🍌/сек"
+        )
         prompt = await _present(callback, f"Введите цену {html.escape(MODEL_LABELS.get(model, model))} · {html.escape(quality)} в {unit}.\n{html.escape(_rate_help(model))}", [_back(token)], fresh=True)
         return await state.update_data(creator_prompt_id=getattr(prompt, "message_id", 0))
     if action == "confirm" and not args:
@@ -412,6 +436,8 @@ async def creator_tariff_message(message: types.Message, state: FSMContext):
                 if not price.is_integer() or price > 10000:
                     raise ValueError('Для Genjutsu нужна целая цена от 1 до 10000.')
                 candidate.setdefault('genjutsu', {}).setdefault('prices', {}).setdefault(model.split('/', 1)[1], {})[quality] = int(price)
+            elif model == "seedream_55" and quality == "ref":
+                candidate.setdefault("image_models", {}).setdefault(model, {})["reference_unit_cost"] = price
             elif _is_image_model(model):
                 candidate.setdefault("image_models", {}).setdefault(model, {}).setdefault("quality_costs", {})[quality] = price
             else:
