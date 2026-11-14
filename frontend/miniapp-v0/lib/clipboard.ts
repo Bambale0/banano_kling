@@ -46,18 +46,11 @@ export async function copyTextToClipboard(
   const value = String(text || '').trim()
   if (!value || typeof document === 'undefined') throw new Error('Ссылка пока недоступна')
 
-  const platform = typeof window !== 'undefined' ? window.Telegram?.WebApp?.platform : undefined
-  const isIOS = platform === 'ios'
-    || (typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent))
-  // A visible share input is also selected synchronously on Android; copying
-  // still works when Telegram grants only a short-lived tap permission.
-  // Prefer selecting the on-screen field while the browser still has the
-  // user's tap activation. If Telegram disallows copying a visible input,
-  // retry with a temporary editable textarea before awaiting a permission API.
-  if (isIOS || visibleField) {
-    if (tryCopySelection(value, visibleField)) return
-    if (visibleField && tryCopySelection(value)) return
-  }
+  // Telegram Desktop/Android, iOS and embedded browsers may lose transient
+  // user activation while waiting for navigator.clipboard.writeText to reject.
+  // Run both synchronous selection attempts within the original click first.
+  if (tryCopySelection(value, visibleField)) return
+  if (visibleField && tryCopySelection(value)) return
 
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {
@@ -68,6 +61,5 @@ export async function copyTextToClipboard(
     }
   }
 
-  if (!isIOS && !visibleField && tryCopySelection(value)) return
   throw new Error('Не удалось скопировать ссылку')
 }
