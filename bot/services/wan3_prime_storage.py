@@ -588,10 +588,23 @@ class ActualWan3PrimeProbe:
                     raise Wan3PrimeValidationError("This media belongs to another user", status=403)
                 if row["kind"] != kind:
                     raise Wan3PrimeValidationError("Media type does not match the selected field")
-                local = Path(row["local_path"]).resolve()
+                stored_path = Path(row["local_path"])
+                local = stored_path.resolve()
                 base = UPLOAD_ROOT.resolve()
-                if base not in local.parents or not local.is_file():
-                    raise Wan3PrimeValidationError("Owned media is no longer available")
+                if base not in local.parents or stored_path.is_symlink():
+                    raise Wan3PrimeValidationError("Invalid stored media path", status=409)
+                if not local.is_file():
+                    # S3 retention may evict a valid uploaded reference from the
+                    # local disk. Restore only the exact DB-owned key, after
+                    # checking ownership and the references/ path boundary.
+                    from bot.services.media_storage import materialize_upload
+
+                    relative = local.relative_to(Path("static/uploads").resolve()).as_posix()
+                    restored = await asyncio.to_thread(materialize_upload, relative)
+                    if not restored or Path(restored).resolve() != local or not local.is_file():
+                        raise Wan3PrimeValidationError(
+                            "Owned media is temporarily unavailable", status=503
+                        )
                 from bot.services.wan3_prime_probe_cache import verified_metadata
 
                 return await verified_metadata(row, local, _sha256_file)
