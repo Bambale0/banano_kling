@@ -299,7 +299,7 @@ test('unreadable iOS picker photo must be reselected, never retried with the sta
   const stale = new File(['photo'], 'old.png', { type: 'image/png' })
   Object.defineProperty(stale, 'arrayBuffer', { value: jest.fn().mockRejectedValue(new Error('Native picker handle expired')) })
   const readerSpy = jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
-    this.onerror?.(new ProgressEvent('error'))
+    this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>)
   })
   try {
     fireEvent.change(input, { target: { files: [stale] } })
