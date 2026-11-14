@@ -330,6 +330,8 @@ async def test_postgres_reference_upload_is_not_blocked_by_retention_scan(tmp_pa
 
 @pytest.mark.asyncio
 async def test_postgres_new_reference_pin_survives_retention_prefilter(tmp_path, monkeypatch):
+    # Keep the concurrency race coverage on disposable PostgreSQL only.
+    monkeypatch.setenv('WAN3_PG_UNUSED_MEDIA_FULL_SCAN_ENABLED', '1')
     from tests.test_wan3_retention import assert_new_pin_survives_retention_prefilter
 
     await assert_new_pin_survives_retention_prefilter(tmp_path, monkeypatch)
