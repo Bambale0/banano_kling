@@ -77,3 +77,22 @@ with a short-lived event-loop-local weakly held lock. PostgreSQL retains
 full concurrency and database uniqueness remains authoritative. The same
 flaky concurrency case passed 20 repeated runs. Merged targeted tests:
 38/38 Python, 90/90 Jest; follow with full CI and exact-SHA production smoke.
+
+
+## Production release gate regression — 2026-11-14
+
+Protected #514 safe regression run 43596706171 reported **5246 passed,
+309 skipped, 1 failed**. The sole failure was the existing
+test_vk_feed_like_concurrent_retries_update_counter_exactly_once. The exact
+stack traced sqlite3.OperationalError: database is locked to
+bot/db.py:_ConfiguredSqliteConnection._ensure executing PRAGMA journal_mode=WAL
+before busy_timeout. Then an orphaned aiosqlite worker kept the pytest
+process alive until CI's 45-minute job limit.
+
+The comment writer already serialized SQLite opens. Root cause fix shares a
+single per-event-loop weak-keyed writer lock between native VK likes and
+comments; neither service serializes PostgreSQL. Added multi-owner,
+multi-retry concurrency regression; existing single-owner test remains
+unchanged and must pass repeatedly. All affected code is restricted to VK
+public interactions. Production deployment stays gated on complete CI and
+exact-SHA smoke; no financial mutations or feature flags enabled.

@@ -6,37 +6,18 @@ The same feed readers combine native and legacy comments.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import time
 from typing import Any
-from weakref import WeakValueDictionary
 
 from bot import database
 from bot import db as db_backend
 
+from .vk_sqlite_writer import sqlite_vk_writer_lock
+
 _KEY_RE = re.compile(r"[A-Za-z0-9_-]{16,80}\Z")
 MAX_COMMENT_CHARS = 500
-
-# SQLite supports only one concurrent writer; new aiosqlite connections
-# reconfigure PRAGMA journal_mode=WAL before their busy_timeout. Concurrent
-# opening can fail with SQLITE_BUSY even on the same idempotency claim.
-# Share a short-lived, loop-local writer lock, not a process-global lock
-# bound to a previous async event loop. Weak values avoid leaked test loops.
-_SQLITE_WRITER_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
-
-
-def _sqlite_writer_lock() -> asyncio.Lock:
-    loop_key = id(asyncio.get_running_loop())
-    lock = _SQLITE_WRITER_LOCKS.get(loop_key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _SQLITE_WRITER_LOCKS[loop_key] = lock
-    return lock
-
-
-
 
 class VkCommentConflict(Exception):
     """Same native idempotency key was used with a different comment."""
@@ -82,7 +63,7 @@ async def create_public_vk_comment(
         return await _create_public_vk_comment_inner(
             vk_actor_id, gen_id, comment_text, client_request_id,
         )
-    async with _sqlite_writer_lock():
+    async with sqlite_vk_writer_lock():
         return await _create_public_vk_comment_inner(
             vk_actor_id, gen_id, comment_text, client_request_id,
         )
