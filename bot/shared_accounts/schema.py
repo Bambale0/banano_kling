@@ -29,6 +29,16 @@ SCHEMA = (
         revoked_at_epoch BIGINT,
         FOREIGN KEY(platform, external_id)
             REFERENCES shared_account_identities(platform, external_id))''',
+    '''CREATE TABLE IF NOT EXISTS shared_vk_saved_references (
+        reference_id TEXT PRIMARY KEY,
+        vk_user_id BIGINT NOT NULL CHECK(vk_user_id > 0),
+        url_hash TEXT NOT NULL,
+        file_url TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(vk_user_id, url_hash))''',
+    '''CREATE INDEX IF NOT EXISTS shared_vk_saved_references_owner
+        ON shared_vk_saved_references(vk_user_id, created_at DESC)''',
     'CREATE INDEX IF NOT EXISTS shared_account_sessions_expiry ON shared_account_sessions(expires_at_epoch)',
     '''CREATE TABLE IF NOT EXISTS shared_account_policy_audit (
         id TEXT PRIMARY KEY, actor_telegram_id BIGINT NOT NULL,

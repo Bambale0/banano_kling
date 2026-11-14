@@ -256,6 +256,8 @@ export interface VkNativeState {
   tasks: VkNativeTask[]
   /** Server-side feature gate; never infer paid write permission from a model list. */
   video_generation_enabled?: boolean
+  /** Server-confirmed upload availability for native VK users. */
+  photo_upload_enabled?: boolean
   /** Same task-card DTO as Telegram Mini App; native VK history remains authoritative. */
   recent_tasks?: Task[]
 }
@@ -293,6 +295,63 @@ export async function createVkInvoice(payload: VkInvoiceRequest, signal?: AbortS
   }), signal)
 }
 
+
+export interface VkSavedReference {
+  reference_id: string
+  url: string
+  name: string
+  created_at: string
+}
+
+/** Signed VK owner's reusable media metadata, not Telegram saved_references. */
+export async function fetchVkSavedReferences(signal?: AbortSignal): Promise<VkSavedReference[]> {
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; references: VkSavedReference[] }>(
+      'vk-references', { headers, signal },
+    )
+    if (payload.ok !== true || !Array.isArray(payload.references)) {
+      throw new Error('Библиотека ВКонтакте сейчас недоступна.')
+    }
+    const valid = payload.references.every(item =>
+      /^[0-9a-f]{32}$/.test(item?.reference_id || '')
+      && typeof item.url === 'string' && /^https:\/\//.test(item.url)
+      && typeof item.name === 'string'
+      && typeof item.created_at === 'string',
+    )
+    if (!valid) throw new Error('Получен повреждённый список референсов.')
+    return payload.references
+  }, signal)
+}
+
+export async function saveVkSavedReference(url: string, name: string, signal?: AbortSignal): Promise<VkSavedReference> {
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; reference: VkSavedReference }>(
+      'vk-references', { method: 'POST', headers, signal,
+        body: JSON.stringify({ action: 'save', url, name }),
+      },
+    )
+    if (payload.ok !== true || !/^[0-9a-f]{32}$/.test(payload.reference?.reference_id || '')
+      || payload.reference.url !== url) {
+      throw new Error('Не удалось подтвердить сохранение фото ВКонтакте.')
+    }
+    return payload.reference
+  }, signal)
+}
+
+export async function forgetVkSavedReference(referenceId: string, signal?: AbortSignal): Promise<boolean> {
+  if (!/^[0-9a-f]{32}$/.test(referenceId)) throw new Error('Некорректный идентификатор референса.')
+  return withPreviewSession(async headers => {
+    const payload = await request<{ ok: boolean; deleted: boolean }>(
+      'vk-references', { method: 'POST', headers, signal,
+        body: JSON.stringify({ action: 'forget', reference_id: referenceId }),
+      },
+    )
+    if (payload.ok !== true || typeof payload.deleted !== 'boolean') {
+      throw new Error('Не удалось проверить изменение VK-библиотеки.')
+    }
+    return payload.deleted
+  }, signal)
+}
 
 export interface VkNativeModelCatalog {
   ok: true
@@ -363,8 +422,11 @@ export interface VkPublicFeedItem {
   preview_url: string | null
   result_url: string | null
   likes_count: number
+  /** Public native VK feed link from the signed server; not a paid remix. */
+  share_link?: string | null
   /** A server-approved permission, not an inferred public prompt. */
   can_repeat_in_app?: boolean
+  can_like_in_app?: boolean
 }
 
 export type VkPublicDiscovery =
@@ -413,6 +475,7 @@ export interface VkPublicFeedLink {
     preview_poster_url?: string | null
     result_url: string | null
     likes_count: number
+    can_like_in_app?: boolean
     shares_count: number
     comments_count: number
     aspect_ratio: string
@@ -423,6 +486,25 @@ export interface VkPublicFeedLink {
     /** Native VK feed remix is a separate authorized operation, not this read. */
     can_repeat_in_app?: boolean
   }
+}
+
+export interface VkFeedLikeResult {
+  ok: true
+  liked: boolean
+  likes_count: number
+}
+
+/** A signed, free and idempotent native VK reaction. Never send actor IDs. */
+export async function likeVkFeed(feedGenId: number, signal?: AbortSignal): Promise<VkFeedLikeResult> {
+  if (!Number.isSafeInteger(feedGenId) || feedGenId <= 0) {
+    throw new Error('Некорректная публикация для реакции.')
+  }
+  return withPreviewSession(headers => request<VkFeedLikeResult>(
+    'vk-feed-like', {
+      method: 'POST', headers,
+      body: JSON.stringify({ feed_gen_id: feedGenId }), signal,
+    },
+  ), signal)
 }
 
 export async function fetchVkPublicFeedItem(

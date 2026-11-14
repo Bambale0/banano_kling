@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   fetchVkGenerationClaim,
   fetchVkModelCatalog,
+  fetchVkSavedReferences,
   generateVkImage,
   generateVkVideo,
   repeatVkTrend,
@@ -13,6 +14,7 @@ import {
   type VkNativeModelCatalog,
   type VkTrendRequest,
   type VkPublicTrend,
+  type VkSavedReference,
 } from '@/lib/shared-account-api'
 
 type QuotePayload =
@@ -45,6 +47,9 @@ export function VkGenerationPanel({
   const [duration, setDuration] = useState('')
   const [userValues, setUserValues] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<File[]>([])
+  const [saved, setSaved] = useState<VkSavedReference[]>([])
+  const [selectedSaved, setSelectedSaved] = useState<string[]>([])
+  const [savedError, setSavedError] = useState('')
   const [cost, setCost] = useState<number | null>(null)
   const [quoted, setQuoted] = useState<QuotePayload | null>(null)
   const [clientRequestId, setClientRequestId] = useState('')
@@ -95,6 +100,17 @@ export function VkGenerationPanel({
     return () => controller.abort()
   }, [trend, kind])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetchVkSavedReferences(controller.signal).then(result => {
+      if (!controller.signal.aborted) setSaved(result)
+    }).catch(cause => {
+      if (!controller.signal.aborted) setSavedError(cause instanceof Error
+        ? cause.message : 'Не удалось открыть ваши сохранённые фото.')
+    })
+    return () => controller.abort()
+  }, [])
+
   const selectedPhotoModel = catalog?.photo_models.find(item => item.id === model)
   const selectedVideoModel = catalog?.video_models.find(item => item.id === model)
   const selectedModel = kind === 'video' ? selectedVideoModel : selectedPhotoModel
@@ -123,14 +139,16 @@ export function VkGenerationPanel({
       if (!trend && (!selectedModel || catalogLoading)) {
         throw new Error('Нет подтверждённых моделей ВКонтакте.')
       }
-      if (files.length > referenceLimit) throw new Error('Выберите не более ' + referenceLimit + ' фотографий.')
+      if (files.length + selectedSaved.length > referenceLimit) throw new Error('Выберите не более ' + referenceLimit + ' фотографий.')
       if (kind === 'video' && !trend && (
         !selectedVideoModel?.durations?.includes(Number(duration))
         || !selectedVideoModel.ratios.includes(aspect)
       )) throw new Error('Выберите доступные параметры видео.')
-      if (trend && !files.length) throw new Error('Для повтора тренда загрузите своё фото.')
+      if (trend && !files.length && !selectedSaved.length) throw new Error('Для повтора тренда выберите своё фото.')
       if (!trend && !prompt.trim()) throw new Error(kind === 'video' ? 'Введите промпт для видео.' : 'Введите промпт для создания изображения.')
-      const references: string[] = []
+      // Reusable refs were saved by the same verified VK actor; paid submit
+      // still re-verifies every URL through the server-side owner+S3 guard.
+      const references: string[] = [...selectedSaved]
       for (const file of files) {
         const url = await uploadVkImage(file)
         references.push(url)
@@ -289,6 +307,27 @@ export function VkGenerationPanel({
         onChange={event => { invalidate(); setFiles(Array.from(event.target.files || [])) }}
         className="block w-full text-xs" />
     </label>
+    {saved.length > 0 && <fieldset aria-label="Мои сохранённые фото" className="space-y-2 rounded-xl border border-border p-3">
+      <legend className="px-1 text-sm font-medium">Мои сохранённые фото</legend>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {saved.map(item => <label key={item.reference_id}
+          className="space-y-1 rounded-lg border border-border/70 p-2 text-xs">
+          <img src={item.url} alt="" loading="lazy" className="aspect-square w-full rounded-md object-cover" />
+          <span className="block truncate">{item.name}</span>
+          <span className="flex items-center gap-1">
+            <input type="checkbox" disabled={busy || referenceLimit === 0}
+              checked={selectedSaved.includes(item.url)}
+              onChange={event => {
+                invalidate()
+                setSelectedSaved(current => event.target.checked
+                  ? [...current, item.url]
+                  : current.filter(url => url !== item.url))
+              }} /> Использовать
+          </span>
+        </label>)}
+      </div>
+    </fieldset>}
+    {savedError && <p className="text-xs text-muted-foreground">{savedError}</p>}
     <p className="text-xs text-muted-foreground">
       До {referenceLimit} фото, каждое до 12 МБ. Стоимость рассчитывает VK-сервер перед списанием.
       {kind === 'video' ? ' Видеофайлы пока нельзя использовать как референсы.' : ''}
