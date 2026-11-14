@@ -644,6 +644,18 @@ async def _ensure_prompt_feed_schema(db: db_backend.Connection) -> None:
             UNIQUE(user_id, generation_task_id)
         )
     """)
+    # Cross-platform public feed reactions never use the Telegram users.id
+    # foreign key. One VK owner can like a public item only once.
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS vk_feed_generation_likes (
+            vk_user_id BIGINT NOT NULL,
+            generation_task_id BIGINT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (vk_user_id, generation_task_id),
+            FOREIGN KEY (generation_task_id) REFERENCES generation_tasks (id) ON DELETE CASCADE
+        )
+    """)
+
     await db.execute("""
         CREATE TABLE IF NOT EXISTS feed_remix_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

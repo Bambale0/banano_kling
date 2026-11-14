@@ -23,6 +23,7 @@ from .store import (
     revoke_session,
 )
 from .task_view import serialize_native_vk_tasks
+from .vk_feed_likes import like_public_vk_feed
 from .vk_feed_repeat import build_vk_feed_repeat, native_vk_feed_repeat_model
 from .vk_image_refs import MAX_UPLOAD_BYTES, save_vk_image, verified_image_urls
 from .vk_native import (
@@ -34,6 +35,7 @@ from .vk_native import (
     submit_native_vk_image,
     submit_native_vk_video,
 )
+from .vk_saved_refs import forget_vk_reference, list_vk_references, save_vk_reference
 from .vk_trend_contract import NATIVE_IMAGE_MODELS, supports_native_vk_image_trend
 from .vk_video_trends import (
     build_native_video_trend_request,
@@ -231,8 +233,37 @@ async def vk_native_state(request: web.Request) -> web.Response:
         and data.get('registered') is True
         and data.get('is_blocked') is False
     )
+    photo_upload_enabled = (
+        os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
+        and 'telegram' not in actor.linked_platforms
+        and data.get('registered') is True
+        and data.get('is_blocked') is False
+    )
     return response({'ok': True, **data, 'recent_tasks': common_tasks,
-                     'video_generation_enabled': video_enabled})
+                     'video_generation_enabled': video_enabled,
+                     'photo_upload_enabled': photo_upload_enabled})
+
+
+async def vk_reference_library(request: web.Request) -> web.Response:
+    """Owner-only personal VK reference bookmarks, no Telegram legacy ID.
+
+    Bookmarks are metadata over already owner-validated VK uploads. Removing
+    a bookmark never deletes bytes still used by asynchronous generation.
+    """
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    if request.method == 'GET':
+        return response({'ok': True, 'references': await list_vk_references(actor.external_id)})
+    if request.method != 'POST':
+        return response({'ok': False, 'error': 'Method not allowed'}, 405)
+    data = await _body(request)
+    action = data.get('action')
+    if action == 'save' and set(data) == {'action', 'url', 'name'}:
+        saved = await save_vk_reference(actor.external_id, data['url'], data['name'])
+        return response({'ok': True, 'reference': saved})
+    if action == 'forget' and set(data) == {'action', 'reference_id'}:
+        deleted = await forget_vk_reference(actor.external_id, data['reference_id'])
+        return response({'ok': True, 'deleted': deleted})
+    raise ValueError('Invalid VK saved-reference request')
 
 
 async def vk_native_models(request: web.Request) -> web.Response:
@@ -361,6 +392,23 @@ async def vk_native_feed_repeat(request: web.Request) -> web.Response:
     )
     result = await submit_native_vk_image(actor_id, payload)
     return response({"ok": True, **result})
+
+
+async def vk_public_feed_like(request: web.Request) -> web.Response:
+    """Idempotent public reaction by the signed VK actor, no TG user or money."""
+    actor = await resolve_platform_actor(_bearer(request), expected_platform='vk')
+    if os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') != '1':
+        return response({'ok': False, 'error': 'VK feed likes unavailable'}, 404)
+    data = await _body(request)
+    if set(data) != {'feed_gen_id'}:
+        raise ValueError('Invalid VK feed like request')
+    gen_id = data.get('feed_gen_id')
+    if type(gen_id) is not int or not 0 < gen_id < 2**63:
+        raise ValueError('Invalid public feed ID')
+    total = await like_public_vk_feed(actor.external_id, gen_id)
+    if total is None:
+        return response({'ok': False, 'error': 'Publication unavailable'}, 404)
+    return response({'ok': True, 'liked': True, 'likes_count': total})
 
 
 async def vk_generation_claim(request: web.Request) -> web.Response:
@@ -507,6 +555,7 @@ def _vk_public_feed_card(card: dict, *, vk_app_id: int,
         'preview_poster_url': card.get('preview_poster_url'),
         'result_url': card.get('result_url'),
         'likes_count': int(card.get('likes_count') or 0),
+        'can_like_in_app': os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') == '1',
         'shares_count': int(card.get('shares_count') or 0),
         'comments_count': int(card.get('comments_count') or 0),
         'aspect_ratio': str(card.get('aspect_ratio') or ''),
@@ -613,6 +662,8 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
         })
     if view == 'feed':
         from bot import database
+        from bot.miniapp_links import feed_link
+
         source = request.query.get('source', 'recent')
         if source not in {'recent', 'top', 'top_day'}:
             raise ValueError('Invalid feed source')
@@ -626,6 +677,13 @@ async def vk_public_discovery(request: web.Request) -> web.Response:
                 'preview_url': card.get('preview_url'),
                 'result_url': card.get('result_url'),
                 'likes_count': int(card.get('likes_count') or 0),
+                # Only an explicitly public feed ID and configured VK app identity.
+                'share_link': feed_link(
+                    None, int(card['id']), platform='vk',
+                    vk_app_id=policy.vk_app_id,
+                    vk_community_id=policy.vk_community_id,
+                ) if policy.vk_app_id else None,
+                'can_like_in_app': os.getenv('VK_MINIAPP_FEED_LIKES_ENABLED') == '1',
                 'can_repeat_in_app': (
                     os.getenv('VK_MINIAPP_FEED_REPEAT_ENABLED') == '1'
                     and os.getenv('VK_MINIAPP_WRITES_ENABLED') == '1'
@@ -792,7 +850,10 @@ def setup_shared_account_routes(app: web.Application, miniapp_root: str) -> None
     app.router.add_post(root + '/session', _guard(session))
     app.router.add_get(root + '/me', _guard(profile))
     app.router.add_get(root + '/trends', _guard(vk_public_discovery))
+    app.router.add_post(root + '/vk-feed-like', _guard(vk_public_feed_like))
     app.router.add_get(root + '/vk-native-state', _guard(vk_native_state))
+    app.router.add_get(root + '/vk-references', _guard(vk_reference_library))
+    app.router.add_post(root + '/vk-references', _guard(vk_reference_library))
     app.router.add_get(root + '/vk-commerce', _guard(vk_native_commerce))
     app.router.add_post(root + '/vk-invoice', _guard(vk_native_invoice))
     app.router.add_get(root + '/vk-models', _guard(vk_native_models))

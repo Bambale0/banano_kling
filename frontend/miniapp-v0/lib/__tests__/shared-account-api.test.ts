@@ -1,4 +1,4 @@
-import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, fetchVkGenerationClaim, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
+import { acceptAccountLink, createVkInvoice, checkAccountPreviewLogin, createAccountLink, fetchVkNativeState, fetchVkPublicTrend, fetchVkPublicFeedItem, likeVkFeed, fetchVkGenerationClaim, generateVkImage, previewAccountLink, saveAccountPreviewSettings, startAccountAppSession, stopAccountAppSession } from '../shared-account-api'
 import { setPlatformSessionToken } from '../api'
 import { platformMiniAppUrl } from '../account-platform'
 
@@ -442,4 +442,27 @@ test('unmount invalidates a pending VK login even if the server ignores abort', 
   await expect(opened).rejects.toThrow()
   expect(logouts).toEqual(['Bearer ' + token])
   await stopAccountAppSession()
+})
+
+test('native VK feed like sends signed owner session and publication id only', async () => {
+  const fetch = jest.mocked(global.fetch)
+  fetch.mockResolvedValueOnce(reply(200, {
+    session_token: 'v'.repeat(43), account: { id: 'native-vk-account' },
+  })).mockResolvedValueOnce(reply(200, {
+    liked: true, likes_count: 8,
+  })).mockResolvedValueOnce(reply(200))
+  await expect(likeVkFeed(41)).resolves.toEqual({
+    ok: true, liked: true, likes_count: 8,
+  })
+  expect(fetch.mock.calls[1][0]).toBe('/mini-app/api/account-preview/vk-feed-like')
+  expect(JSON.parse(String(fetch.mock.calls[1][1]?.body))).toEqual({ feed_gen_id: 41 })
+  expect(fetch.mock.calls[1][1]?.headers).toEqual(expect.objectContaining({
+    Authorization: 'Bearer ' + 'v'.repeat(43),
+  }))
+  expect(fetch.mock.calls[2][0]).toBe('/mini-app/api/account-preview/logout')
+})
+
+test('invalid VK publication reaction is rejected before network access', async () => {
+  await expect(likeVkFeed(-1)).rejects.toThrow('Некорректная публикация')
+  expect(global.fetch).not.toHaveBeenCalled()
 })

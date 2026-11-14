@@ -1,12 +1,13 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { VkGenerationPanel } from '../vk-generation-panel'
-import {
+import { fetchVkSavedReferences,
   fetchVkGenerationClaim, fetchVkModelCatalog, repeatVkTrend, uploadVkImage,
   type VkPublicTrend,
 } from '@/lib/shared-account-api'
 
 jest.mock('@/lib/shared-account-api', () => ({
+  fetchVkSavedReferences: jest.fn().mockResolvedValue([]),
   fetchVkGenerationClaim: jest.fn(),
   fetchVkModelCatalog: jest.fn(),
   repeatVkTrend: jest.fn(),
@@ -23,6 +24,7 @@ const file = () => new File(['image-bytes'], 'my-photo.jpg', { type: 'image/jpeg
 
 beforeEach(() => {
   jest.resetAllMocks()
+  jest.mocked(fetchVkSavedReferences).mockResolvedValue([])
   jest.mocked(uploadVkImage).mockResolvedValue(
     'https://neuromixbot.com/uploads/vk-refs/image/2001/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
   )

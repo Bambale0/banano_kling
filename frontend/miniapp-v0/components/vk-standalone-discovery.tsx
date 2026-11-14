@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { VkGenerationPanel } from './vk-generation-panel'
+import { VkReferenceLibrary } from './vk-reference-library'
 import { VkFeedRepeatPanel } from './vk-feed-repeat-panel'
 import { VkNativeCheckout, type VkCheckoutAttempt } from './vk-native-checkout'
 import {
@@ -10,6 +11,7 @@ import {
   fetchVkPublicDiscovery,
   fetchVkPublicTrend,
   fetchVkPublicFeedItem,
+  likeVkFeed,
   fetchVkNativeState,
   fetchVkNativeCommerce,
   type VkNativeState,
@@ -65,7 +67,14 @@ function TrendCard({ item, onRepeat, onShare }: {
   </article>
 }
 
-function FeedCard({ item, onOpen }: { item: VkPublicFeedItem; onOpen?: (id: number) => void }) {
+function FeedCard({ item, onOpen, onShare, onLike, liking, liked }: {
+  item: VkPublicFeedItem
+  onOpen?: (id: number) => void
+  onShare?: (item: VkPublicFeedItem) => void
+  onLike: (id: number) => void
+  liking: boolean
+  liked: boolean
+}) {
   return <article className="min-w-0 rounded-2xl border border-border/70 bg-card p-2">
     <Preview
       image={item.preview_url || (item.generation_type === 'image' ? item.result_url : null)}
@@ -77,6 +86,15 @@ function FeedCard({ item, onOpen }: { item: VkPublicFeedItem; onOpen?: (id: numb
     </p>
     {onOpen && <button type="button" className="w-full rounded-lg border border-border p-2 text-xs"
       onClick={() => onOpen(item.id)}>Открыть публикацию #{item.id}</button>}
+    {item.share_link && onShare ? <button type="button"
+      onClick={() => onShare(item)}
+      className="mt-2 w-full rounded-lg border border-border px-2 py-2 text-xs font-medium">
+      Ссылка на публикацию #{item.id}
+    </button> : null}
+    {item.can_like_in_app && <button type="button" disabled={liking || liked}
+      onClick={() => onLike(item.id)} className="mt-2 w-full rounded-lg border border-border p-2 text-xs">
+      {liked ? 'Вам нравится' : liking ? 'Сохраняем…' : 'Нравится'}
+    </button>}
   </article>
 }
 
@@ -100,8 +118,13 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
   const [feedRepeatId, setFeedRepeatId] = useState<number | null>(null)
   const [linkedFeedError, setLinkedFeedError] = useState('')
   const [linkedFeedLoading, setLinkedFeedLoading] = useState(false)
+  const [likeBusyId, setLikeBusyId] = useState<number | null>(null)
+  const [likedIds, setLikedIds] = useState<Set<number>>(() => new Set())
+  const [likeError, setLikeError] = useState('')
+  const likeInFlight = useRef<Set<number>>(new Set())
   const [shareLink, setShareLink] = useState('')
   const [shareTitle, setShareTitle] = useState('')
+  const [shareKind, setShareKind] = useState<'trend' | 'feed'>('trend')
   const [shareCopyMessage, setShareCopyMessage] = useState('')
   const [createPhoto, setCreatePhoto] = useState(surface === 'photo')
   const [createVideo, setCreateVideo] = useState(surface === 'video')
@@ -188,6 +211,32 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
     return () => controller.abort()
   }, [linkedFeedTarget])
 
+  const likeFeed = async (id: number) => {
+    if (likeInFlight.current.has(id) || likedIds.has(id)) return
+    likeInFlight.current.add(id)
+    setLikeBusyId(id)
+    setLikeError('')
+    try {
+      const result = await likeVkFeed(id)
+      if (!result.ok || !result.liked || !Number.isSafeInteger(result.likes_count)
+        || result.likes_count < 0) {
+        throw new Error('Не удалось подтвердить реакцию на публикацию.')
+      }
+      setLikedIds(current => new Set(current).add(id))
+      setLinkedFeed(current => current?.id === id
+        ? { ...current, likes_count: result.likes_count } : current)
+      setDiscovery(current => current && 'items' in current
+        ? { ...current, items: current.items.map(item => item.id === id
+          ? { ...item, likes_count: result.likes_count } : item) }
+        : current)
+    } catch (failure) {
+      setLikeError(failure instanceof Error ? failure.message : 'Не удалось сохранить реакцию.')
+    } finally {
+      likeInFlight.current.delete(id)
+      setLikeBusyId(value => value === id ? null : value)
+    }
+  }
+
   const closeLinkedFeed = () => {
     if (/^#(?:feed|remix)_/.test(window.location.hash)) {
       window.history.replaceState(window.history.state, '', window.location.pathname + window.location.search)
@@ -208,11 +257,16 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
     setRepeatItem(null)
   }
 
-  const openShareLink = (item: VkPublicTrend) => {
+  const openShareLink = (item: VkPublicTrend | VkPublicFeedItem) => {
     const url = item.share_link || ''
-    // Trusted app origin and public ID only, no signed session or private media.
-    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#prompt_[1-9][0-9]*$/.test(url)) return
-    setShareTitle(item.title)
+    const isTrend = 'title' in item
+    const expectedKind = isTrend ? 'prompt' : 'feed'
+    // A public VK Mini App route for THIS item only. No Telegram, provider
+    // URL, private recipe or a cross-namespace #remix/#prompt substitution.
+    if (!/^https:\/\/vk\.com\/app[1-9][0-9]*(?:_-[1-9][0-9]*)?#(?:prompt|feed)_[1-9][0-9]*$/.test(url)
+      || !url.endsWith(`#${expectedKind}_${item.id}`)) return
+    setShareKind(isTrend ? 'trend' : 'feed')
+    setShareTitle(isTrend ? item.title : `Публикация #${item.id}`)
     setShareLink(url)
     setShareCopyMessage('')
   }
@@ -361,10 +415,10 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
         Мои работы
       </button>
     </div>}
-    {shareLink ? <div role="dialog" aria-label="Поделиться трендом"
+    {shareLink ? <div role="dialog" aria-label={shareKind === 'trend' ? 'Поделиться трендом' : 'Поделиться публикацией'}
       className="space-y-3 rounded-xl border border-border bg-card p-3">
       <h3 className="text-sm font-semibold">Ссылка на «{shareTitle}»</h3>
-      <input aria-label="Ссылка на тренд" type="text" readOnly value={shareLink}
+      <input aria-label={shareKind === 'trend' ? 'Ссылка на тренд' : 'Ссылка на публикацию'} type="text" readOnly value={shareLink}
         onFocus={event => event.currentTarget.select()}
         className="w-full rounded-lg border border-border bg-background p-2 text-xs" />
       <div className="flex flex-wrap gap-2">
@@ -420,6 +474,10 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
           {' · '}{linkedFeed.model.charAt(0).toUpperCase() + linkedFeed.model.slice(1).replaceAll('_', ' ')}
           {' · ❤ '}{linkedFeed.likes_count}
         </p>
+        {linkedFeed.can_like_in_app && <button type="button" disabled={likeBusyId === linkedFeed.id || likedIds.has(linkedFeed.id)}
+          onClick={() => void likeFeed(linkedFeed.id)} className="rounded-lg border border-border px-3 py-2 text-sm">
+          {likedIds.has(linkedFeed.id) ? 'Вам нравится' : 'Нравится'}
+        </button>}
         {linkedFeed.can_repeat_in_app && linkedFeed.generation_type === 'image'
           ? <button type="button"
               onClick={() => setFeedRepeatId(linkedFeed.id)}
@@ -439,6 +497,7 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
         className="rounded-lg border border-border p-2 text-sm">Вернуться к ленте</button>
     </section> : null}
     {view === 'mine' ? <div className="space-y-3">
+      <VkReferenceLibrary canUpload={native?.photo_upload_enabled === true} />
       {commerce?.registered && commerce.payments_enabled === true &&
         <VkNativeCheckout packages={commerce.payment_packages}
           attempt={checkoutAttempt} onAttemptChange={setCheckoutAttempt} />}
@@ -480,6 +539,7 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
         setCategoryId(null); setCategory(null); setPage(1)
       }}>← Ко всем трендам</button>
     ) : null}
+    {likeError && <p role="alert" className="text-sm text-destructive">{likeError}</p>}
     {!nativeComposerOnly && view !== 'mine' && linkedTrendId === null && linkedFeedTarget === null && error ? <div role="alert" className="space-y-2 text-sm">
       <p>{error}</p>
       <button type="button" className="underline" onClick={() => setRetry(x => x + 1)}>Повторить загрузку</button>
@@ -518,7 +578,11 @@ export function VkStandaloneDiscovery({ surface }: { surface?: VkNativeSurface }
           onOpen={id => {
             setLinkedFeedTarget({ kind: 'feed', genId: id })
             setFeedRepeatId(null)
-          }} />)}
+          }}
+          onShare={openShareLink}
+          onLike={id => void likeFeed(id)}
+          liking={likeBusyId === item.id}
+          liked={likedIds.has(item.id)} />)}
       </div>
     ) : null}
     <p className="text-xs text-muted-foreground">

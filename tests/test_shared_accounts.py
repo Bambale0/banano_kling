@@ -556,7 +556,8 @@ async def test_vk_only_feed_does_not_expose_foreign_source_or_identity(monkeypat
             'id': 123, 'generation_type': 'video',
             'preview_url': 'https://example.test/preview.jpg',
             'result_url': 'https://example.test/video.mp4',
-            'likes_count': 8, 'can_repeat_in_app': False,
+            'likes_count': 8, 'can_repeat_in_app': False, 'can_like_in_app': False,
+            'share_link': 'https://vk.com/app123#feed_123',
         }]
         assert 'nonpublic recipe' not in str(payload)
         assert 'author_telegram_id' not in str(payload)
