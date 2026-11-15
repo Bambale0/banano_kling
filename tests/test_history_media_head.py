@@ -72,7 +72,8 @@ def test_history_media_rejects_parent_traversal():
         media_storage.upload_presence_without_download("../secret")
 
 
-def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, tmp_path, caplog):
+@pytest.mark.parametrize("duration,slow", [(0.31, True), (0.01, False)])
+def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, tmp_path, caplog, duration, slow):
     import logging
 
     monkeypatch.setattr(media_storage, "local_upload_path", lambda relative: tmp_path / relative)
@@ -84,7 +85,7 @@ def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, 
     monkeypatch.setattr(media_storage, "object_key", lambda relative, settings: relative)
     monkeypatch.setattr(media_storage, "_missing_cached", lambda settings, key: False)
     monkeypatch.setattr(media_storage, "_forget_missing", lambda settings, key: None)
-    clock = iter([10.0, 10.31])
+    clock = iter([10.0, 10.0 + duration])
     monkeypatch.setattr(media_storage, "time", SimpleNamespace(monotonic=lambda: next(clock)))
 
     class Client:
@@ -99,8 +100,9 @@ def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, 
         assert media_storage.upload_presence_without_download("private-object.jpg") is True
 
     diagnostic = [record.getMessage() for record in caplog.records if "History media HEAD slow" in record.getMessage()]
-    assert len(diagnostic) == 1
-    assert "duration_ms=310.0 result=present" in diagnostic[0]
-    assert "private-object" not in diagnostic[0]
-    assert "private-bucket" not in diagnostic[0]
-    assert "secret.test" not in diagnostic[0]
+    assert len(diagnostic) == int(slow)
+    if slow:
+        assert "duration_ms=310.0 result=present" in diagnostic[0]
+        assert "private-object" not in diagnostic[0]
+        assert "private-bucket" not in diagnostic[0]
+        assert "secret.test" not in diagnostic[0]
