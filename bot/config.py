@@ -278,6 +278,10 @@ class Config:
     MEDIA_S3_CACHE_TTL_SECONDS: int = int(
         os.getenv("MEDIA_S3_CACHE_TTL_SECONDS", "3600")
     )
+    # Avoid repeated missing-object downloads during Mini App history rendering.
+    MEDIA_S3_MISSING_CACHE_TTL_SECONDS: int = int(
+        os.getenv("MEDIA_S3_MISSING_CACHE_TTL_SECONDS", "60")
+    )
     MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS: int = int(
         os.getenv("MEDIA_S3_CACHE_CLEANUP_INTERVAL_SECONDS", "900")
     )

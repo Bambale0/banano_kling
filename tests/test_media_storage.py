@@ -71,6 +71,64 @@ def configure_s3(monkeypatch, fake: FakeS3Client) -> None:
     media_storage.reset_media_storage_for_tests()
 
 
+def test_s3_missing_object_is_negative_cached_until_reupload(monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+
+    from bot.services import media_storage
+
+    class MissingClient(FakeS3Client):
+        download_calls = 0
+
+        def download_file(self, bucket, key, filename):
+            self.download_calls += 1
+            if (bucket, key) not in self.objects:
+                raise ClientError(
+                    {"Error": {"Code": "404", "Message": "Not Found"},
+                     "ResponseMetadata": {"HTTPStatusCode": 404}},
+                    "GetObject",
+                )
+            super().download_file(bucket, key, filename)
+
+    monkeypatch.chdir(tmp_path)
+    fake = MissingClient()
+    configure_s3(monkeypatch, fake)
+    monkeypatch.setattr(config, "MEDIA_S3_MISSING_CACHE_TTL_SECONDS", 60)
+
+    assert media_storage.materialize_upload("refs/image/42/missing.png") is None
+    assert media_storage.materialize_upload("refs/image/42/missing.png") is None
+    assert fake.download_calls == 1
+
+    media_storage.persist_upload_bytes("refs/image/42/missing.png", b"restored")
+    assert media_storage.materialize_upload("refs/image/42/missing.png") is not None
+    assert fake.download_calls == 2
+
+
+def test_s3_upstream_server_error_is_not_negative_cached(monkeypatch, tmp_path):
+    from botocore.exceptions import ClientError
+
+    from bot.services import media_storage
+
+    class UnavailableClient(FakeS3Client):
+        download_calls = 0
+
+        def download_file(self, bucket, key, filename):
+            self.download_calls += 1
+            raise ClientError(
+                {"Error": {"Code": "503", "Message": "Service Unavailable"},
+                 "ResponseMetadata": {"HTTPStatusCode": 503}},
+                "GetObject",
+            )
+
+    monkeypatch.chdir(tmp_path)
+    fake = UnavailableClient()
+    configure_s3(monkeypatch, fake)
+    monkeypatch.setattr(config, "MEDIA_S3_MISSING_CACHE_TTL_SECONDS", 60)
+
+    assert media_storage.materialize_upload("refs/image/42/temporarily-down.png") is None
+    assert media_storage.materialize_upload("refs/image/42/temporarily-down.png") is None
+    assert fake.download_calls == 2
+
+
 def test_local_storage_preserves_upload_url_and_file(monkeypatch, tmp_path):
     from bot.services import media_storage
 
