@@ -3549,6 +3549,8 @@ def _miniapp_client_log_level(compact: dict[str, Any]) -> str:
     status = _miniapp_client_log_number(compact.get("status")) or 0
     if event in _MINIAPP_CLIENT_DEBUG_EVENTS:
         return "debug"
+    if event == "upload-file-complete":
+        return "info"
     if event in _MINIAPP_CLIENT_RESPONSE_EVENTS and 200 <= status < 400:
         return "info"
     return "warning"
@@ -3586,6 +3588,14 @@ async def miniapp_client_log(request: web.Request) -> web.Response:
                              if str(payload.get("upload_stage") or "") in {"read", "cleanup", "init", "chunk", "complete"} else ""),
             "error_code": _miniapp_client_log_text(payload.get("error_code"), 80),
             "file_kind": _miniapp_client_log_text(payload.get("file_kind"), 80),
+            # Only stable slot keys and safe exception class names survive into logs.
+            # Never serialize uploaded files, arbitrary server URLs or client exceptions.
+            "diagnostic_context": (str(payload.get("diagnostic_context") or "")
+                if re.fullmatch(r"repeat-video:(?:image|video)-[0-9]{1,2}", str(payload.get("diagnostic_context") or ""))
+                else ""),
+            "error_name": (str(payload.get("error_name") or "")
+                if re.fullmatch(r"[A-Za-z][A-Za-z0-9]{0,63}", str(payload.get("error_name") or ""))
+                else ""),
             "file_name": _miniapp_client_log_text(payload.get("file_name"), 200),
             "file_type": _miniapp_client_log_text(payload.get("file_type"), 120),
             "file_size": _miniapp_client_log_number(payload.get("file_size")),
