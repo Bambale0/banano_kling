@@ -3,6 +3,7 @@ import {
   importWan3PrimeReference,
   quoteWan3Prime,
   uploadWan3PrimeReference,
+  prepareWan3Image,
   WAN3_PRIME_MEDIA_TIMEOUT_MS,
 } from '../wan3-prime-api'
 
@@ -29,6 +30,83 @@ function jsonResponse(payload: unknown, status = 200) {
     text: async () => JSON.stringify(payload),
   } as Response
 }
+
+test('photo picker falls back to Blob read when the native FileReader cannot start', async () => {
+  const file = new File(['portrait'], 'IMG_3432.png', { type: 'image/png' })
+  const bytes = new Uint8Array(8).buffer
+  const fallback = jest.fn().mockResolvedValue(bytes)
+  Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: fallback })
+  const originalReader = global.FileReader
+  Object.defineProperty(global, 'FileReader', {
+    configurable: true, writable: true,
+    value: class BrokenPickerReader { constructor() { throw new Error('Native picker FileReader unavailable') } },
+  })
+  try {
+    const prepared = await prepareWan3Image(file)
+    expect(prepared).not.toBe(file)
+    expect(prepared.name).toBe('IMG_3432.png')
+    expect(prepared.size).toBe(file.size)
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(global, 'FileReader', { configurable: true, writable: true, value: originalReader })
+  }
+})
+
+test('photo picker retries a truncated FileReader result through Blob.arrayBuffer', async () => {
+  const file = new File(['portrait'], 'IMG_3432.png', { type: 'image/png' })
+  const fallback = jest.fn().mockResolvedValue(new Uint8Array(8).buffer)
+  Object.defineProperty(file, 'arrayBuffer', { configurable: true, value: fallback })
+  const partial = jest.spyOn(FileReader.prototype, 'readAsArrayBuffer').mockImplementation(function (this: FileReader) {
+    Object.defineProperty(this, 'result', { configurable: true, value: new ArrayBuffer(1) })
+    this.onload?.(new ProgressEvent('load') as ProgressEvent<FileReader>)
+  })
+  try {
+    const prepared = await prepareWan3Image(file)
+    expect(prepared.size).toBe(file.size)
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally { partial.mockRestore() }
+})
+
+test('unreadable picker photo raises an actionable read error instead of a generic upload error', async () => {
+  const file = new File(['portrait'], 'IMG_3432.png', { type: 'image/png' })
+  Object.defineProperty(file, 'arrayBuffer', { value: jest.fn().mockRejectedValue(new Error('picker denied access')) })
+  const originalReader = global.FileReader
+  Object.defineProperty(global, 'FileReader', {
+    configurable: true, writable: true,
+    value: class BrokenPickerReader { constructor() { throw new Error('native reader denied access') } },
+  })
+  try {
+    await expect(prepareWan3Image(file)).rejects.toMatchObject({ name: 'Wan3ImageReadError' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(global, 'FileReader', { configurable: true, writable: true, value: originalReader })
+  }
+})
+
+test('aborting the Blob fallback ignores late picker bytes and does not upload', async () => {
+  const file = new File(['portrait'], 'IMG_3432.png', { type: 'image/png' })
+  let resolveRead!: (bytes: ArrayBuffer) => void
+  Object.defineProperty(file, 'arrayBuffer', { value: () => new Promise<ArrayBuffer>(resolve => { resolveRead = resolve }) })
+  const originalReader = global.FileReader
+  Object.defineProperty(global, 'FileReader', {
+    configurable: true, writable: true,
+    value: class BrokenPickerReader { constructor() { throw new Error('native reader failed') } },
+  })
+  try {
+    const controller = new AbortController()
+    const operation = prepareWan3Image(file, controller.signal)
+    const rejected = expect(operation).rejects.toMatchObject({ name: 'AbortError' })
+    controller.abort()
+    await rejected
+    resolveRead(new Uint8Array(8).buffer)
+    await Promise.resolve()
+    expect(fetchMock).not.toHaveBeenCalled()
+  } finally {
+    Object.defineProperty(global, 'FileReader', { configurable: true, writable: true, value: originalReader })
+  }
+})
 
 test('quotes through the dedicated Wan endpoint with init data and complete recipe', async () => {
   fetchMock.mockResolvedValueOnce(jsonResponse({
