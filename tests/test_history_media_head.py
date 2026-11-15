@@ -40,8 +40,9 @@ def test_history_s3_head_is_read_only_and_distinguishes_failures(monkeypatch, tm
     monkeypatch.setattr(media_storage, "_forget_missing", lambda settings, key: None)
 
     class Client:
-        error = None
-        calls = []
+        def __init__(self):
+            self.error = None
+            self.calls = []
 
         def head_object(self, **kwargs):
             self.calls.append(kwargs)
