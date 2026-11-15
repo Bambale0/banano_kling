@@ -2202,11 +2202,21 @@ async def _fetch_recent_tasks(
         )
         rows = await cursor.fetchall()
 
+    # Reading S3 media can take seconds and uses a synchronous SDK. Resolve
+    # owner-visible history media off the aiohttp/Telegram event loop, with a
+    # bounded fanout and stable input/output ordering. DB rows are snapshotted
+    # before passing to worker threads; financial and privacy policy are unchanged.
+    media_limiter = asyncio.Semaphore(4)
+
+    async def resolve_media(row_data: dict[str, Any]) -> list[str]:
+        async with media_limiter:
+            return await asyncio.to_thread(_public_result_urls, row_data)
+
+    resolved_media = await asyncio.gather(*(resolve_media(dict(row)) for row in rows))
     tasks: list[dict[str, Any]] = []
-    for row in rows:
+    for row, result_urls in zip(rows, resolved_media):
         task_type = row["type"] or "image"
         model = row["model"] or ""
-        result_urls = _public_result_urls(dict(row))
         layer_metadata = {}
         if model == "seedream_55_layers":
             try:
