@@ -210,7 +210,9 @@ compose() { return 1; }
             'VK_RELEASE_ROOT="${VK_WEB_ROOT}/releases"',
             'printf \'%s\\n\' "$EXPECTED_SHA" > "$vk_revision_file"',
             'mv -T -- "$vk_current_link" "${VK_WEB_ROOT}/current"',
-            '[[ "$vk_live_revision" == "$EXPECTED_SHA" ]]',
+            'vk_mode="$(bash "${PROJECT_DIR}/scripts/verify_vk_miniapp_mode.sh"',
+            'if [[ "$vk_mode" == enabled && "$VK_ISOLATED" == 0 ]]; then',
+            'VK_DISABLED',
             '"${VK_BASE_URL}/?revision=${EXPECTED_SHA}"',
         ):
             self.assertIn(check, text)

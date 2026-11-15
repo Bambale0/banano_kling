@@ -169,7 +169,22 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 # Increase DEPLOY_MIN_FREE_BYTES for larger builds; retained history is not pruned.
 require_disk_space "$PROJECT_DIR"
 require_disk_space "$BACKUP_ROOT"
-require_disk_space "$VK_RELEASE_ROOT"
+# VK can intentionally be shut off (HTTP 410) after the #451 rollback.
+# Do not prepare its storage/build while production is isolated.
+VK_BASE_URL="https://${VK_FRONTEND_DOMAIN}"
+# An enabled host running a *previous* release will fail exact-SHA probing;
+# the preflight therefore uses the vhost 410 check only, not release revision.
+VK_ISOLATED=0
+vk_revision_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/revision.txt")"
+vk_index_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/")"
+if [[ "$vk_revision_code" == 410 && "$vk_index_code" == 410 ]]; then
+  VK_ISOLATED=1
+elif [[ "$vk_revision_code" != 200 || "$vk_index_code" != 200 ]]; then
+  die "VK host preflight inconsistent revision=$vk_revision_code root=$vk_index_code"
+fi
+if [[ "$VK_ISOLATED" == 0 ]]; then
+  require_disk_space "$VK_RELEASE_ROOT"
+fi
 
 log "Building exact commit ${EXPECTED_SHA} on $(hostname)"
 cd "$FRONTEND_DIR"
@@ -199,26 +214,32 @@ npm run build
 install -d -m 0700 "$build_work/telegram"
 rsync -a "${OUT_DIR}/" "$build_work/telegram/"
 
-rm -rf .next out
-npm run build:vk
-[[ -s "${OUT_DIR}/index.html" ]] || die "VK static export did not create out/index.html"
-[[ -d "${OUT_DIR}/_next/static" ]] || die "VK static export is missing _next/static"
-grep -q '/_next/static/' "${OUT_DIR}/index.html" || die "VK export has no root static assets"
-if grep -q '/mini-app/_next/static/' "${OUT_DIR}/index.html"; then
-  die "VK export contains Telegram-prefixed assets"
+if [[ "$VK_ISOLATED" == 0 ]]; then
+  rm -rf .next out
+  npm run build:vk
+  [[ -s "${OUT_DIR}/index.html" ]] || die "VK static export did not create out/index.html"
+  [[ -d "${OUT_DIR}/_next/static" ]] || die "VK static export is missing _next/static"
+  grep -q '/_next/static/' "${OUT_DIR}/index.html" || die "VK export has no root static assets"
+  if grep -q '/mini-app/_next/static/' "${OUT_DIR}/index.html"; then
+    die "VK export contains Telegram-prefixed assets"
+  fi
+  install -d -m 0700 "$build_work/vk"
+  rsync -a "${OUT_DIR}/" "$build_work/vk/"
 fi
-install -d -m 0700 "$build_work/vk"
-rsync -a "${OUT_DIR}/" "$build_work/vk/"
 
 install -d -m 0755 "$MINIAPP_ROOT"
 install -d -m 0700 "$BACKUP_ROOT"
-install -d -m 0755 "$VK_RELEASE_ROOT"
+if [[ "$VK_ISOLATED" == 0 ]]; then
+  install -d -m 0755 "$VK_RELEASE_ROOT"
+fi
 
-# The VK root SPA must not answer saved /uploads/ media requests with HTML.
-# Derive the upstream from its existing API proxy and preserve the vhost.
-python3 "${PROJECT_DIR}/scripts/configure_vk_media_route.py" \
-  --site "/etc/nginx/sites-enabled/${VK_FRONTEND_DOMAIN}.conf" \
-  --snippet "/etc/nginx/snippets/banano-vk-media.conf"
+if [[ "$VK_ISOLATED" == 0 ]]; then
+  # The VK root SPA must not answer saved /uploads/ media requests with HTML.
+  # Derive the upstream from its existing API proxy and preserve the vhost.
+  python3 "${PROJECT_DIR}/scripts/configure_vk_media_route.py" \
+    --site "/etc/nginx/sites-enabled/${VK_FRONTEND_DOMAIN}.conf" \
+    --snippet "/etc/nginx/snippets/banano-vk-media.conf"
+fi
 
 if [[ -f "${MINIAPP_ROOT}/index.html" ]]; then
   stamp="$(date '+%Y%m%d-%H%M%S')"
@@ -243,35 +264,37 @@ chmod 0644 "$revision_file"
 mv -f -- "$revision_file" "${MINIAPP_ROOT}/revision.txt"
 chown -R root:root "$WEB_ROOT"
 
-vk_release_name="$EXPECTED_SHA"
-vk_release_dir="${VK_RELEASE_ROOT}/${vk_release_name}"
-if [[ -e "$vk_release_dir" || -L "$vk_release_dir" ]]; then
-  vk_release_name="${EXPECTED_SHA}-$(date '+%Y%m%d-%H%M%S')-$$"
+if [[ "$VK_ISOLATED" == 0 ]]; then
+  vk_release_name="$EXPECTED_SHA"
   vk_release_dir="${VK_RELEASE_ROOT}/${vk_release_name}"
-fi
-vk_stage="$(mktemp -d "${VK_RELEASE_ROOT}/.${vk_release_name}.staging.XXXXXX")"
-log "Publishing VK export to ${vk_release_dir}"
-rsync -a --chmod=D755,F644 "$build_work/vk/" "$vk_stage/"
-# Existing VK WebViews may still hold HTML from a previous build. Preserve its
-# hashed JS/CSS dependencies at the same public URLs BEFORE atomic switch.
-# Retain files only (no HTML/user data), and abort on immutable path collisions.
-bash "${PROJECT_DIR}/scripts/retain_vk_immutable_assets.sh" \
-  "${VK_WEB_ROOT}/current/_next/static" "${vk_stage}/_next/static"
-vk_revision_file="$(mktemp "$vk_stage/.revision-XXXXXX")"
-printf '%s\n' "$EXPECTED_SHA" > "$vk_revision_file"
-chmod 0644 "$vk_revision_file"
-mv -f -- "$vk_revision_file" "$vk_stage/revision.txt"
-chown -R root:root "$vk_stage"
-chmod 0755 "$vk_stage"
-mv -T -- "$vk_stage" "$vk_release_dir"
-vk_stage=""
+  if [[ -e "$vk_release_dir" || -L "$vk_release_dir" ]]; then
+    vk_release_name="${EXPECTED_SHA}-$(date '+%Y%m%d-%H%M%S')-$$"
+    vk_release_dir="${VK_RELEASE_ROOT}/${vk_release_name}"
+  fi
+  vk_stage="$(mktemp -d "${VK_RELEASE_ROOT}/.${vk_release_name}.staging.XXXXXX")"
+  log "Publishing VK export to ${vk_release_dir}"
+  rsync -a --chmod=D755,F644 "$build_work/vk/" "$vk_stage/"
+  # Existing VK WebViews may still hold HTML from a previous build. Preserve its
+  # hashed JS/CSS dependencies at the same public URLs BEFORE atomic switch.
+  # Retain files only (no HTML/user data), and abort on immutable path collisions.
+  bash "${PROJECT_DIR}/scripts/retain_vk_immutable_assets.sh" \
+    "${VK_WEB_ROOT}/current/_next/static" "${vk_stage}/_next/static"
+  vk_revision_file="$(mktemp "$vk_stage/.revision-XXXXXX")"
+  printf '%s\n' "$EXPECTED_SHA" > "$vk_revision_file"
+  chmod 0644 "$vk_revision_file"
+  mv -f -- "$vk_revision_file" "$vk_stage/revision.txt"
+  chown -R root:root "$vk_stage"
+  chmod 0755 "$vk_stage"
+  mv -T -- "$vk_stage" "$vk_release_dir"
+  vk_stage=""
 
-# Replace only the symlink. Existing releases remain available for rollback and
-# in-flight clients that still request their hashed assets.
-vk_current_link="${VK_WEB_ROOT}/.current-${EXPECTED_SHA}-$$"
-ln -s -- "$vk_release_dir" "$vk_current_link"
-mv -T -- "$vk_current_link" "${VK_WEB_ROOT}/current"
-vk_current_link=""
+  # Replace only the symlink. Existing releases remain available for rollback and
+  # in-flight clients that still request their hashed assets.
+  vk_current_link="${VK_WEB_ROOT}/.current-${EXPECTED_SHA}-$$"
+  ln -s -- "$vk_release_dir" "$vk_current_link"
+  mv -T -- "$vk_current_link" "${VK_WEB_ROOT}/current"
+  vk_current_link=""
+fi
 
 BASE_URL="https://${FRONTEND_DOMAIN}/mini-app"
 work="$(mktemp -d)"
@@ -297,29 +320,26 @@ while IFS= read -r asset; do
     "https://${FRONTEND_DOMAIN}${asset}?revision=${EXPECTED_SHA}" >/dev/null
 done < "$work/assets.txt"
 
-VK_BASE_URL="https://${VK_FRONTEND_DOMAIN}"
-vk_live_revision="$(
+vk_mode="$(bash "${PROJECT_DIR}/scripts/verify_vk_miniapp_mode.sh" "$VK_BASE_URL" "$EXPECTED_SHA")"
+if [[ "$vk_mode" == enabled && "$VK_ISOLATED" == 0 ]]; then
   curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
     -H 'Cache-Control: no-cache' \
-    "${VK_BASE_URL}/revision.txt?revision=${EXPECTED_SHA}"
-)"
-[[ "$vk_live_revision" == "$EXPECTED_SHA" ]] \
-  || die "VK live revision mismatch: expected=$EXPECTED_SHA actual=$vk_live_revision"
-
-curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
-  -H 'Cache-Control: no-cache' \
-  "${VK_BASE_URL}/?revision=${EXPECTED_SHA}" > "$work/vk-index.html"
-grep -q '/_next/static/' "$work/vk-index.html" || die "VK live HTML has no root static assets"
-if grep -q '/mini-app/_next/static/\|telegram-web-app.js' "$work/vk-index.html"; then
-  die "VK live HTML contains Telegram-only assets"
+    "${VK_BASE_URL}/?revision=${EXPECTED_SHA}" > "$work/vk-index.html"
+  grep -q '/_next/static/' "$work/vk-index.html" || die "VK live HTML has no root static assets"
+  if grep -q '/mini-app/_next/static/\|telegram-web-app.js' "$work/vk-index.html"; then
+    die "VK live HTML contains Telegram-only assets"
+  fi
+  grep -oE '/_next/static/[^" ]+\.js' "$work/vk-index.html" \
+    | sort -u > "$work/vk-assets.txt"
+  [[ -s "$work/vk-assets.txt" ]] || die "VK live HTML did not expose JavaScript assets"
+  while IFS= read -r asset; do
+    curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
+      "${VK_BASE_URL}${asset}?revision=${EXPECTED_SHA}" >/dev/null
+  done < "$work/vk-assets.txt"
+  log "VK_LIVE_OK ${VK_BASE_URL}/ revision=${EXPECTED_SHA}"
+elif [[ "$vk_mode" == disabled && "$VK_ISOLATED" == 1 ]]; then
+  log "VK_DISABLED ${VK_BASE_URL}/ http=410 (intentional isolation)"
+else
+  die "VK host state changed during deployment: preflight=${VK_ISOLATED} live=${vk_mode}"
 fi
-grep -oE '/_next/static/[^" ]+\.js' "$work/vk-index.html" \
-  | sort -u > "$work/vk-assets.txt"
-[[ -s "$work/vk-assets.txt" ]] || die "VK live HTML did not expose JavaScript assets"
-while IFS= read -r asset; do
-  curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
-    "${VK_BASE_URL}${asset}?revision=${EXPECTED_SHA}" >/dev/null
-done < "$work/vk-assets.txt"
-
 log "LIVE_OK ${BASE_URL}/ revision=${EXPECTED_SHA}"
-log "VK_LIVE_OK ${VK_BASE_URL}/ revision=${EXPECTED_SHA}"
