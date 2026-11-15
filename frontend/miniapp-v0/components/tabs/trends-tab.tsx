@@ -21,6 +21,7 @@ import { TrendRunnerDialog } from '@/components/trend-runner-dialog'
 import { trendCardDescription } from '@/lib/trend-card-description'
 import { TrendContentEditor } from '@/components/trend-content-editor'
 import { TrendShowcase } from '@/components/trend-showcase'
+import { DeferredVideoPreview } from '@/components/deferred-video-preview'
 import { TrendCategoryManager } from '@/components/trend-category-manager'
 import { adminShowcaseAction, fetchTrendCatalog, resolveGenjutsuCatalogPrices, ShowcaseApiError, type ShowcaseCategory } from '@/lib/trend-catalog-api'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -862,14 +863,13 @@ export function TrendsTab() {
                 <div className="relative bg-secondary/40">
                   {trend.preview_url ? mediaKind === 'video' ? (
                     <div className="relative w-full overflow-hidden bg-black">
-                      <video
+                      <DeferredVideoPreview
                         src={videoPreviewFrameUrl(trend.preview_url)}
                         poster={posterUrl || undefined}
                         muted
                         autoPlay
                         loop
                         playsInline
-                        preload="auto"
                         onLoadedMetadata={(event) => rememberVideoAspectRatio(trend.id, event.currentTarget)}
                         onLoadedData={() => {
                           setVideoCardFailed(trend.id, false)

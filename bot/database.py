@@ -7951,6 +7951,33 @@ def _generation_row_to_card(
     }
 
 
+async def _serialize_feed_cards_nonblocking(
+    rows: Iterable[dict[str, Any] | db_backend.Row],
+    *,
+    viewer_user_id: Optional[int] = None,
+    include_unavailable: bool = False,
+) -> list[dict[str, Any]]:
+    """Resolve public feed media with bounded worker threads, preserving order.
+
+    Generation rows are copied before thread handoff to avoid sharing DB-backed
+    objects across threads. Only the synchronous card/media work is offloaded;
+    all PostgreSQL operations stay on the caller's asyncio event loop.
+    """
+    limiter = asyncio.Semaphore(4)
+
+    async def one(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+        async with limiter:
+            return await asyncio.to_thread(
+                _generation_row_to_card,
+                row,
+                viewer_user_id=viewer_user_id,
+                include_unavailable=include_unavailable,
+            )
+
+    resolved = await asyncio.gather(*(one(dict(row)) for row in rows))
+    return [card for card in resolved if card is not None]
+
+
 async def get_feed_generations(
     *,
     limit: int = 0,
@@ -8035,12 +8062,13 @@ async def get_feed_generations(
     from .trend_task_privacy import recipe_privacy_rows
 
     rows = await recipe_privacy_rows(rows)
-    cards = [
-        card
-        for row in rows
-        if (card := _generation_row_to_card(row, viewer_user_id=viewer_user_id, include_unavailable=include_unavailable))
-    ]
-    return cards
+    # Card conversion may perform S3 HEAD/PUT or build a missing thumbnail.
+    # It is synchronous; do not block all aiohttp/Telegram updates on the event loop.
+    return await _serialize_feed_cards_nonblocking(
+        rows,
+        viewer_user_id=viewer_user_id,
+        include_unavailable=include_unavailable,
+    )
 
 
 async def get_user_feed_generations(
