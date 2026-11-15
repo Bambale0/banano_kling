@@ -449,8 +449,12 @@ jobs:
   publish_status:
     name: Publish CI commit status
     needs: [lint, test, miniapp_e2e, docker_image]
+    # Publish for same-repository PR heads as well as protected-branch pushes.
+    # The required status belongs to the actual PR head, not the synthetic merge SHA.
     if: >-
-      ${{ always() && github.event_name == 'push' }}
+      ${{ always() && (github.event_name == 'push' ||
+          (github.event_name == 'pull_request' &&
+           github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -461,6 +465,7 @@ jobs:
       - name: Publish tanya/ci status
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_RESULT: ${{ needs.test.result }}
           E2E_RESULT: ${{ needs.miniapp_e2e.result }}
@@ -479,7 +484,7 @@ jobs:
           fi
 
           gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
             -f state="$state" \
             -f context='tanya/ci' \
             -f description="$description" \
