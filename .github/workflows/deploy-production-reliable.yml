@@ -292,8 +292,14 @@ jobs:
           curl -fsS --max-time 20 https://tanyapi.chillcreative.ru/health >/dev/null
           live_frontend_revision="$(curl -fsS --max-time 20 "https://neuromixbot.com/mini-app/revision.txt?revision=${EXPECTED_SHA}")"
           [ "$live_frontend_revision" = "$EXPECTED_SHA" ]
-          live_vk_frontend_revision="$(curl -fsS --max-time 20 "https://vk.neuromixbot.com/revision.txt?revision=${EXPECTED_SHA}")"
-          [ "$live_vk_frontend_revision" = "$EXPECTED_SHA" ]
+          # VK #451 is intentionally disabled by its vhost (410); accept only
+          # a consistently isolated host or an exact-SHA live release.
+          vk_mode="$(bash scripts/verify_vk_miniapp_mode.sh https://vk.neuromixbot.com "$EXPECTED_SHA")"
+          case "$vk_mode" in
+            enabled) live_vk_frontend_revision="$EXPECTED_SHA" ;;
+            disabled) live_vk_frontend_revision="disabled:410" ;;
+            *) echo "Unexpected VK release mode: $vk_mode" >&2; exit 1 ;;
+          esac
 
           tribute_http="$(curl -sS --max-time 20 -o /tmp/tribute-probe.json -w '%{http_code}' \
             -X POST https://tanyapi.chillcreative.ru/tribute/webhook \
