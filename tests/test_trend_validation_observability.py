@@ -37,7 +37,8 @@ async def test_trend_rejection_logs_validation_stage_without_sensitive_input(
     monkeypatch.setattr(trend_api, "get_prompt_by_id", AsyncMock(return_value=None))
 
     class Request:
-        app = {}
+        def __init__(self):
+            self.app = {}
 
         async def json(self):
             return payload
