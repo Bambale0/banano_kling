@@ -236,6 +236,30 @@ def _resolve_local_upload_path(source: str) -> str | None:
         return None
 
 
+
+def local_upload_presence_without_download(source: str) -> bool | None:
+    """Return local/S3 object presence without downloading remote media.
+
+    Unknown means the remote check failed transiently; callers may retain the
+    already-authorized media URL instead of asserting that it was deleted.
+    """
+    candidate = _local_upload_candidate(source)
+    if not candidate:
+        return False
+    existing = _resolve_existing_upload_variant(candidate)
+    if existing and os.path.isfile(existing) and not os.path.islink(existing):
+        return True
+    relative = os.path.relpath(candidate, os.path.join("static", "uploads"))
+    if relative == ".." or relative.startswith(".." + os.sep):
+        return False
+    from bot.services.media_storage import upload_presence_without_download
+
+    try:
+        return upload_presence_without_download(relative.replace(os.sep, "/"))
+    except (ValueError, OSError):
+        return False
+
+
 def resolve_local_upload_path(source: str) -> str | None:
     """Return the local static upload path behind a public /uploads URL, if any."""
     return _resolve_local_upload_path(source)
