@@ -85,7 +85,7 @@ def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, 
     monkeypatch.setattr(media_storage, "_missing_cached", lambda settings, key: False)
     monkeypatch.setattr(media_storage, "_forget_missing", lambda settings, key: None)
     clock = iter([10.0, 10.31])
-    monkeypatch.setattr(media_storage.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(media_storage, "time", SimpleNamespace(monotonic=lambda: next(clock)))
 
     class Client:
         def head_object(self, **kwargs):
