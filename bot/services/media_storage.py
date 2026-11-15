@@ -579,14 +579,28 @@ def upload_presence_without_download(relative_path: str) -> bool | None:
     key = object_key(relative, settings)
     if _missing_cached(settings, key):
         return False
+    # Bound diagnostic volume; log only slow HEAD requests, never object keys
+    # or signed URLs. This measures SDK retries as well as network round trips.
+    started = time.monotonic()
+    outcome = "unknown"
     try:
         _s3_client(settings).head_object(Bucket=settings.bucket, Key=key)
+        outcome = "present"
     except Exception as exc:  # noqa: BLE001 - remote availability probe
         if _is_missing_object_error(exc):
+            outcome = "missing"
             _remember_missing(settings, key)
             return False
         logger.warning("History media HEAD inconclusive: error=%s", type(exc).__name__)
         return None
+    finally:
+        elapsed_ms = (time.monotonic() - started) * 1000
+        if elapsed_ms >= 200:
+            logger.warning(
+                "History media HEAD slow: duration_ms=%.1f result=%s",
+                elapsed_ms,
+                outcome,
+            )
     _forget_missing(settings, key)
     return True
 
