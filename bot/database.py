@@ -7616,9 +7616,18 @@ def _feed_result_urls(
     available: list[str] = []
     for url in _generation_result_urls(row):
         normalized = str(url or "").strip()
-        if normalized and normalized not in available and _is_feed_result_url_available(
-            row, normalized, hydrate_local_uploads=hydrate_local_uploads,
-        ):
+        if not normalized or normalized in available:
+            continue
+        # Keep the historical two-argument call contract for feed/publication
+        # integrations that wrap this validator.
+        is_available = (
+            _is_feed_result_url_available(row, normalized)
+            if hydrate_local_uploads
+            else _is_feed_result_url_available(
+                row, normalized, hydrate_local_uploads=False,
+            )
+        )
+        if is_available:
             available.append(normalized)
     return available
 
