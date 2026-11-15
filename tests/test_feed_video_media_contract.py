@@ -74,9 +74,14 @@ def test_feed_video_preview_uses_video_element_not_mp4_as_image():
         "export function FeedTab", 1
     )[0]
 
-    assert "<video" in component
+    deferred = Path("frontend/miniapp-v0/components/deferred-video-preview.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "<DeferredVideoPreview" in component
     assert "<img" not in component
-    assert 'preload="metadata"' in component
+    assert "<video" in deferred
+    assert "src={nearViewport ? src : undefined}" in deferred
+    assert "preload={nearViewport ? 'metadata' : 'none'}" in deferred
     assert "feedMediaUrl(previewItem.result_url)" in source
 
 
