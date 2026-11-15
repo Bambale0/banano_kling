@@ -7583,7 +7583,9 @@ def _is_feed_result_expired(row: db_backend.Row, url: str) -> bool:
     return now - timestamp > timedelta(hours=ttl_hours)
 
 
-def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
+def _is_feed_result_url_available(
+    row: db_backend.Row, url: str, *, hydrate_local_uploads: bool = True,
+) -> bool:
     candidate = str(url or "").strip()
     if not candidate.startswith(("http://", "https://")):
         return False
@@ -7591,10 +7593,15 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
     try:
         from bot.services.media_input_utils import (
             is_local_upload_source,
+            local_upload_presence_without_download,
             resolve_local_upload_path,
         )
 
         if is_local_upload_source(candidate):
+            if not hydrate_local_uploads:
+                # HEAD errors are inconclusive, not evidence of deletion.
+                presence = local_upload_presence_without_download(candidate)
+                return presence is not False
             return bool(resolve_local_upload_path(candidate))
     except Exception:
         logger.exception("Failed to validate local feed result availability")
@@ -7603,18 +7610,28 @@ def _is_feed_result_url_available(row: db_backend.Row, url: str) -> bool:
     return not _is_feed_result_expired(row, candidate)
 
 
-def _feed_result_urls(row: db_backend.Row) -> list[str]:
+def _feed_result_urls(
+    row: db_backend.Row, *, hydrate_local_uploads: bool = True,
+) -> list[str]:
     available: list[str] = []
     for url in _generation_result_urls(row):
         normalized = str(url or "").strip()
-        if normalized and normalized not in available and _is_feed_result_url_available(row, normalized):
+        if normalized and normalized not in available and _is_feed_result_url_available(
+            row, normalized, hydrate_local_uploads=hydrate_local_uploads,
+        ):
             available.append(normalized)
     return available
 
 
-def resolve_public_generation_result_urls(row: db_backend.Row | dict[str, Any]) -> list[str]:
-    """Resolve generation media through the same durability/TTL policy on every public surface."""
-    return _feed_result_urls(row)
+def resolve_public_generation_result_urls(
+    row: db_backend.Row | dict[str, Any], *, hydrate_local_uploads: bool = True,
+) -> list[str]:
+    """Resolve media under the shared TTL and availability policy.
+
+    History preview callers may disable local cache hydration; other public
+    surfaces keep the existing behavior.
+    """
+    return _feed_result_urls(row, hydrate_local_uploads=hydrate_local_uploads)
 
 
 def _reference_url_candidates(urls: Any) -> list[str]:
