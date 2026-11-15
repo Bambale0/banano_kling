@@ -60,7 +60,13 @@ async def test_recent_history_media_resolution_does_not_block_bot_event_loop(mon
         time.sleep(0.20)
         return []
 
-    monkeypatch.setattr(miniapp, "_public_result_urls", emulate_blocking_s3_reader)
+    # The recent-history path now calls the canonical resolver directly with
+    # hydrate_local_uploads=False; keep asserting it runs off the event loop.
+    monkeypatch.setattr(
+        miniapp,
+        "resolve_public_generation_result_urls",
+        lambda row, **kwargs: emulate_blocking_s3_reader(row),
+    )
     history = await miniapp._fetch_recent_tasks(owner.telegram_id, limit=1)
     await asyncio.sleep(0.01)
 
