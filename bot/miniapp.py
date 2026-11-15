@@ -2169,6 +2169,7 @@ class TaskHistoryCursorError(ValueError):
 async def _fetch_recent_tasks(
     telegram_id: int, limit: int = 8, *, before_task_id: str | None = None,
 ) -> list[dict[str, Any]]:
+    query_started = time.monotonic()
     async with db_backend.connect(DATABASE_PATH) as db:
         db.row_factory = db_backend.Row
         older = ""
@@ -2201,6 +2202,8 @@ async def _fetch_recent_tasks(
             tuple(params),
         )
         rows = await cursor.fetchall()
+    db_ms = (time.monotonic() - query_started) * 1000
+    media_started = time.monotonic()
 
     # Reading S3 media can take seconds and uses a synchronous SDK. Resolve
     # owner-visible history media off the aiohttp/Telegram event loop, with a
@@ -2213,6 +2216,7 @@ async def _fetch_recent_tasks(
             return await asyncio.to_thread(_public_result_urls, row_data)
 
     resolved_media = await asyncio.gather(*(resolve_media(dict(row)) for row in rows))
+    media_ms = (time.monotonic() - media_started) * 1000
     tasks: list[dict[str, Any]] = []
     for row, result_urls in zip(rows, resolved_media):
         task_type = row["type"] or "image"
@@ -2260,6 +2264,17 @@ async def _fetch_recent_tasks(
                 "feed_id": row["id"],
                 "cost": row["cost"] or 0,
             }
+        )
+    total_ms = (time.monotonic() - query_started) * 1000
+    if total_ms >= 1000:
+        logger.warning(
+            "Mini App recent_tasks slow: total_ms=%.1f db_ms=%.1f "
+            "media_ms=%.1f format_ms=%.1f count=%d",
+            total_ms,
+            db_ms,
+            media_ms,
+            max(0.0, total_ms - db_ms - media_ms),
+            len(rows),
         )
     return tasks
 
