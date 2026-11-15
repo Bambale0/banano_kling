@@ -7954,7 +7954,7 @@ def _generation_row_to_card(
 async def _serialize_feed_cards_nonblocking(
     rows: Iterable[dict[str, Any] | db_backend.Row],
     *,
-    viewer_user_id: Optional[int] = None,
+    viewer_user_id: int | None = None,
     include_unavailable: bool = False,
 ) -> list[dict[str, Any]]:
     """Resolve public feed media with bounded worker threads, preserving order.
@@ -7965,7 +7965,7 @@ async def _serialize_feed_cards_nonblocking(
     """
     limiter = asyncio.Semaphore(4)
 
-    async def one(row: dict[str, Any]) -> Optional[dict[str, Any]]:
+    async def one(row: dict[str, Any]) -> dict[str, Any] | None:
         async with limiter:
             return await asyncio.to_thread(
                 _generation_row_to_card,
