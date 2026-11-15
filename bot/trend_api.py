@@ -1214,19 +1214,23 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
     parsed: TrendRunRequest | None = None
     telegram_id: int | None = None
     quote_only = False
+    validation_stage = "parse_json"
     try:
         body = await request.json()
+        validation_stage = "parse_request"
         parsed = parse_trend_run_request(body)
         quote_only = body.get("pricing_quote_only") is True
 
         from bot import miniapp as miniapp_module
 
+        validation_stage = "authenticate"
         telegram_id, context = await miniapp_module._get_user_context(
             request.app,
             str(body.get("init_data") or ""),
             body.get("start_param_fallback"),
         )
         user = context["user"]
+        validation_stage = "resolve_trend"
         prompt = await get_prompt_by_id(
             parsed.trend_id,
             approved_public_only=True,
@@ -1434,10 +1438,11 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
     except TrendRunValidationError as error:
         code = error.code or "trend_validation_failed"
         logger.warning(
-            "Trend request rejected: trend_id=%s telegram_id=%s stage=%s code=%s",
+            "Trend request rejected: trend_id=%s telegram_id=%s stage=%s validation_stage=%s code=%s",
             parsed.trend_id if parsed else None,
             telegram_id,
             "quote" if quote_only else "launch",
+            validation_stage,
             code,
         )
         response = web.json_response(
