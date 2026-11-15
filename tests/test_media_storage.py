@@ -73,6 +73,7 @@ def configure_s3(monkeypatch, fake: FakeS3Client) -> None:
 
 def test_s3_missing_object_is_negative_cached_until_reupload(monkeypatch, tmp_path):
     from botocore.exceptions import ClientError
+
     from bot.services import media_storage
 
     class MissingClient(FakeS3Client):
@@ -104,6 +105,7 @@ def test_s3_missing_object_is_negative_cached_until_reupload(monkeypatch, tmp_pa
 
 def test_s3_upstream_server_error_is_not_negative_cached(monkeypatch, tmp_path):
     from botocore.exceptions import ClientError
+
     from bot.services import media_storage
 
     class UnavailableClient(FakeS3Client):
