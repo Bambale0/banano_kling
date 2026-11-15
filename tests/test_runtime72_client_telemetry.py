@@ -208,3 +208,36 @@ async def test_invalid_wan_diagnostic_identifiers_cannot_raise_or_leak(monkeypat
     assert captured[0]['upload_id'] == ''
     assert captured[0]['upload_stage'] == ''
     assert 'SECRET' not in json.dumps(captured)
+
+
+@pytest.mark.asyncio
+async def test_repeat_photo_slot_success_is_info_and_keeps_allowlisted_slot(monkeypatch):
+    infos, warnings = [], []
+    monkeypatch.setattr(miniapp.logger, "info", lambda _message, data: infos.append(data))
+    monkeypatch.setattr(miniapp.logger, "warning", lambda _message, data: warnings.append(data))
+    await miniapp.miniapp_client_log(ClientLogRequest({
+        "event": "upload-file-complete", "diagnostic_context": "repeat-video:image-1",
+        "file_size": 170282,
+    }))
+    assert warnings == []
+    assert len(infos) == 1
+    assert infos[0]["diagnostic_context"] == "repeat-video:image-1"
+
+
+@pytest.mark.asyncio
+async def test_repeat_photo_slot_failure_sanitizes_untrusted_diagnostics(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(miniapp.logger, "warning", lambda _message, data: warnings.append(data))
+    await miniapp.miniapp_client_log(ClientLogRequest({
+        "event": "upload-file-failed", "diagnostic_context": "repeat-video:image-1",
+        "error_name": "NetworkError", "file_size": 178222,
+    }))
+    await miniapp.miniapp_client_log(ClientLogRequest({
+        "event": "upload-file-failed", "diagnostic_context": "invalid-slot",
+        "error_name": "Bad error text", "file_size": 178222,
+    }))
+    assert len(warnings) == 2
+    assert warnings[0]["diagnostic_context"] == "repeat-video:image-1"
+    assert warnings[0]["error_name"] == "NetworkError"
+    assert warnings[1]["diagnostic_context"] == ""
+    assert warnings[1]["error_name"] == ""

@@ -33,6 +33,29 @@ test('image tiles select one option and custom upload replaces it with the serve
   expect(uploadFile).toHaveBeenCalledWith('image_reference', expect.any(File))
 })
 
+test('keeps a local preview visible while the second custom repeat image uploads', async () => {
+  let resolveUpload!: (value: { url: string }) => void
+  ;(uploadFile as jest.Mock).mockImplementation(() => new Promise(resolve => { resolveUpload = resolve }))
+  const originalCreate = URL.createObjectURL
+  const originalRevoke = URL.revokeObjectURL
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: jest.fn(() => 'blob:repeat-pending') })
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: jest.fn() })
+  try {
+    render(<Example />)
+    fireEvent.change(screen.getByLabelText('Свой вариант: Наряд девушки'), {
+      target: { files: [new File(['photo'], 'second.jpg', { type: 'image/jpeg' })] },
+    })
+    expect(screen.getByAltText('Загружаемый вариант')).toHaveAttribute('src', 'blob:repeat-pending')
+    expect(screen.getByRole('status')).toHaveTextContent('"outfit":""')
+    await act(async () => { resolveUpload({ url: 'https://example.test/second.jpg' }) })
+    await waitFor(() => expect(screen.getByAltText('Свой вариант')).toHaveAttribute('src', 'https://example.test/second.jpg'))
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:repeat-pending')
+  } finally {
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: originalCreate })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: originalRevoke })
+  }
+})
+
 test('failed uploads show an error and cannot leave a stale selected value', async () => {
   ;(uploadFile as jest.Mock).mockRejectedValue(new Error('Сбой загрузки'))
   render(<Example />)

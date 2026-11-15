@@ -498,3 +498,59 @@ describe('curated video choices still require a personal photo', () => {
     })))
   })
 })
+
+
+it('preserves both uploaded personal photos when the Seedance repeat has two outfit choices', async () => {
+  const onSubmit = jest.fn().mockResolvedValue(undefined)
+  const onUploadImageReference = jest.fn(async (file: File): Promise<UploadedFile> => ({
+    id: file.name, name: file.name, url: `https://example.test/refs/${file.name}`,
+    type: 'image', size: file.size,
+  }))
+  const makeChoice = (key: string, label: string) => ({
+    key, label, type: 'text' as const, required: true, allow_custom_image: true,
+    image_choices: [{ id: key + '-option', label: label + ' вариант',
+      image_url: `https://example.test/catalog/${key}.jpg` }],
+  })
+  const presetWithTwoPhotos: VideoPromptPreset = {
+    ...preset, sourceFeedGenId: 383875, prompt: '', promptHidden: true,
+    repeatReferenceSlots: {
+      version: 1, available: true, cost_multiplier: 1, pricing_quality: '720p',
+      duration_costs: { '5': 40, '10': 80 },
+      images: [
+        { index: 0, role: 'reference', binding: 'upload' },
+        { index: 1, role: 'reference', binding: 'upload' },
+        { index: 2, role: 'reference', binding: 'choice' },
+        { index: 3, role: 'reference', binding: 'choice' },
+      ], videos: [],
+    },
+    repeatUserFields: [
+      makeChoice('woman', 'Одежда на женщине'),
+      makeChoice('man', 'Одежда на мужчине'),
+    ],
+  }
+  const props = { models, promptPreset: presetWithTwoPhotos,
+    onSubmit, onUploadImageReference, credits: 100, isSubmitting: false }
+  const view = render(<VideoGeneratorForm {...props} savedImageReferences={[]} />)
+  for (const [i, filename] of ['first.jpg', 'second.jpg'].entries()) {
+    const group = screen.getByRole('group', { name: `Фото ${i + 1}` })
+    const input = within(group).getByText(/Нажмите или перетащите/).parentElement!
+      .querySelector('input[type=file]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['image'], filename, { type: 'image/jpeg' })] } })
+    await within(group).findByText(filename)
+    // Library updates after a successful upload must not reset the other slot.
+    view.rerender(<VideoGeneratorForm {...props} savedImageReferences={[{
+      id: 'new-library-item', name: filename, url: `https://example.test/refs/${filename}`,
+      type: 'image', size: 5,
+    }]} />)
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Одежда на женщине вариант' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Одежда на мужчине вариант' }))
+  expect(within(screen.getByRole('group', { name: 'Фото 1' })).getByText('first.jpg')).toBeInTheDocument()
+  expect(within(screen.getByRole('group', { name: 'Фото 2' })).getByText('second.jpg')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: /Запустить видео|Рассчитать точную стоимость|Подтвердить цену и запустить/i }))
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+    sourceFeedGenId: 383875,
+    references: ['https://example.test/refs/first.jpg', 'https://example.test/refs/second.jpg'],
+    repeatUserValues: { woman: 'woman-option', man: 'man-option' },
+  })))
+})
