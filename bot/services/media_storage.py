@@ -129,6 +129,62 @@ class S3Settings:
 _client_lock = threading.Lock()
 _cached_client = None
 _cached_settings: S3Settings | None = None
+_missing_lock = threading.Lock()
+_missing_until: dict[tuple[str, str, str], float] = {}
+_MAX_MISSING_ENTRIES = 4096
+
+
+def _missing_cache_ttl() -> int:
+    seconds = int(config.MEDIA_S3_MISSING_CACHE_TTL_SECONDS)
+    if not 0 <= seconds <= 600:
+        raise MediaStorageConfigurationError(
+            "MEDIA_S3_MISSING_CACHE_TTL_SECONDS must be between 0 and 600"
+        )
+    return seconds
+
+
+def _missing_key(settings: S3Settings, key: str) -> tuple[str, str, str]:
+    return settings.endpoint, settings.bucket, key
+
+
+def _missing_cached(settings: S3Settings, key: str) -> bool:
+    if not _missing_cache_ttl():
+        return False
+    identity = _missing_key(settings, key)
+    now = time.monotonic()
+    with _missing_lock:
+        expires = _missing_until.get(identity, 0.0)
+        if expires > now:
+            return True
+        _missing_until.pop(identity, None)
+    return False
+
+
+def _remember_missing(settings: S3Settings, key: str) -> None:
+    ttl = _missing_cache_ttl()
+    if not ttl:
+        return
+    with _missing_lock:
+        if len(_missing_until) >= _MAX_MISSING_ENTRIES:
+            _missing_until.pop(next(iter(_missing_until)))
+        _missing_until[_missing_key(settings, key)] = time.monotonic() + ttl
+
+
+def _forget_missing(settings: S3Settings, key: str) -> None:
+    with _missing_lock:
+        _missing_until.pop(_missing_key(settings, key), None)
+
+
+def _missing_response(exc: Exception) -> bool:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    error = response.get("Error") or {}
+    metadata = response.get("ResponseMetadata") or {}
+    return (
+        str(error.get("Code", "")) in {"404", "NoSuchKey", "NotFound"}
+        or metadata.get("HTTPStatusCode") == 404
+    )
 
 
 def _backend() -> str:
@@ -267,6 +323,8 @@ def reset_media_storage_for_tests() -> None:
     with _client_lock:
         _cached_client = None
         _cached_settings = None
+    with _missing_lock:
+        _missing_until.clear()
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -362,6 +420,7 @@ def persist_upload_bytes(
             len(payload),
         )
         raise
+    _forget_missing(settings, key)
     if settings.keep_local_cache:
         try:
             _atomic_write(local_upload_path(relative), payload)
@@ -430,6 +489,7 @@ def persist_upload_file(
             raise
     if file_sha256(source) != source_digest:
         raise OSError("Media source changed while verifying S3 content")
+    _forget_missing(settings, key)
     local_target = local_upload_path(relative)
     try:
         if source.resolve() == local_target.resolve():
@@ -464,6 +524,8 @@ def materialize_upload(relative_path: str) -> str | None:
 
     settings = S3Settings.from_config()
     key = object_key(relative, settings)
+    if _missing_cached(settings, key):
+        return None
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(
         f".{destination.name}.{os.getpid()}.{uuid4().hex}.tmp"
@@ -478,12 +540,20 @@ def materialize_upload(relative_path: str) -> str | None:
         _mark_materialized_cache(destination)
     except Exception as exc:  # noqa: BLE001 - download boundary
         temporary.unlink(missing_ok=True)
+        missing = _missing_response(exc)
+        if missing:
+            _remember_missing(settings, key)
+        error_response = getattr(exc, "response", None)
+        code = (
+            str((error_response.get("Error") or {}).get("Code", ""))
+            if isinstance(error_response, dict) else type(exc).__name__
+        )
         logger.warning(
-            "Media storage materialize failed: key=%s error=%s",
-            key,
-            type(exc).__name__,
+            "Media storage materialize failed: key=%s error=%s code=%s missing=%s",
+            key, type(exc).__name__, code, missing,
         )
         return None
+    _forget_missing(settings, key)
     logger.info(
         "Media storage materialized: key=%s bytes=%s duration_ms=%s",
         key,

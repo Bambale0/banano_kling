@@ -3350,3 +3350,11 @@ private references and browser-provided actor information fail closed.
 - **Verification:** 83/83 Wan frontend tests; TypeScript `tsc --noEmit`; ESLint for changed files; `git diff --check`; all pass.
 - **Rollout:** dedicated `fix/wan3-webview-picker-read-20261115` branch to PR targeting `tanyapi`, strict CI plus frontend image build, exact-SHA production deploy/revision check, Android Telegram WebView screenshot scenario retest.
 - **Limitations:** real user's device was not accessed, and screenshot alone cannot prove constructor/truncated read was its exact failure; follow `wan3-upload-error` telemetry after deploy.
+
+### 2026-11-15 — S3 missing-object negative cache
+- Baseline: tanyapi at acc6387c9e9379753252cffb6c73e55e094fbbb6.
+- Production evidence: repeated ClientError from S3 materialization; sampled missing keys returned HTTP 404 and had no local copy. Mini App history performs synchronous availability checks.
+- Scope: bound and configure a process-local 404-only negative cache (default 60s), discard it on successful uploads, preserve recovery after transient S3 failures; log S3 error codes safely.
+- Invariants: no changes to payment, stored URLs, media deletion, authorization, or permanent object retention; never cache HTTP 500/503.
+- Verification: first regression failed (missing config/behavior); then media storage and migration test suites both green (36 passed).
+- Rollout: feature branch to PR, tanyapi protected CI, exact-SHA deploy, measure S3 warnings and Mini App bootstrap p95. Remaining blocker: 404 objects must be restored from authentic sources.
