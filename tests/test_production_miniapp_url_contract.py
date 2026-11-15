@@ -39,4 +39,6 @@ def test_reliable_deploy_verifies_the_new_public_origin():
         encoding="utf-8"
     )
     assert "https://neuromixbot.com/mini-app/revision.txt" in workflow
-    assert "https://vk.neuromixbot.com/revision.txt" in workflow
+    assert "https://vk.neuromixbot.com" in workflow
+    assert "bash scripts/verify_vk_miniapp_mode.sh" in workflow
+    assert 'disabled) live_vk_frontend_revision="disabled:410"' in workflow
