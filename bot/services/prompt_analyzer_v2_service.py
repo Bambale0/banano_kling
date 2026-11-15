@@ -203,29 +203,34 @@ class PromptAnalyzerV2Service:
         if not openrouter_qwen38_service.enabled:
             raise RuntimeError("OPENROUTER_API_KEY is not configured")
 
-        if image_url:
-            vision_model = str(config.QWEN38_VISION_MODEL or "").strip()
-            raw_output = await openrouter_qwen38_service.analyze_image(
-                image_url=image_url,
-                system_prompt=SYSTEM_PROMPT,
-                user_instruction=user_instruction,
-                model=vision_model,
-            )
-        else:
-            raw_output = await openrouter_qwen38_service.analyze_text(
-                system_prompt=SYSTEM_PROMPT,
-                user_instruction=user_instruction,
-            )
-
         provider = (
             str(config.QWEN38_VISION_MODEL or "").strip()
             if image_url
             else openrouter_qwen38_service.model
         )
-        return _build_result(
-            _parse_json_object(raw_output),
-            provider=provider,
-        )
+        for attempt in range(2):
+            if image_url:
+                raw_output = await openrouter_qwen38_service.analyze_image(
+                    image_url=image_url,
+                    system_prompt=SYSTEM_PROMPT,
+                    user_instruction=user_instruction,
+                    model=provider,
+                )
+            else:
+                raw_output = await openrouter_qwen38_service.analyze_text(
+                    system_prompt=SYSTEM_PROMPT,
+                    user_instruction=user_instruction,
+                )
+            try:
+                return _build_result(_parse_json_object(raw_output), provider=provider)
+            except RuntimeError as exc:
+                if attempt:
+                    raise
+                logger.warning(
+                    "Qwen prompt analyzer returned invalid output; retrying once: %s",
+                    str(exc),
+                )
+        raise AssertionError("Unreachable Qwen retry state")
 
     async def _analyze_with_gpt55(
         self,
