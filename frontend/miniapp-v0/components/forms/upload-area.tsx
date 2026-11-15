@@ -16,6 +16,7 @@ interface UploadAreaProps {
   onUpload?: (file: File) => Promise<UploadedFile>
   libraryFiles?: UploadedFile[]
   libraryLabel?: string
+  diagnosticContext?: string
 }
 
 const MEDIA_MIME_BY_EXTENSION: Record<string, string> = {
@@ -68,6 +69,7 @@ export function UploadArea({
   onUpload,
   libraryFiles = [],
   libraryLabel = 'Сохранённые референсы',
+  diagnosticContext,
 }: UploadAreaProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const filesRef = useRef(files)
@@ -96,6 +98,7 @@ export function UploadArea({
         const file = normalizedBrowserFile(sourceFile)
         sendMiniAppClientLog('upload-file-selected', {
           accept,
+          ...(diagnosticContext ? { diagnostic_context: diagnosticContext } : {}),
           file_name: file.name,
           file_type: file.type,
           file_size: file.size,
@@ -105,6 +108,7 @@ export function UploadArea({
         if (!matchesAcceptedType(file, accept)) {
           sendMiniAppClientLog('upload-file-rejected', {
             accept,
+            ...(diagnosticContext ? { diagnostic_context: diagnosticContext } : {}),
             file_name: file.name,
             file_type: file.type,
             file_size: file.size,
@@ -149,7 +153,18 @@ export function UploadArea({
               : item
           )
           publishFiles(nextFiles)
+          sendMiniAppClientLog('upload-file-complete', {
+            accept,
+            ...(diagnosticContext ? { diagnostic_context: diagnosticContext } : {}),
+            file_size: file.size,
+          })
         } catch (error) {
+          sendMiniAppClientLog('upload-file-failed', {
+            accept,
+            ...(diagnosticContext ? { diagnostic_context: diagnosticContext } : {}),
+            file_size: file.size,
+            error_name: error instanceof Error ? error.name : 'UnknownError',
+          })
           publishFiles(filesRef.current.filter((item) => item.id !== pendingFile.id))
           setUploadError(
             error instanceof Error ? error.message : 'Не удалось загрузить файл'
@@ -161,7 +176,7 @@ export function UploadArea({
       batchActiveRef.current = false
       setBatchActive(false)
     }
-  }, [accept, maxFiles, onUpload, publishFiles])
+  }, [accept, diagnosticContext, maxFiles, onUpload, publishFiles])
 
   const handleDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault()

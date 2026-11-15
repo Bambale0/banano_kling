@@ -21,7 +21,15 @@ function ImageChoices({ field, value, onChange }: {
   changeRef.current = onChange
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+  const [pendingPreview, setPendingPreview] = useState('')
+  const pendingPreviewRef = useRef('')
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+      if (pendingPreviewRef.current) URL.revokeObjectURL(pendingPreviewRef.current)
+    }
+  }, [])
   const custom = value.startsWith('upload:') ? value.slice(7) : ''
   const tile = 'relative aspect-square min-w-0 overflow-hidden rounded-2xl border-2 bg-secondary/40 p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan disabled:opacity-50'
   return <>
@@ -34,9 +42,10 @@ function ImageChoices({ field, value, onChange }: {
           className="h-full w-full rounded-xl object-contain" />
       </button>)}
       {field.allow_custom_image ? <button type="button" aria-label={`Загрузить свой вариант: ${field.label}`}
-        aria-pressed={Boolean(custom)} disabled={busy} onClick={() => input.current?.click()}
-        className={`${tile} flex flex-col items-center justify-center gap-2 ${custom ? 'border-cyan' : 'border-border/60'}`}>
-        {custom ? <img src={normalizeMiniAppMediaUrl(custom)} alt="Свой вариант" className="absolute inset-0 h-full w-full object-contain" />
+        aria-pressed={Boolean(custom || pendingPreview)} disabled={busy} onClick={() => input.current?.click()}
+        className={`${tile} flex flex-col items-center justify-center gap-2 ${custom || pendingPreview ? 'border-cyan' : 'border-border/60'}`}>
+        {pendingPreview ? <img src={pendingPreview} alt="Загружаемый вариант" className="absolute inset-0 h-full w-full object-contain" />
+          : custom ? <img src={normalizeMiniAppMediaUrl(custom)} alt="Свой вариант" className="absolute inset-0 h-full w-full object-contain" />
           : <span aria-hidden="true" className="text-3xl text-muted-foreground">↑</span>}
         <span className="absolute inset-x-0 bottom-0 bg-background/90 px-1 py-2 text-center text-xs text-foreground">
           {busy ? 'Загрузка…' : 'Свой вариант'}
@@ -49,6 +58,12 @@ function ImageChoices({ field, value, onChange }: {
         event.target.value = ''
         if (!file || uploadLock.current) return
         uploadLock.current = true
+        // Keep the chosen file visible while the WebView transports its bytes.
+        // The server URL remains unset until upload succeeds, so submission is blocked.
+        let localPreview = ''
+        try { localPreview = URL.createObjectURL(file) } catch { /* Preview is optional. */ }
+        pendingPreviewRef.current = localPreview
+        setPendingPreview(localPreview)
         setBusy(true); setError(''); onChange('')
         try {
           const uploaded = await uploadFile('image_reference', file)
@@ -57,6 +72,11 @@ function ImageChoices({ field, value, onChange }: {
           if (alive.current) setError(personalizationError(cause, 'Не удалось загрузить изображение'))
         } finally {
           uploadLock.current = false
+          if (pendingPreviewRef.current === localPreview) {
+            pendingPreviewRef.current = ''
+            if (alive.current) setPendingPreview('')
+            if (localPreview) URL.revokeObjectURL(localPreview)
+          }
           if (alive.current) setBusy(false)
         }
       }} /> : null}
