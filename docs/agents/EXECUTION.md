@@ -3358,3 +3358,11 @@ private references and browser-provided actor information fail closed.
 - Invariants: no changes to payment, stored URLs, media deletion, authorization, or permanent object retention; never cache HTTP 500/503.
 - Verification: first regression failed (missing config/behavior); then media storage and migration test suites both green (36 passed).
 - Rollout: feature branch to PR, tanyapi protected CI, exact-SHA deploy, measure S3 warnings and Mini App bootstrap p95. Remaining blocker: 404 objects must be restored from authentic sources.
+
+### 2026-11-15 — Nonblocking Mini App history S3 resolution
+- Baseline: tanyapi production f0847ef2f80da46d0a1f6cbc387ceffe09b2c63e, S3 negative cache PR #528 already released.
+- Production evidence: 211 slow Mini App bootstraps in 45 minutes; total p50 4.0s/p95 10.2s. recent_tasks p95 4.2s, with synchronous S3 materialize through the canonical result resolver called directly on aiohttp event loop. One /health request timed out at 8s while next five completed in under 1ms.
+- Root cause for cross-request stall: synchronous SDK S3 GET inside async recent task serialization. The main SQL query was already indexed and measured approximately 0.17ms on sample.
+- Fix: after PostgreSQL fetch, snapshot each row to a plain dict, offload canonical media URL resolution via asyncio.to_thread with a per-request semaphore limiting concurrent S3 calls to four, await results in stable row order. No changes to stored URLs, prices, user privacy, payment, or S3 object mutations.
+- TDD: new test RED at ~200ms event-loop delay, GREEN with offload; focused history/media/RenderGrid/durability suites 77 passed; import sorting, bytecode and diff whitespace passed. Legacy Ruff issues in unrelated lines remain; changed-line CI must confirm.
+- Release: PR to tanyapi, mandatory CI, merge, exact-SHA production Docker health, Telegram Mini App bootstrap stage p95 and 404 warnings after deployment. Offloading prevents event-loop stalls but cannot restore absent original objects or guarantee low per-request latency under S3 outages.

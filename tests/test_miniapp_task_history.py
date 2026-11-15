@@ -40,6 +40,37 @@ async def seed_tasks(monkeypatch, count=19):
 
 
 @pytest.mark.asyncio
+async def test_recent_history_media_resolution_does_not_block_bot_event_loop(monkeypatch):
+    import asyncio
+    import threading
+
+    owner, _ = await seed_tasks(monkeypatch, count=1)
+    loop = asyncio.get_running_loop()
+    callback_delays: list[float] = []
+
+    def emulate_blocking_s3_reader(_row):
+        started = time.monotonic()
+        scheduled = threading.Timer(
+            0.02,
+            lambda: loop.call_soon_threadsafe(
+                lambda: callback_delays.append(time.monotonic() - started),
+            ),
+        )
+        scheduled.start()
+        time.sleep(0.20)
+        return []
+
+    monkeypatch.setattr(miniapp, "_public_result_urls", emulate_blocking_s3_reader)
+    history = await miniapp._fetch_recent_tasks(owner.telegram_id, limit=1)
+    await asyncio.sleep(0.01)
+
+    assert len(history) == 1
+    # A synchronous S3 GET used to block *all* other Telegram/HTTP updates.
+    # Its 20ms scheduled callback must run before the simulated 200ms GET ends.
+    assert callback_delays and callback_delays[0] < 0.11
+
+
+@pytest.mark.asyncio
 async def test_signed_history_reaches_every_video_beyond_eight_and_ignores_forged_owner(monkeypatch):
     owner, other = await seed_tasks(monkeypatch)
     app = web.Application()
