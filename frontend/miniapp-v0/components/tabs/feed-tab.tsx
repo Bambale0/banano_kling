@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useApp } from '@/lib/app-context'
+import { DeferredVideoPreview } from '@/components/deferred-video-preview'
 import { hydrateSeedance25IdentityPreset } from '@/lib/seedance25-repeat'
 import { openGenjutsu } from '@/lib/genjutsu-api'
 import type { FeedComment, FeedItem, ScenarioType, UploadedFile } from '@/lib/types'
@@ -173,11 +174,10 @@ function FeedVideoPreview({ src, aspectRatio, blurred, onError }: {
           {!loaded ? (
             <div className="absolute inset-0 animate-pulse bg-gradient-to-br from-secondary via-muted to-secondary/70" />
           ) : null}
-          <video
+          <DeferredVideoPreview
             src={videoPreviewFrameUrl(src)}
             muted
             playsInline
-            preload="metadata"
             onLoadedData={() => setLoaded(true)}
             onLoadedMetadata={() => setLoaded(true)}
             onError={onError}

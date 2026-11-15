@@ -10,7 +10,10 @@ import asyncio
 import logging
 import os
 import shutil
+import threading
+import time
 import uuid
+from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import urlparse
@@ -30,6 +33,57 @@ FEED_THUMB_MAX_BYTES = 200 * 1024
 FEED_THUMB_MIN_QUALITY = 35
 FEED_THUMB_MAX_QUALITY = 90
 FEED_THUMB_BACKGROUND = (255, 255, 255)
+FEED_THUMB_SUCCESS_CACHE_SECONDS = max(
+    0, int(os.getenv("FEED_THUMB_SUCCESS_CACHE_SECONDS", "90"))
+)
+FEED_THUMB_SUCCESS_CACHE_MAX = max(
+    32, int(os.getenv("FEED_THUMB_SUCCESS_CACHE_MAX", "2048"))
+)
+# Positive entries only. Missing/failed S3 checks are retried on the next
+# request, so later genuine uploads can immediately restore a thumbnail.
+_thumb_positive_cache: OrderedDict[
+    tuple[str, int, int], tuple[float, str]
+] = OrderedDict()
+_thumb_positive_cache_lock = threading.Lock()
+
+
+def _thumbnail_cache_key(url: str, path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (url, 0, 0)
+    return (url, stat.st_mtime_ns, stat.st_size)
+
+
+def _get_cached_thumbnail(key: tuple[str, int, int]) -> str | None:
+    from bot.services.media_storage import is_s3_enabled
+
+    if FEED_THUMB_SUCCESS_CACHE_SECONDS <= 0 or not is_s3_enabled():
+        return None
+    now = time.monotonic()
+    with _thumb_positive_cache_lock:
+        entry = _thumb_positive_cache.get(key)
+        if entry and entry[0] > now:
+            _thumb_positive_cache.move_to_end(key)
+            return entry[1]
+        if entry:
+            _thumb_positive_cache.pop(key, None)
+    return None
+
+
+def _remember_thumbnail(key: tuple[str, int, int], value: str | None) -> str | None:
+    from bot.services.media_storage import is_s3_enabled
+
+    if not value or FEED_THUMB_SUCCESS_CACHE_SECONDS <= 0 or not is_s3_enabled():
+        return value
+    with _thumb_positive_cache_lock:
+        _thumb_positive_cache[key] = (time.monotonic() + FEED_THUMB_SUCCESS_CACHE_SECONDS, value)
+        _thumb_positive_cache.move_to_end(key)
+        while len(_thumb_positive_cache) > FEED_THUMB_SUCCESS_CACHE_MAX:
+            _thumb_positive_cache.popitem(last=False)
+    return value
+
+
 
 
 async def download_to_local(url: str, max_size_bytes: int = FEED_MEDIA_MAX_BYTES) -> str | None:
@@ -202,28 +256,33 @@ def feed_thumbnail_url_for(url: str) -> str | None:
         return None
 
     jpg_thumb, legacy_webp_thumb = _thumbnail_paths(source)
-    for thumb in (jpg_thumb,):
-        if thumb.exists() and _thumbnail_is_usable(thumb):
-            from bot.services.media_storage import persist_upload_file
+    cache_key = _thumbnail_cache_key(url, jpg_thumb)
+    cached = _get_cached_thumbnail(cache_key)
+    if cached:
+        return cached
+    if jpg_thumb.exists() and _thumbnail_is_usable(jpg_thumb):
+        from bot.services.media_storage import persist_upload_file
 
-            return persist_upload_file(
-                f"feed/thumbs/{thumb.name}",
-                thumb,
-                content_type="image/jpeg",
-                cache_control="public, max-age=31536000, immutable",
-            )
+        result = persist_upload_file(
+            f"feed/thumbs/{jpg_thumb.name}",
+            jpg_thumb,
+            content_type="image/jpeg",
+            cache_control="public, max-age=31536000, immutable",
+        )
+        return _remember_thumbnail(cache_key, result)
     from bot.services.media_storage import public_upload_url, upload_exists
 
     thumb_relative = f"feed/thumbs/{jpg_thumb.name}"
     if upload_exists(thumb_relative):
-        return public_upload_url(thumb_relative)
+        return _remember_thumbnail(cache_key, public_upload_url(thumb_relative))
     if legacy_webp_thumb.exists():
         try:
             legacy_webp_thumb.unlink()
         except OSError:
             logger.warning("Feed thumbnail: failed to remove legacy thumbnail %s", legacy_webp_thumb)
             return None
-    return ensure_feed_thumbnail(url)
+    result = ensure_feed_thumbnail(url)
+    return _remember_thumbnail(_thumbnail_cache_key(url, jpg_thumb), result)
 
 
 def _encode_jpeg(image: Image.Image, quality: int) -> bytes:
@@ -326,7 +385,9 @@ def ensure_feed_thumbnail(url: str) -> str | None:
             return None
     legacy_webp_thumb.unlink(missing_ok=True)
 
-    tmp = jpg_thumb.with_suffix(".tmp.jpg")
+    # Multiple viewers can request the same uncached thumbnail concurrently.
+    # A unique staging file prevents one worker replacing another worker's temp.
+    tmp = jpg_thumb.with_name(f".{jpg_thumb.stem}.{uuid.uuid4().hex}.tmp.jpg")
     try:
         FEED_THUMB_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
         encoded, quality, size = _build_jpeg_thumbnail(source)
