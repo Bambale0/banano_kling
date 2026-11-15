@@ -1347,6 +1347,7 @@ export function VideoGeneratorForm({
                     <fieldset key={`${slotSession}-${slot.key}`} aria-label={label} className="min-w-0 space-y-2" disabled={isSubmitting}>
                       <legend className="text-sm font-medium">{label} · Ваш файл</legend>
                       <UploadArea files={repeatUploads[slot.key] || []}
+                        diagnosticContext={`repeat-video:${slot.key}`}
                         onFilesChange={(files) => {
                           if (slotSession !== repeatSession.current) return
                           setRepeatUploads((current) => ({ ...current, [slot.key]: files }))
