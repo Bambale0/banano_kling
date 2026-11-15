@@ -57,7 +57,8 @@ def test_history_s3_head_is_read_only_and_distinguishes_failures(monkeypatch, tm
     assert media_storage.upload_presence_without_download("result.jpg") is True
 
     class Missing(Exception):
-        response = {"Error": {"Code": "NoSuchKey"}}
+        def __init__(self):
+            self.response = {"Error": {"Code": "NoSuchKey"}}
 
     client.error = Missing()
     assert media_storage.upload_presence_without_download("missing.jpg") is False
