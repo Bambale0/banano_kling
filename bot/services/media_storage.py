@@ -563,6 +563,34 @@ def materialize_upload(relative_path: str) -> str | None:
     return str(destination)
 
 
+
+def upload_presence_without_download(relative_path: str) -> bool | None:
+    """Read-only existence check for history previews, never hydrate the cache.
+
+    None means a transient S3 error: do not falsely mark user media missing.
+    """
+    relative = _validate_relative_path(relative_path)
+    destination = local_upload_path(relative)
+    if destination.is_file() and not destination.is_symlink():
+        return True
+    if not is_s3_enabled():
+        return False
+    settings = S3Settings.from_config()
+    key = object_key(relative, settings)
+    if _missing_cached(settings, key):
+        return False
+    try:
+        _s3_client(settings).head_object(Bucket=settings.bucket, Key=key)
+    except Exception as exc:  # noqa: BLE001 - remote availability probe
+        if _is_missing_object_error(exc):
+            _remember_missing(settings, key)
+            return False
+        logger.warning("History media HEAD inconclusive: error=%s", type(exc).__name__)
+        return None
+    _forget_missing(settings, key)
+    return True
+
+
 def upload_exists(relative_path: str) -> bool:
     relative = _validate_relative_path(relative_path)
     if not is_s3_enabled():
