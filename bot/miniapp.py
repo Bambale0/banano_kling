@@ -2213,7 +2213,11 @@ async def _fetch_recent_tasks(
 
     async def resolve_media(row_data: dict[str, Any]) -> list[str]:
         async with media_limiter:
-            return await asyncio.to_thread(_public_result_urls, row_data)
+            return await asyncio.to_thread(
+                resolve_public_generation_result_urls,
+                row_data,
+                hydrate_local_uploads=False,
+            )
 
     resolved_media = await asyncio.gather(*(resolve_media(dict(row)) for row in rows))
     media_ms = (time.monotonic() - media_started) * 1000
