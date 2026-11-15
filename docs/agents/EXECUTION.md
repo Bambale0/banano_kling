@@ -3337,3 +3337,16 @@ private references and browser-provided actor information fail closed.
 - Implementation: Creator validation and aliases, admin editor, actor-resolved Telegram/Mini App quotes, per-viewer bootstrap, Telegram model picker, launch quote revalidation, persisted unit-price snapshot.
 - Tests: test_seedream55_creator_tariff initially failed for missing Creator model; 19 new tests green. Creator/Seedream/Admin regression suites 161 and 103 passing on matching source. CI and deploy pending.
 - Release: PR to tanyapi, mandatory checks, auto-merge, exact SHA production verification. No new prices applied to runtime data or wallets.
+
+
+### 2026-11-15 — WAN 3 reference photo picker / Telegram Mini App read fallback
+
+- **Baseline:** `tanyapi` `87988ddc4796886f62787337eb79fe57e21c63b4`. User screenshot: Wan repeat, `Фото 1` remains `0/1`, message `Выбранные фото: Не удалось загрузить файл. Повторите загрузку.`
+- **Evidence / scope:** in `wan3-prime-form.tsx`, `Выбранные фото` is shown only while preparing picker image bytes before upload; production `media_storage=s3` and HTTP `/health=200`. Two `wan3/upload/complete` HTTP 400s on 2026-11-15 03:36/03:40 UTC were separate, followed by successful JPEG conversion and `complete=200`. The exact failing device request could not be correlated from screenshot.
+- **Reproduction:** added two failing client regressions: native `FileReader` constructor failure when `Blob.arrayBuffer()` works; successful `FileReader.onload` with truncated `ArrayBuffer`. Both failed against the baseline, then passed after fix.
+- **Fix:** `snapshotPickedImage` now falls back to `Blob.arrayBuffer()` on constructor failures and truncated reads, verifies full `byteLength` before upload, keeps abort behavior. If both APIs fail, existing `Wan3ImageReadError` prompts a fresh picker selection instead of a generic error.
+- **Contracts:** no backend, provider, authentication, S3 key, pricing, config or database changes; snapshot still finishes before remote init, so no provider cost/quota consumed by unreadable local files.
+- **Additional test setup repair:** existing WebView test described Android but mocked Desktop Chrome, asserting JSON chunk request. Explicitly mock `Telegram-Android`; baseline error reproduced and corrected.
+- **Verification:** 83/83 Wan frontend tests; TypeScript `tsc --noEmit`; ESLint for changed files; `git diff --check`; all pass.
+- **Rollout:** dedicated `fix/wan3-webview-picker-read-20261115` branch to PR targeting `tanyapi`, strict CI plus frontend image build, exact-SHA production deploy/revision check, Android Telegram WebView screenshot scenario retest.
+- **Limitations:** real user's device was not accessed, and screenshot alone cannot prove constructor/truncated read was its exact failure; follow `wan3-upload-error` telemetry after deploy.

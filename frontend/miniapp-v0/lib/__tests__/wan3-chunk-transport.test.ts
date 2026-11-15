@@ -179,6 +179,7 @@ test('snapshots the picked image before awaiting a remote upload session', async
 })
 
 test('Telegram WebView recovers image bytes through Blob.arrayBuffer when FileReader fails', async () => {
+  jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Telegram-Android')
   const picked = new File(['0123456789'], 'picked.png', { type: 'image/png' })
   const arrayBuffer = jest.fn().mockResolvedValue(new Uint8Array([48, 49, 50, 51, 52, 53, 54, 55, 56, 57]).buffer)
   Object.defineProperty(picked, 'arrayBuffer', { value: arrayBuffer })

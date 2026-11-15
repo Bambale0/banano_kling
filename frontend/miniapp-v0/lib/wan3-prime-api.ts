@@ -362,20 +362,27 @@ const preparedImages = new WeakSet<File>()
 
 function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader()
+    let reader: FileReader | null = null
     let settled = false
     let fallbackStarted = false
     const cleanup = () => {
       signal.removeEventListener('abort', abort)
-      reader.onload = reader.onerror = reader.onabort = null
+      if (reader) reader.onload = reader.onerror = reader.onabort = null
     }
     const fail = () => {
       if (settled) return
       settled = true; cleanup(); reject(new Wan3ImageReadError())
     }
-    const accept = (bytes: unknown) => {
+    const accept = (bytes: unknown, fromReader: boolean) => {
       if (settled) return
-      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) { fail(); return }
+      if (!(bytes instanceof ArrayBuffer) || bytes.byteLength !== file.size) {
+        // Some Telegram WebViews report a successful FileReader load but return
+        // incomplete bytes. Try the independent Blob API before discarding the
+        // user's selected photo; never upload a truncated snapshot.
+        if (fromReader) tryBlobFallback()
+        else fail()
+        return
+      }
       try {
         const prepared = new File([bytes], file.name, { type: file.type, lastModified: file.lastModified })
         preparedImages.add(prepared)
@@ -385,32 +392,34 @@ function snapshotPickedImage(file: File, signal: AbortSignal): Promise<File> {
     const abort = () => {
       if (settled) return
       settled = true; cleanup()
-      try { reader.abort() } catch { /* Reader may already have failed. */ }
+      try { reader?.abort() } catch { /* Reader may already have failed. */ }
       reject(new DOMException('Aborted', 'AbortError'))
     }
     const tryBlobFallback = () => {
       if (settled || fallbackStarted) return
       if (signal.aborted) { abort(); return }
       fallbackStarted = true
-      // iOS Telegram/WebKit can reject FileReader for a picker-backed file
-      // even while the File's Blob API remains readable. Retry the *read*
-      // once, before any upload session or provider charge is created.
-      reader.onload = reader.onerror = reader.onabort = null
+      // Native picker-backed FileReader may throw at construction, fail while
+      // reading, or return a truncated result. Blob.arrayBuffer is independent.
+      if (reader) reader.onload = reader.onerror = reader.onabort = null
       if (typeof file.arrayBuffer !== 'function') { fail(); return }
       try {
         void file.arrayBuffer().then(
-          bytes => { if (signal.aborted) abort(); else accept(bytes) },
+          bytes => { if (signal.aborted) abort(); else accept(bytes, false) },
           () => fail(),
         )
       } catch { fail() }
     }
-    reader.onerror = tryBlobFallback
-    reader.onabort = () => { if (signal.aborted) abort(); else tryBlobFallback() }
-    reader.onload = () => accept(reader.result)
     signal.addEventListener('abort', abort, { once: true })
     if (signal.aborted) { abort(); return }
-    // Snapshot immediately after the native picker, not after an await.
-    try { reader.readAsArrayBuffer(file) } catch { tryBlobFallback() }
+    try {
+      reader = new FileReader()
+      reader.onerror = tryBlobFallback
+      reader.onabort = () => { if (signal.aborted) abort(); else tryBlobFallback() }
+      reader.onload = () => accept(reader?.result, true)
+      // Snapshot synchronously after the picker event, before the first await.
+      reader.readAsArrayBuffer(file)
+    } catch { tryBlobFallback() }
   })
 }
 
