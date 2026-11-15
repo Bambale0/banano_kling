@@ -1243,6 +1243,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 "error": "Откройте тренд в обновлённом редакторе Wan: он сохраняет все референсы и рассчитывает стоимость перед запуском.",
                 "retry_same_request": False}, status=409)
 
+        validation_stage = "reserve_request"
         if parsed.client_request_id and not quote_only:
             claim_context = (int(user.id), parsed.trend_id, parsed.client_request_id)
             claim = await reserve_trend_run_claim(
@@ -1277,6 +1278,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 )
             claim_reserved = True
 
+        validation_stage = "validate_recipe"
         raw_settings = prompt.get("generation_settings")
         settings = raw_settings if isinstance(raw_settings, Mapping) else {}
         template_assets: Sequence[Mapping[str, Any]] = ()
@@ -1331,6 +1333,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 len(template_assets),
             )
 
+        validation_stage = "validate_references"
         _preflight_trend_references(trend, miniapp_module)
 
         if trend.reference_contract == REFERENCE_CONTRACT and trend.model == "seedance_2":
@@ -1344,6 +1347,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             except TrendReferenceStorageError as exc:
                 raise TrendRunValidationError(str(exc)) from exc
 
+        validation_stage = "quote"
         if quote_only and trend.kind != "video":
             raise TrendRunValidationError("Точная видеокотировка доступна только для видео-тренда")
 
@@ -1379,6 +1383,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                         response_payload=_trend_response_payload(response),
                     )
                 return response
+            validation_stage = "dispatch"
             response = await _run_video_trend(
                 telegram_id=telegram_id,
                 user=user,
@@ -1400,6 +1405,7 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
                 ),
             )
         else:
+            validation_stage = "dispatch"
             response = await _run_image_trend(
                 request,
                 telegram_id=telegram_id,
