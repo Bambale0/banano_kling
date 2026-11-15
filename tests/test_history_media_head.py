@@ -70,3 +70,39 @@ def test_history_s3_head_is_read_only_and_distinguishes_failures(monkeypatch, tm
 def test_history_media_rejects_parent_traversal():
     with pytest.raises(ValueError):
         media_storage.upload_presence_without_download("../secret")
+
+
+@pytest.mark.parametrize("duration,slow", [(0.31, True), (0.01, False)])
+def test_slow_history_head_reports_duration_without_media_identity(monkeypatch, tmp_path, caplog, duration, slow):
+    import logging
+
+    monkeypatch.setattr(media_storage, "local_upload_path", lambda relative: tmp_path / relative)
+    monkeypatch.setattr(media_storage, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(
+        media_storage.S3Settings, "from_config",
+        classmethod(lambda cls: SimpleNamespace(bucket="private-bucket", endpoint="https://secret.test")),
+    )
+    monkeypatch.setattr(media_storage, "object_key", lambda relative, settings: relative)
+    monkeypatch.setattr(media_storage, "_missing_cached", lambda settings, key: False)
+    monkeypatch.setattr(media_storage, "_forget_missing", lambda settings, key: None)
+    clock = iter([10.0, 10.0 + duration])
+    monkeypatch.setattr(media_storage, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+
+    class Client:
+        def head_object(self, **kwargs):
+            return {"ContentLength": 42}
+
+        def download_file(self, *args, **kwargs):
+            raise AssertionError("must not download on history read")
+
+    monkeypatch.setattr(media_storage, "_s3_client", lambda settings: Client())
+    with caplog.at_level(logging.WARNING, logger=media_storage.__name__):
+        assert media_storage.upload_presence_without_download("private-object.jpg") is True
+
+    diagnostic = [record.getMessage() for record in caplog.records if "History media HEAD slow" in record.getMessage()]
+    assert len(diagnostic) == int(slow)
+    if slow:
+        assert "duration_ms=310.0 result=present" in diagnostic[0]
+        assert "private-object" not in diagnostic[0]
+        assert "private-bucket" not in diagnostic[0]
+        assert "secret.test" not in diagnostic[0]
