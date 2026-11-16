@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft, CalendarDays, ChevronDown, ChevronRight, Clock3,
   MapPin, Search, Sparkles, Star,
@@ -213,6 +213,14 @@ function dateFromPicker(value: string) {
   return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : ''
 }
 
+function countryLabel(code: string): string {
+  try {
+    return new Intl.DisplayNames(['ru'], { type: 'region' }).of(code) || code
+  } catch {
+    return code
+  }
+}
+
 function PlacePicker({
   prefix,
   onSelect,
@@ -223,59 +231,71 @@ function PlacePicker({
   const [city, setCity] = useState('')
   const [selected, setSelected] = useState<AstroPlace | null>(null)
   const [options, setOptions] = useState<AstroPlace[]>([])
+  const [activeIndex, setActiveIndex] = useState(0)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const searchVersion = useRef(0)
+  const listId = 'astro-places-' + prefix
 
-  async function findPlaces() {
+  // Search while typing, not after a separate button press. Cancel each stale query
+  // on edits, selection or unmount; an old response must never replace a new city.
+  useEffect(() => {
     const query = city.trim()
-    if (query.length < 2) {
-      setMessage('Введите хотя бы две буквы названия города.')
-      return
-    }
+    if (selected || query.length < 2) return
     const version = ++searchVersion.current
-    setOptions([])
-    setMessage('')
-    setBusy(true)
-    try {
-      const response = await fetch('/mini-app/api/astro/places', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ init_data: getInitData(), query }),
-      })
-      if (version !== searchVersion.current) return
-      if (response.status === 401 || response.status === 403) {
-        setMessage('Нет доступа к справочнику городов. Откройте приложение в Telegram.')
-        return
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      setBusy(true)
+      setMessage('')
+      try {
+        const response = await fetch('/mini-app/api/astro/places', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init_data: getInitData(), query }),
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted || version !== searchVersion.current) return
+        if (response.status === 401 || response.status === 403) {
+          setMessage('Нет доступа к справочнику городов. Откройте приложение в Telegram.')
+          return
+        }
+        const body = await response.json()
+        if (controller.signal.aborted || version !== searchVersion.current) return
+        if (!response.ok || !body.ok || !Array.isArray(body.results)) {
+          setMessage('Справочник городов недоступен. Можно указать часовой пояс вручную.')
+          return
+        }
+        const places = (body.results as AstroPlace[]).filter((item) =>
+          typeof item.place_id === 'number' && Number.isInteger(item.place_id)
+          && typeof item.name === 'string' && typeof item.timezone === 'string'
+          && typeof item.country_code === 'string'
+          && typeof item.latitude === 'number' && typeof item.longitude === 'number'
+        )
+        setOptions(places)
+        setActiveIndex(0)
+        if (!places.length) setMessage('Город не найден. Уточните название или страну.')
+      } catch {
+        if (!controller.signal.aborted && version === searchVersion.current) {
+          setMessage('Поиск временно недоступен. Укажите часовой пояс вручную.')
+        }
+      } finally {
+        if (!controller.signal.aborted && version === searchVersion.current) setBusy(false)
       }
-      const body = await response.json()
-      if (!response.ok || !body.ok || !Array.isArray(body.results)) {
-        setMessage('Справочник городов недоступен. Можно указать часовой пояс вручную.')
-        return
-      }
-      const places = (body.results as AstroPlace[]).filter((item) =>
-        typeof item.place_id === 'number' && Number.isInteger(item.place_id)
-        && typeof item.name === 'string' && typeof item.timezone === 'string'
-        && typeof item.country_code === 'string'
-        && typeof item.latitude === 'number' && typeof item.longitude === 'number'
-      )
-      setOptions(places)
-      if (!places.length) setMessage('Город не найден. Попробуйте другое название.')
-    } catch {
-      if (version === searchVersion.current) {
-        setMessage('Поиск временно недоступен. Введите часовой пояс вручную.')
-      }
-    } finally {
-      if (version === searchVersion.current) setBusy(false)
+    }, 350)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+      searchVersion.current += 1
     }
-  }
+  }, [city, selected])
 
   function choosePlace(place: AstroPlace) {
     searchVersion.current += 1
     setSelected(place)
-    setCity(place.name + ', ' + place.country_code)
+    setCity(place.name + ', ' + countryLabel(place.country_code))
     setOptions([])
-    setMessage('Выбрано из GeoNames: ' + place.name + ', ' + place.country_code)
+    setBusy(false)
+    setMessage('Выбран часовой пояс: ' + place.timezone)
     onSelect?.(place)
   }
 
@@ -286,7 +306,10 @@ function PlacePicker({
         <span className="astro-field-body">
           <span className="astro-field-label">Место рождения</span>
           <input aria-label={prefix + ': место рождения'} name={prefix + '-place'}
-            value={city} autoComplete="off" placeholder="Город, страна" maxLength={160}
+            role="combobox" aria-autocomplete="list" aria-expanded={options.length > 0}
+            aria-controls={listId}
+            aria-activedescendant={options.length > 0 ? listId + '-' + options[activeIndex].place_id : undefined}
+            value={city} autoComplete="off" placeholder="Начните вводить город" maxLength={160}
             onChange={(event) => {
               searchVersion.current += 1
               setCity(event.target.value)
@@ -295,29 +318,45 @@ function PlacePicker({
               setMessage('')
               setBusy(false)
               onSelect?.(null)
+            }}
+            onKeyDown={(event) => {
+              if (!options.length) return
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setActiveIndex((index) => (index + 1) % options.length)
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setActiveIndex((index) => (index + options.length - 1) % options.length)
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                choosePlace(options[activeIndex])
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setOptions([])
+              }
             }} />
         </span>
         <Search className="astro-field-trailing" aria-hidden="true" />
       </label>
       <input type="hidden" name={prefix + '-place-id'} value={selected?.place_id ?? ''} />
-      <button type="button" className="astro-city-search" disabled={busy}
-        aria-label={prefix + ': найти город'} onClick={findPlaces}>
-        {busy ? 'Ищем город…' : 'Найти город в справочнике'}
-      </button>
+      {busy && <p className="astro-form-message" role="status">Подбираем город…</p>}
       {options.length > 0 && (
-        <div className="astro-city-results" role="group"
+        <div id={listId} className="astro-city-results" role="listbox"
           aria-label={prefix + ': результаты поиска городов'}>
-          {options.map((place) => (
-            <button key={place.place_id} type="button"
-              aria-label={'Выбрать ' + place.name + ', ' + place.country_code}
+          {options.map((place, index) => (
+            <button key={place.place_id} type="button" role="option"
+              id={listId + '-' + place.place_id}
+              aria-selected={index === activeIndex}
+              aria-label={'Выбрать ' + place.name + ', ' + countryLabel(place.country_code)}
               className="astro-city-option" onClick={() => choosePlace(place)}>
-              {place.name}, {place.country_code} · {place.timezone}
+              <span>{place.name}, {countryLabel(place.country_code)}</span>
+              <small>{place.timezone}</small>
             </button>
           ))}
         </div>
       )}
       {message && <p className="astro-form-message" role="status">{message}</p>}
-      <p className="astro-city-credit">Города: © GeoNames (CC BY 4.0)</p>
+      <p className="astro-city-credit">Города и страны: © GeoNames (CC BY 4.0)</p>
     </div>
   )
 }
