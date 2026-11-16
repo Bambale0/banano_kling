@@ -47,6 +47,9 @@ describe('Astro concept screens', () => {
         angles: { asc: 118.27, mc: 349.25 },
         cusps: [118.27, 130.03, 145.67, 169.25, 208.70, 262.69,
           298.27, 310.03, 325.67, 349.25, 28.70, 82.69],
+        houses: [{ house: 1, cusp_lon: 118.27, sign: 'Cancer', ruler: 'Moon' }],
+        body_houses: { Sun: 12, Mercury: 12 },
+        ruler_scheme: 'traditional',
         bodies: {
           Sun: { lon: 340.15, speed: 1, retro: false, sign: 'Pisces', deg_in_sign: 10.15 },
           Mercury: { lon: 342.15, speed: -1, retro: true, sign: 'Pisces', deg_in_sign: 12.15 },
@@ -78,6 +81,8 @@ describe('Astro concept screens', () => {
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('ASC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('MC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Дом 12')
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('управитель Луна')
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('в доме 12')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Рыбы 10.15°')
       const natalRequests = fetchMock.mock.calls.filter(([url]) => url.endsWith('/natal/full'))
       expect(natalRequests).toHaveLength(1)

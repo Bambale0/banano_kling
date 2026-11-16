@@ -67,6 +67,9 @@ interface FullNatalReport {
     house_system?: string
     angles: { asc: number; mc: number } | null
     cusps: number[] | null
+    houses?: Array<{ house: number; cusp_lon: number; sign: string; ruler: string }> | null
+    body_houses?: Record<string, number> | null
+    ruler_scheme?: 'traditional' | 'modern'
     bodies: Record<string, {
       lon: number; speed: number; retro: boolean; sign: string; deg_in_sign: number
     }>
@@ -952,7 +955,12 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               <h3>Дома Плацидуса</h3>
               <ol className="astro-lunar-days">
                 {fullNatalReport.chart.cusps.map((cusp, index) => (
-                  <li key={index}>Дом {index + 1}: {zodiacPosition(cusp)}</li>
+                  <li key={index}>
+                    Дом {index + 1}: {zodiacPosition(cusp)}
+                    {fullNatalReport.chart.houses?.[index]?.ruler &&
+                      <> · управитель {PLANET_RU[fullNatalReport.chart.houses[index].ruler] ||
+                        fullNatalReport.chart.houses[index].ruler}</>}
+                  </li>
                 ))}
               </ol>
             </>
@@ -965,6 +973,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               <li key={name}>
                 <strong>{PLANET_RU[name] || name}</strong>: {zodiacPosition(body.lon)}
                 {body.retro ? ' · ретроградная' : ''}
+                {Number.isInteger(fullNatalReport.chart.body_houses?.[name]) &&
+                  <> · в доме {fullNatalReport.chart.body_houses?.[name]}</>}
               </li>
             ))}
           </ul>

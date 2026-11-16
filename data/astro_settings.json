@@ -8,5 +8,8 @@
       "trine": 6,
       "opposition": 8
     }
+  },
+  "houses": {
+    "ruler_system": "traditional"
   }
 }

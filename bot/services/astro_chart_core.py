@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from bot.services.astro_houses import AstroHouseError, annotate_houses, overlay_houses
+
 CHART_SCHEMA = "astro.natal-facts.v1"
 SYNASTRY_SCHEMA = "astro.synastry-facts.v1"
 BODIES = (
@@ -267,6 +269,10 @@ def build_natal_facts(payload: Any, *, engine=None, kernel=None) -> dict:
     ephem = engine or _load_engine()
     asset = kernel or _kernel_path()
     chart = _assemble_birth(profile, engine=ephem, kernel=asset)
+    try:
+        chart.update(annotate_houses(chart))
+    except AstroHouseError as exc:
+        raise AstroChartUnavailable("House ruler/placement calculation failed") from exc
     return {
         "schema_version": CHART_SCHEMA,
         "calculation": "tropical-geocentric-placidus",
@@ -295,8 +301,13 @@ def build_synastry_facts(left: Any, right: Any, *, engine=None, kernel=None) -> 
     if not isinstance(aspects, list):
         raise AstroChartUnavailable("Synastry aspects missing")
     aspects = _native_json_data(aspects)
+    try:
+        house_overlays = overlay_houses(left_chart["chart"], right_chart["chart"])
+    except AstroHouseError as exc:
+        raise AstroChartUnavailable("Synastry house overlay calculation failed") from exc
     return {
         "schema_version": SYNASTRY_SCHEMA,
+        "house_overlays": house_overlays,
         "engine": {"name": "openephem", "version": "0.5.0", "kernel": "JPL-DE440"},
         "first": left_chart["chart"],
         "first_accuracy": left_chart["accuracy"],
@@ -515,8 +526,21 @@ def build_solar_return_facts(
         raise AstroChartUnavailable("Solar return instant does not match natal Sun")
     solar_chart.pop("warnings", None)  # never leak provider/host details
     solar_chart = _native_json_data(solar_chart)
+    try:
+        solar_chart.update(annotate_houses(solar_chart))
+    except AstroHouseError as exc:
+        raise AstroChartUnavailable("Solar house ruler/placement calculation failed") from exc
+    try:
+        raw_overlays = overlay_houses(natal, solar_chart)
+    except AstroHouseError as exc:
+        raise AstroChartUnavailable("Solar/natal house overlays unavailable") from exc
+    solar_overlays = {
+        "natal_in_solar": raw_overlays["first_in_second"],
+        "solar_in_natal": raw_overlays["second_in_first"],
+    }
     return {
         "schema_version": "astro.solar-facts.v1",
+        "house_overlays": solar_overlays,
         "target_year": target_year,
         "solar_return_at_utc": instant_utc.isoformat(),
         "solar_return_at_local": local.isoformat(),
