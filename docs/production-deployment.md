@@ -99,13 +99,20 @@ reviewable copy in `ops/nginx/neuromixbot.com.conf`.
 
 TLS uses the existing Let's Encrypt account, HTTP webroot `/var/www/html`,
 certificate `/etc/letsencrypt/live/neuromixbot.com/fullchain.pem` and a private key
-stored only on the server. Initial certificate expiry: 2027-01-20. `certbot.timer`
-is active; the certificate deploy hook validates and reloads Nginx after renewal.
+stored only on the server. The certificate deploy hook validates and reloads
+Nginx after renewal.
 Verify renewal with:
 
 ```bash
 certbot renew --cert-name neuromixbot.com --dry-run --run-deploy-hooks --no-random-sleep-on-renew
 ```
+
+`certbot.timer` is active, and the certificate is valid through 2027-01-20.
+On 2026-11-16, the shared default HTTPS vhost was pinned to TLS 1.2 after a
+client access incident. Nginx negotiates the protocol on the shared `:443`
+listener, so this affects all HTTPS domains on the server. The live setting is
+in `/etc/nginx/sites-available/aicrm-neyrony.conf`, not the per-domain vhost.
+Check both protocol negotiation and all affected domains before changing it.
 
 `MINI_APP_URL` remains an environment setting; bot/env.py respects an explicit
 value. Production deploy selects `PRODUCTION_MINI_APP_URL` (defaulting to the new
