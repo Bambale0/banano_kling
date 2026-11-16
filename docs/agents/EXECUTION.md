@@ -1,3 +1,13 @@
+## 2026-11-16 — Astro #544: two-person compatibility facts vertical slice (review stage)
+
+- Baseline: natal engine branch `feature/astro-natal-facts-20261116` / PR #548, itself dependent on lunar PR #546. Branch `feature/astro-compatibility-facts-20261116`. No direct production changes.
+- Scope: authenticated Telegram admin-only cross-chart major aspects based on two independently calculated natal charts. Each actor provides own date/time/IANA timezone and DST fold. No role trust from frontend, VK session disabled.
+- Contract: `astro.synastry.facts.v1` includes both source charts, real geometric interchart aspects/orbs and explicit `not_calculated` list (house overlays, angles, composite, relationship score). Unknown time marks aspects approximate, omits that person's Moon.
+- No birth profile storage, DB migration, pricing, provider prompts, charges or public enabled flag. No PII logged.
+- TDD checks: Sun A vs Sun B, 360° boundary, false-aspect rejection, independent chart/unknown time, backend revoke/invalid body, React success and 403.
+- Dependencies: #546 must merge before #548; #548 before this PR. Do not activate downstream auto-merge before ancestors settle; after all checks verify exact SHA/deploy and admin/non-admin WebView smoke. Rollback is PR revert, no data migration.
+- Still open in #544: Placidus and angles, all long-form natal/compatibility reports, karma, year/month/solar, full lunar aspects, job queue/history/pricing/public flag.
+
 ## 2026-11-16 — Astro #544: natal planetary facts vertical slice (review stage)
 
 - Baseline: #546 first lunar calculation PR head `f2d3b6cee470293ec935b5770d9fd9fed251709b`; task branch `feature/astro-natal-facts-20261116`, dependent on #546. Do not deploy or auto-merge before #546 into tanyapi.
