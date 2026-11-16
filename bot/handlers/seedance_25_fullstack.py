@@ -1529,9 +1529,9 @@ async def _retry_seedance25_delivery(
 
     if delivered:
         await _mark_seedance25_delivery(
-                task_id, "delivered",
-                message_id=request_data.get("_telegram_primary_message_id"),
-            )
+            task_id, "delivered",
+            message_id=request_data.get("_telegram_primary_message_id"),
+        )
         return True
 
     await _mark_seedance25_delivery(
