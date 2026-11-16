@@ -33,7 +33,10 @@ async def astro_lunar_calendar(request: web.Request) -> web.Response:
     request_id = uuid4().hex
     started = time.monotonic()
     try:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise AstroInputError("Некорректный JSON-запрос.") from exc
         if not isinstance(body, dict):
             raise AstroInputError("Ожидается JSON-объект.")
         init_data = body.get("init_data")
@@ -44,7 +47,10 @@ async def astro_lunar_calendar(request: web.Request) -> web.Response:
         # Import lazily: bot.miniapp registers this route and owns authentication.
         from bot.miniapp import _get_user_context
 
-        actor_id, ctx = await _get_user_context(request.app, init_data)
+        try:
+            actor_id, ctx = await _get_user_context(request.app, init_data)
+        except (PermissionError, ValueError):
+            raise web.HTTPUnauthorized() from None
         assert_admin_astro_access(
             init_data, actor_id, str(ctx.get("platform") or "telegram")
         )
@@ -78,12 +84,6 @@ async def astro_lunar_calendar(request: web.Request) -> web.Response:
             {"ok": False, "error": "engine_unavailable"},
             status=503, headers={"Cache-Control": "no-store"},
         )
-    except (PermissionError, ValueError) as exc:
-        logger.warning(
-            "astro_lunar_auth_rejected request_id=%s error=%s",
-            request_id, type(exc).__name__,
-        )
-        raise web.HTTPUnauthorized() from None
     except asyncio.TimeoutError:
         logger.error("astro_lunar_timeout request_id=%s", request_id)
         return web.json_response(
