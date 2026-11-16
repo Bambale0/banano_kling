@@ -458,6 +458,7 @@ async def test_wan_uncertain_retries_after_backoff_and_uploads_file(monkeypatch)
     try:
         assert await lifecycle.deliver_ready_once(bot) == 0
         async with database.db_backend.connect(database.DATABASE_PATH) as connection:
+            connection.row_factory = database.db_backend.Row
             pending = await (await connection.execute(
                 "SELECT delivery_status, next_attempt_at FROM wan3_prime_intents "
                 "WHERE internal_task_id = ?", (launched["task_id"],),
