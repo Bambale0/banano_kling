@@ -55,6 +55,8 @@ describe('Astro administrator-only preview', () => {
     const admin = { mode: 'live' as const, user: { isAdmin: true } }
     const lockedAdmin = { mode: 'locked' as const, user: { isAdmin: true } }
     expect(isAstroVisible(ordinary)).toBe(false)
+    expect(isAstroVisible(undefined)).toBe(false)
+    expect(effectiveTabId(ASTRO_TAB_ID, undefined)).toBe(0)
     expect(isAstroVisible(admin)).toBe(true)
     expect(isAstroVisible(lockedAdmin)).toBe(false)
     expect(effectiveTabId(ASTRO_TAB_ID, ordinary)).toBe(0)

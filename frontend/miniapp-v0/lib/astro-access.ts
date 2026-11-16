@@ -7,11 +7,11 @@ type AstroViewer = {
 }
 
 /** Trust the authenticated bootstrap role, never a browser flag or user-supplied id. */
-export function isAstroVisible(viewer: AstroViewer): boolean {
-  return viewer.mode === 'live' && viewer.user.isAdmin === true
+export function isAstroVisible(viewer?: AstroViewer | null): boolean {
+  return viewer?.mode === 'live' && viewer?.user?.isAdmin === true
 }
 
 /** Fails closed even if a stale tab id was restored or dispatched programmatically. */
-export function effectiveTabId(tabId: number, viewer: AstroViewer): number {
+export function effectiveTabId(tabId: number, viewer?: AstroViewer | null): number {
   return tabId === ASTRO_TAB_ID && !isAstroVisible(viewer) ? 0 : tabId
 }
