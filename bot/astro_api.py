@@ -10,7 +10,6 @@ from uuid import uuid4
 from aiohttp import web
 
 from bot.config import config
-from bot.services.astro_natal import build_natal_positions, resolve_birth_instant
 from bot.services.astro_lunar import (
     AstroEngineUnavailable,
     AstroInputError,
@@ -18,6 +17,7 @@ from bot.services.astro_lunar import (
     parse_period,
     resolve_timezone,
 )
+from bot.services.astro_natal import build_natal_positions, resolve_birth_instant
 
 logger = logging.getLogger(__name__)
 
