@@ -33,7 +33,7 @@ class FakeEngine:
 
     def resolve(self, **kwargs):
         self.calls.append(("resolve", kwargs))
-        return SimpleNamespace(warnings=list(self.warning))
+        return SimpleNamespace(warnings=list(self.warning), time_known=kwargs.get("time") is not None)
 
     def assemble(self, moment, **kwargs):
         self.calls.append(("assemble", kwargs))
@@ -42,8 +42,8 @@ class FakeEngine:
                 name: {"lon": i * 20.0 % 360.0, "speed": 0.0}
                 for i, name in enumerate(BODIES) if name != self.omit
             },
-            "angles": {"asc": 42.0, "mc": 17.0},
-            "cusps": None if self.omit_houses else [i * 30.0 for i in range(12)],
+            "angles": {"asc": 42.0, "mc": 17.0} if moment.time_known else None,
+            "cusps": None if self.omit_houses or not moment.time_known else [i * 30.0 for i in range(12)],
             "aspects": [{"a": "Sun", "b": "Moon", "aspect": "conjunction"}],
             "warnings": [],
         }
@@ -57,7 +57,7 @@ class FakeEngine:
     "delta",
     [
         {"date": "31.02.2000"}, {"date": "2000-02-29"},
-        {"date": "01.01.1800"}, {"time": ""}, {"time": "25:99"},
+        {"date": "01.01.1800"}, {"time": "unknown"}, {"time": "25:99"},
         {"latitude": float("nan")}, {"longitude": 181},
         {"latitude": True}, {"timezone": "Mars/Olympus"},
         {"timezone": "../etc/passwd"}, {"fold": 5}, {"fold": False},
@@ -218,5 +218,38 @@ def test_solar_return_rejects_incomplete_planetary_facts():
         build_solar_return_facts(
             PROFILE, target_year=2024,
             return_location={"latitude": float("nan"), "longitude": 0, "timezone": "UTC"},
+            engine=FakeEngine(), kernel="de440.bsp",
+        )
+
+
+@pytest.mark.parametrize("clock", ["", None])
+def test_unknown_birth_time_omits_moon_houses_and_natal_moon_aspects(clock):
+    payload = PROFILE | {"time": clock}
+    result = build_natal_facts(payload, engine=FakeEngine(), kernel="de440.bsp")
+    assert result["accuracy"] == {
+        "birth_time_known": False,
+        "moon_position_known": False,
+        "houses_available": False,
+    }
+    assert result["chart"]["cusps"] is None
+    assert result["chart"]["angles"] is None
+    assert "Moon" not in result["chart"]["bodies"]
+    assert all(
+        item.get("a") != "Moon" and item.get("b") != "Moon"
+        for item in result["chart"]["aspects"]
+    )
+
+
+def test_unknown_time_cannot_produce_precision_solar_return():
+    from bot.services.astro_chart_core import build_solar_return_facts
+
+    with pytest.raises(AstroChartInputError, match="время рождения"):
+        build_solar_return_facts(
+            PROFILE | {"time": ""},
+            target_year=2024,
+            return_location={
+                "latitude": 40.7128, "longitude": -74.006,
+                "timezone": "America/New_York",
+            },
             engine=FakeEngine(), kernel="de440.bsp",
         )
