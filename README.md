@@ -21,13 +21,15 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 
 | Компонент | Адрес / размещение | Назначение |
 | --- | --- | --- |
-| Telegram Mini App | `https://neuromixbot.com/mini-app/` | Nginx, статический Next.js export и reverse proxy к API |
+| Telegram Mini App | `https://tanyapp.chillcreative.ru/mini-app/` (точка входа с 2026-11-16) | Те же production-файлы Nginx и reverse proxy к API; `neuromixbot.com` сохранён как прежний адрес |
 | Backend API | `https://tanyapi.chillcreative.ru` | Telegram webhook, Mini App API, webhooks провайдеров и платежей |
 | Media origin | `https://neuromixbot.com/uploads/...` | Стабильный URL-контракт; backend поддерживает local storage и Selectel S3 |
 | Production checkout | `144.76.188.75`, `/root/tanya/banano_kling`, ветка `tanyapi` | Backend и актуальный frontend Nginx размещены на этом сервере |
 | Backend runtime | Docker container `banano-kling-bot` | Compose, localhost API `127.0.0.1:1888`; старый `banano-kling.service` отключён |
 
 Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Проверенный production baseline от 2026-10-22 хранит файлы в `static/uploads`; код также поддерживает Selectel S3 без изменения `/uploads/...` URL. Фактический backend хранилища нужно подтверждать по `/health`, runtime env и логам, а не предполагать по коду.
+
+При восстановлении 2026-11-16 с компьютера заявителя воспроизведён разрыв TLS для имени `neuromixbot.com`, при исправном TLS на сервере и доступном альтернативном имени на том же IP. В runtime изменены `MINI_APP_URL`, `STATIC_BASE_URL`, `MEDIA_S3_PUBLIC_BASE_URL` на существующий `tanyapp.chillcreative.ru`; DNS и сертификаты не менялись. Оба frontend-vhost используют один каталог, поэтому обычный exact-SHA deploy обновляет оба адреса. Исторические `/uploads/` в ответах API приводятся к текущему origin приложения. Старые кнопки с записанным URL и Main Mini App в BotFather требуют отдельной проверки: изменение `MINI_APP_URL` обновляет вновь сформированные кнопки, но не переписывает ранее отправленные сообщения или настройки BotFather. Подробности и результаты проверок: [журнал восстановления](docs/agents/EXECUTION/telegram-domain-recovery-20261116.md).
 
 ## Основные возможности
 

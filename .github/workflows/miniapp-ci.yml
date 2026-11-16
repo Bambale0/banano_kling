@@ -63,6 +63,12 @@ jobs:
       - name: Run Mini App regression tests
         run: >-
           npm test -- --runInBand
+          lib/__tests__/api-upload-origin.test.ts
+          lib/__tests__/task-history-api.test.ts
+          lib/__tests__/account-credentials-cache.test.ts
+          lib/__tests__/platform-session.test.ts
+          components/__tests__/vk-native-services.test.tsx
+          __tests__/media-ux-contract.test.ts
           components/__tests__/account-platform-entry.test.tsx
           components/__tests__/astro-admin-access.test.tsx
           components/__tests__/vk-motion-optional.test.tsx

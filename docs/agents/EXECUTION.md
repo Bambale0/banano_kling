@@ -1,3 +1,7 @@
+## 2026-11-16 — Telegram domain recovery
+
+Live differential TLS diagnosis, reversible runtime URL recovery, media-origin regression and protected release evidence: [execution record](EXECUTION/telegram-domain-recovery-20261116.md).
+
 ## 2026-11-16 — Astro #544: natal planetary facts vertical slice (review stage)
 
 - Baseline: #546 first lunar calculation PR head `f2d3b6cee470293ec935b5770d9fd9fed251709b`; task branch `feature/astro-natal-facts-20261116`, dependent on #546. Do not deploy or auto-merge before #546 into tanyapi.
