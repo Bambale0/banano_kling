@@ -1,3 +1,15 @@
+## 2026-11-16 — Astro #544: natal planetary facts vertical slice (review stage)
+
+- Baseline: #546 first lunar calculation PR head `f2d3b6cee470293ec935b5770d9fd9fed251709b`; task branch `feature/astro-natal-facts-20261116`, dependent on #546. Do not deploy or auto-merge before #546 into tanyapi.
+- Current verified gap: #543 UI only; #546 computes lunar calendar; natal form still displayed only “API not connected”. User reauthorized full seven-service implementation.
+- Change: deterministic Astronomy Engine 2.1.19 ecliptic geocentric planetary longitudes, apparent retrograde motion, major aspects. Signed Telegram initData + server-side admin role on every natal API request. No LLM, prices, charges, profile persistence or VK.
+- Accuracy: IANA historical timezone; detect DST overlaps and nonexistent times, explicit fold. Unknown birth time -> local noon approximation, omit Moon and aspects; no invented Placidus houses/angles.
+- Mutable aspect orbs `data/astro_settings.json`; validate config and fail closed if invalid. Explicit `astro.natal.facts.v1` with `not_calculated` for houses, ASC/MC, nodes, Chiron, Lilith, asteroids.
+- Observability: request ID, actor ID, duration, no birth data, prompts or interpretations in logs.
+- TDD: angle 359/1 wrap, DST gap/fold, leap year, equinox Sun in Aries, unknown time, invalid settings, HTTP 401/403/400/503, React successful result/denied role.
+- Verification: CI to be run on PR. No exact-SHA production proof yet. Rollback: revert feature PR, no data changes. Open acceptance #544 remains six other service types plus long report generation, house computation, secure persistent history, billing and admin controls.
+- Standards: primary engineering playbooks Bambale0/skills + Bambale0/claw + anthropics/skills inspected. External ephemeris API verified against Astronomy Engine official Python docs.
+
 ## 2026-11-16 — Astro #544 lunar calculation vertical slice (review stage)
 
 - Baseline: admin-only Astro UI PR #543 head `f2f2b6a906872f10eeccd4fd725135178ced4399`; new dependent task branch `feature/astro-lunar-engine-20261116`, PR into `tanyapi`. Never reintroduce VK.
