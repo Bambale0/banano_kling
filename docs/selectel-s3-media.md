@@ -30,6 +30,13 @@ temporary signed URLs are never stored in the database. Local materialization
 is reserved for validation, transformations and provider adapters that require
 a filesystem path.
 
+Redirects for public `feed/` and `trend-previews/` GETs use a browser-private
+cache lifetime shorter than the S3 signature expiry. This lets WebViews reuse
+the signed redirect and the immutable object response without sending every
+repeat view back through the backend. No shared or CDN cache is enabled here.
+All other upload paths and `HEAD` redirects remain `private, no-store`; a
+short or invalid signing lifetime also disables redirect caching.
+
 ## Selectel preparation
 
 1. Create a dedicated production project and bucket in the selected pool.

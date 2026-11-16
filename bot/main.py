@@ -5613,6 +5613,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     # canonical copy. Local mode keeps aiohttp's optimized static resource.
     from bot.services.media_storage import (
         is_s3_enabled,
+        presigned_upload_cache_control,
         presigned_upload_url,
         validate_media_storage_configuration,
     )
@@ -5629,7 +5630,10 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
                 logger.exception("Failed to sign S3 media redirect: key=%s", relative)
                 raise web.HTTPServiceUnavailable(text="Media temporarily unavailable")
             response = web.HTTPTemporaryRedirect(location=location)
-            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Cache-Control"] = presigned_upload_cache_control(
+                relative,
+                method=request.method,
+            )
             return response
 
         app.router.add_get("/uploads/{path:.*}", s3_upload_handler, name="uploads")

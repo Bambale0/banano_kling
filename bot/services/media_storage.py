@@ -132,6 +132,8 @@ _cached_settings: S3Settings | None = None
 _missing_lock = threading.Lock()
 _missing_until: dict[tuple[str, str, str], float] = {}
 _MAX_MISSING_ENTRIES = 4096
+_PRESIGNED_REDIRECT_CACHE_SAFETY_SECONDS = 60
+_PUBLIC_MEDIA_PREFIXES = ("feed/", "trend-previews/")
 
 
 def _missing_cache_ttl() -> int:
@@ -278,6 +280,20 @@ def presigned_upload_url(relative_path: str, *, method: str = "GET") -> str:
             ExpiresIn=settings.presign_ttl_seconds,
         )
     )
+
+
+def presigned_upload_cache_control(relative_path: str, *, method: str = "GET") -> str:
+    """Cache only public-media GET redirects, shorter than their S3 signature."""
+    relative = _validate_relative_path(relative_path)
+    if method.upper() != "GET" or not relative.startswith(_PUBLIC_MEDIA_PREFIXES):
+        return "private, no-store"
+    max_age = (
+        int(config.MEDIA_S3_PRESIGN_TTL_SECONDS)
+        - _PRESIGNED_REDIRECT_CACHE_SAFETY_SECONDS
+    )
+    if max_age <= 0:
+        return "private, no-store"
+    return f"private, max-age={max_age}"
 
 
 def _build_s3_client(settings: S3Settings):

@@ -503,6 +503,30 @@ def test_s3_persist_upload_file_is_idempotent_for_identical_content(monkeypatch,
     assert fake.objects[("neuromix-media", "uploads/refs/image/42/repeat.png")] == b"same-image"
 
 
+def test_s3_public_media_redirect_cache_is_private_and_bounded_by_signature_ttl(monkeypatch):
+    from bot.services import media_storage
+
+    configure_s3(monkeypatch, FakeS3Client())
+
+    assert media_storage.presigned_upload_cache_control("feed/thumbs/preview.jpg") == (
+        "private, max-age=840"
+    )
+    assert media_storage.presigned_upload_cache_control(
+        "trend-previews/42/preview.jpg"
+    ) == "private, max-age=840"
+    assert media_storage.presigned_upload_cache_control(
+        "refs/image/42/private.png"
+    ) == "private, no-store"
+    assert media_storage.presigned_upload_cache_control(
+        "feed/thumbs/preview.jpg", method="HEAD"
+    ) == "private, no-store"
+
+    monkeypatch.setattr(config, "MEDIA_S3_PRESIGN_TTL_SECONDS", 60)
+    assert media_storage.presigned_upload_cache_control(
+        "feed/thumbs/preview.jpg"
+    ) == "private, no-store"
+
+
 def test_s3_persist_upload_file_reuploads_when_content_changes(monkeypatch, tmp_path):
     from bot.services import media_storage
 
