@@ -1375,10 +1375,14 @@ async def _mark_seedance25_delivery(
     *,
     error: str | None = None,
     retry_after_seconds: int | None = None,
+    message_id: int | None = None,
 ) -> None:
     from bot.database import mark_task_delivery_status
 
-    await mark_task_delivery_status(task_id, status, error=error, retry_after_seconds=retry_after_seconds)
+    await mark_task_delivery_status(
+        task_id, status, error=error, retry_after_seconds=retry_after_seconds,
+        message_id=message_id,
+    )
 
 
 def _stored_result_urls(row) -> list[str]:
@@ -1457,14 +1461,20 @@ async def _retry_seedance25_delivery(
         ), timeout=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS)
     except TelegramDeliveryRetryable as exc:
         if request_data.get("_telegram_primary_delivered"):
-            await _mark_seedance25_delivery(task_id, "delivered")
+            await _mark_seedance25_delivery(
+                task_id, "delivered",
+                message_id=request_data.get("_telegram_primary_message_id"),
+            )
             return True
         await _mark_seedance25_delivery(task_id, "pending", error="telegram_rate_limited",
                                        retry_after_seconds=exc.retry_after)
         return False
     except TimeoutError:
         if request_data.get("_telegram_primary_delivered"):
-            await _mark_seedance25_delivery(task_id, "delivered")
+            await _mark_seedance25_delivery(
+                task_id, "delivered",
+                message_id=request_data.get("_telegram_primary_message_id"),
+            )
             return True
         state = "uncertain" if request_data.get("_telegram_send_inflight") else "pending"
         await _mark_seedance25_delivery(
@@ -1478,7 +1488,10 @@ async def _retry_seedance25_delivery(
         return False
     except TelegramDeliveryUncertain as exc:
         if request_data.get("_telegram_primary_delivered"):
-            await _mark_seedance25_delivery(task_id, "delivered")
+            await _mark_seedance25_delivery(
+                task_id, "delivered",
+                message_id=request_data.get("_telegram_primary_message_id"),
+            )
             return True
         logger.warning("Seedance 2.5 delivery outcome unknown: task_id=%s error_type=%s",
                        task_id, type(exc).__name__)
@@ -1491,7 +1504,10 @@ async def _retry_seedance25_delivery(
         return False
     except Exception as exc:
         if request_data.get("_telegram_primary_delivered"):
-            await _mark_seedance25_delivery(task_id, "delivered")
+            await _mark_seedance25_delivery(
+                task_id, "delivered",
+                message_id=request_data.get("_telegram_primary_message_id"),
+            )
             return True
         reason = terminal_telegram_delivery_reason(exc)
         if reason:
@@ -1512,7 +1528,10 @@ async def _retry_seedance25_delivery(
         return False
 
     if delivered:
-        await _mark_seedance25_delivery(task_id, "delivered")
+        await _mark_seedance25_delivery(
+                task_id, "delivered",
+                message_id=request_data.get("_telegram_primary_message_id"),
+            )
         return True
 
     await _mark_seedance25_delivery(
