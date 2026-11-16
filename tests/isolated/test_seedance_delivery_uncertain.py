@@ -207,6 +207,16 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.bot.send_message.await_count, 1)
             self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
 
+    async def test_tracker_retains_confirmed_primary_message_id(self):
+        message = types.SimpleNamespace(message_id=702)
+        state = {}
+        result = await self.ns["tracked_telegram_send"](
+            state, True, AsyncMock(return_value=message), 1,
+        )
+        self.assertIs(result, message)
+        self.assertTrue(state["_telegram_primary_delivered"])
+        self.assertEqual(state["_telegram_primary_message_id"], 702)
+
     async def test_tracker_clears_each_confirmed_rejection(self):
         for error in [Rejected("bad"), Retryable(75)]:
             progress = {}
