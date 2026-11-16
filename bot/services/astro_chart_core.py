@@ -240,7 +240,9 @@ def build_synastry_facts(left: Any, right: Any, *, engine=None, kernel=None) -> 
         "schema_version": SYNASTRY_SCHEMA,
         "engine": {"name": "openephem", "version": "0.5.0", "kernel": "JPL-DE440"},
         "first": left_chart["chart"],
+        "first_accuracy": left_chart["accuracy"],
         "second": right_chart["chart"],
+        "second_accuracy": right_chart["accuracy"],
         "aspects": aspects,
         "interpretation": None,
         "disclaimer": "Совместимость по астрологическим схемам — символическая интерпретация.",
@@ -405,6 +407,8 @@ def build_solar_return_facts(
     """Compute the exact natal-Sun longitude return, relocated chart separately."""
     target_year = _year(target_year)
     profile = parse_birth_profile(birth)
+    if profile.hour is None:
+        raise AstroChartInputError("Для точного соляра необходимо время рождения.")
     lat, lon, zone = _location(return_location)
     ephem = engine or _load_engine()
     asset = kernel or _kernel_path()
