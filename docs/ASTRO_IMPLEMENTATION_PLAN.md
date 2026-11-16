@@ -124,3 +124,12 @@
 - No birth data stored, no payments, no fake aspects/void-of-course/eclipses/traditional advice. Reusable calendar results do not use any LLM.
 - These changes **do not complete** natal/synastry/karma/year/month/solar interpretation, long reports, saved history, geocoding or billing. Do not represent the seven-service project as complete until #544 acceptance passes for all seven.
 - Await CI and verified exact-SHA deploy; keep admin-only gate.
+
+
+## Natal deterministic positions slice (#544, 2026-11-16)
+
+- Added `bot/services/astro_natal.py` deterministic astronomical planet longitudes/signs and major longitude aspects; same MIT astronomy-engine as lunar calendar. Exact inputs are civil birth date/time + explicit IANA timezone.
+- For unknown birth time we use clearly labelled local-noon approximation, suppress Moon entirely, and leave Placidus houses/Asc/MC empty. No invented coordinates are geocoded from free-form place input. DST spring gaps are rejected; ambiguous autumn fold must be explicitly disambiguated.
+- Every natal HTTP request authenticates the Telegram actor and checks admin status server-side, irrespective of frontend state. `POST /mini-app/api/astro/natal` returns schema `astro.natal.positions.v1`, not a completed interpretation or full natal chart.
+- UI displays actual planetary positions, major aspects, retrograde labels, and missing-calculation warnings, without a charge. Still missing houses, lunar nodes, Chiron/Lilith, advanced aspect configurations, long-form interpretation and job persistence.
+- Full feature remains **unreleased** until independent reference ephemeris accuracy, historical timezone/coords, Placidus/edge cases and all seven #544 acceptance items have passed. Merge of this vertical slice alone does not close #544.
