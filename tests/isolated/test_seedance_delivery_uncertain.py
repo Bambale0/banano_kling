@@ -99,6 +99,23 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.download.assert_not_awaited()
         self.bot.send_message.assert_not_awaited()
 
+    async def test_uncertain_retry_uploads_direct_file_in_both_seedance_flows(self):
+        for path, name in [
+            ("bot/handlers/seedance_25_public_release.py", "_public_send_results"),
+            ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
+        ]:
+            self.bot.send_video.reset_mock()
+            self.download.reset_mock()
+            fn = load_function(path, name, self.ns)
+            result = await fn(
+                {"bot": self.bot}, 1, "task", "https://example.test/result.mp4",
+                None, {"delivery_status": "uncertain"},
+            )
+            self.assertTrue(result)
+            self.download.assert_awaited_once()
+            self.bot.send_video.assert_awaited_once()
+            self.assertEqual(self.bot.send_video.await_args.kwargs["video"], "file")
+
     async def test_explicit_rejection_allows_downloaded_file(self):
         self.bot.send_video.side_effect = [Rejected("wrong file"), None]
         self.assertTrue(await self.run_delivery("bot/handlers/seedance_25_public_release.py", "_public_send_results"))
