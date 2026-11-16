@@ -134,3 +134,14 @@
 - При неизвестном времени ставим опорную точку на местный полдень **как приближение**, не рассчитываем Луну или аспекты. Дома, ASC/MC, Лилит, узлы, Хирон и астероиды пока не рассчитаны; не выдавать этот срез за полную натальную карту.
 - Не использовать LLM для выдумывания градусов. Сервис не пишет дату, город, время рождения в логи и БД; ничего не списывает. Длинные интерпретации и все остальные услуги остаются в #544.
 - Тесты: реальный момент равноденствия, DST overlap/gap, високосный год, неизвестное время, орбисы и замыкание 360°, серверное разграничение ролей, 400/403/503 и фронтенд-мок выдачи результатов.
+
+
+## Two-person compatibility factual calculation (#544, 2026-11-16)
+
+- This slice ports #549 onto the already merged natal #550; only current `tanyapi` is targeted. Adds `bot/services/astro_synastry.py` and `POST /mini-app/api/astro/compatibility`.
+- Reuses deterministic MIT astronomy-engine natal calculations for each person's date, time, and independently provided IANA timezone. Checks signed Telegram actor and current admin privilege on **every** request; denies VK and stale roles.
+- Returns actual interchart geocentric longitude major aspects, degree separations/orbs from the same `data/astro_settings.json` policy as natal. Persons are never conflated and may have their own DST fold.
+- Unknown birth time suppresses that person's Moon, marks cross-aspects approximate, and does not invent ASC, MC, house overlays, composites or compatibility scores. Input cities are currently labels only, not geo-resolved or sent to the backend.
+- Mini App shows real interchart aspect facts and warns when interpretation is not yet implemented. No charges, account changes, birth-data persistence or paid LLM.
+- Tests cover cross-chart wraparound, non-overlapping pairs, unknown time, role revocation/VK denial, form input separation, real UI result, browser E2E.
+- #544 remains open: historical coordinates, Placidus houses, nodal/Chiron/Lilith, extensive personal interpretations, all forecast techniques, persistence, rate limits and billing approval remain outstanding.
