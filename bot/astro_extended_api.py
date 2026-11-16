@@ -149,14 +149,15 @@ async def astro_extended_facts(request: web.Request, *, kind: str | None = None)
         if not config.is_admin(actor_id):
             raise web.HTTPForbidden()
 
+        response = web.json_response(
+            {"ok": True, "result": result, "request_id": request_id},
+            headers={"Cache-Control": "no-store"},
+        )
         logger.info(
             "astro_extended_complete request_id=%s actor_id=%s kind=%s latency_ms=%.1f",
             request_id, actor_id, kind, (time.monotonic() - started) * 1000,
         )
-        return web.json_response(
-            {"ok": True, "result": result, "request_id": request_id},
-            headers={"Cache-Control": "no-store"},
-        )
+        return response
     except web.HTTPException:
         raise
     except (AstroInputError, AstroChartInputError) as exc:

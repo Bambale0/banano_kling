@@ -234,3 +234,26 @@ def test_extended_services_reachable_from_main_astro_route_setup():
     paths = {(r.method, r.resource.canonical) for r in app.router.routes()}
     for kind in ('karma', 'year', 'month', 'solar'):
         assert ('POST', '/mini-app/api/astro/' + kind) in paths
+
+
+def test_completion_logged_only_after_json_is_encoded(monkeypatch, actor, place, caplog):
+    """Do not mark API success if unexpected scalar makes response a HTTP 500."""
+    import logging
+
+    import numpy as np
+
+    monkeypatch.setattr(
+        astro_extended_api, "build_karma_indicators",
+        lambda _: {
+            "schema_version": "astro.karma-indicators.v1",
+            "indicators": {"TrueNode": {"applying": np.bool_(True)}},
+            "aspects": [],
+        },
+    )
+    with caplog.at_level(logging.INFO, logger="bot.astro_extended_api"):
+        response = run(payload())
+    assert response.status == 500
+    assert not any(
+        "astro_extended_complete" in entry.getMessage()
+        for entry in caplog.records
+    )

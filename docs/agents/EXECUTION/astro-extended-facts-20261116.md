@@ -62,3 +62,23 @@ Anonymous POST /mini-app/api/astro/places and lunar/compatibility -> 401
 -> 404 because dependent #578 and #579 are NOT deployed. End-to-end signed
 Telegram-admin WebView/HTTP smoke remains pending until protected CI merge and
 exact-SHA deployment. No claim of complete production release.
+
+## Seven-service HTTP verification / production gates
+
+- Stacked branch rebased on #580 JSON scalar hotfix, not on outdated #578 head.
+- New `scripts/astro_seven_services_http_smoke.py` invokes actual aiohttp
+  router and all 7 service handlers using real GeoNames+JPL DE440. Only the
+  signed Telegram identity context is a synthetic in-process test actor.
+  The smoke checks anonymous 401 for all, test-admin 200 for all, natal
+  Placidus, compatibility, lunar calendar, karma, year/month, solar, 12
+  houses/12 annual/29 February daily samples, verified independent solar
+  location, `Cache-Control: no-store` and native JSON serialization.
+- Regression reproduced: `astro_extended_complete` was logged BEFORE JSON
+  serialization, leading to incorrect success metric on 500. New test
+  initially failed on this behavior, then passed after logger move.
+- Post-rebase checks: 147 Astro/backend tests, 18 Astro React tests, TypeScript,
+  ESLint and Ruff clean, 7/7 HTTP integration smoke PASS in read-only offline
+  container; one unrelated pytest config warning remains.
+- **Not a real Telegram production WebView test.** A signed live admin request
+  and external provider/long-text delivery cannot be claimed until released.
+- Billing, payment providers, consumer access and VK must remain unchanged.
