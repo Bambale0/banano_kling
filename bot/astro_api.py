@@ -384,13 +384,7 @@ async def astro_full_natal_facts(request: web.Request) -> web.Response:
         if not config.is_admin(actor_id):
             raise web.HTTPForbidden()
 
-        logger.info(
-            "astro_full_natal_complete request_id=%s actor_id=%s "
-            "houses_available=%s latency_ms=%.1f",
-            request_id, actor_id, chart["accuracy"]["houses_available"],
-            (time.monotonic() - started) * 1000,
-        )
-        return web.json_response(
+        response = web.json_response(
             {
                 "ok": True, "result": chart,
                 "place": {
@@ -403,6 +397,13 @@ async def astro_full_natal_facts(request: web.Request) -> web.Response:
             },
             headers={"Cache-Control": "no-store"},
         )
+        logger.info(
+            "astro_full_natal_complete request_id=%s actor_id=%s "
+            "houses_available=%s latency_ms=%.1f",
+            request_id, actor_id, chart["accuracy"]["houses_available"],
+            (time.monotonic() - started) * 1000,
+        )
+        return response
     except web.HTTPException:
         raise
     except (AstroInputError, AstroChartInputError) as exc:
