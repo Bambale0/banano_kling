@@ -55,3 +55,41 @@ def test_real_february_leap_year_and_dst_boundary():
     assert len(mar["days"]) == 31
     assert mar["days"][0]["observed_at_local"].endswith("+01:00")
     assert mar["days"][-1]["observed_at_local"].endswith("+02:00")
+
+
+
+def test_real_moon_sign_ingresses_have_exact_utc_and_local_times():
+    """An ingress is a computed zodiac boundary, not the noon Moon sign."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    astro = pytest.importorskip("astronomy")
+    from bot.services.astro_lunar import SIGNS
+
+    result = build_lunar_calendar("2024-03", "Europe/Berlin", engine=astro)
+    ingresses = result["ingresses"]
+    assert 10 <= len(ingresses) <= 16  # ~27.3 day sidereal cycle
+    assert len({row["at_utc"] for row in ingresses}) == len(ingresses)
+    assert [row["at_utc"] for row in ingresses] == sorted(row["at_utc"] for row in ingresses)
+
+    for row in ingresses:
+        utc = datetime.fromisoformat(row["at_utc"])
+        local = datetime.fromisoformat(row["at_local"])
+        assert local == utc.astimezone(ZoneInfo("Europe/Berlin"))
+        assert local.strftime("%Y-%m") == "2024-03"
+        assert row["local_date"] == local.date().isoformat()
+        assert row["to_sign"] == SIGNS[(SIGNS.index(row["from_sign"]) + 1) % 12]
+        before = astro.Time.Parse((utc - timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        after = astro.Time.Parse((utc + timedelta(minutes=2)).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        assert SIGNS[int(astro.EclipticGeoMoon(before).lon % 360 // 30)] == row["from_sign"]
+        assert SIGNS[int(astro.EclipticGeoMoon(after).lon % 360 // 30)] == row["to_sign"]
+
+
+def test_ingresses_handle_pisces_to_aries_wraparound():
+    pytest.importorskip("astronomy")
+    result = build_lunar_calendar("2024-03", "UTC")
+    assert any(
+        row["from_sign"] == "Рыбы" and row["to_sign"] == "Овен"
+        and row["longitude_deg"] == 0.0
+        for row in result["ingresses"]
+    )

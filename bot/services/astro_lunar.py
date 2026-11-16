@@ -7,6 +7,7 @@ Times are calculated in UTC and rendered for the requested IANA timezone.
 from __future__ import annotations
 
 import calendar
+import math
 import re
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -59,6 +60,73 @@ def _instant(value: object) -> datetime:
     if not raw.endswith("Z"):
         raise AstroEngineUnavailable("Эфемерида вернула дату без указания UTC.")
     return datetime.fromisoformat(raw)
+
+
+
+def _moon_longitude(engine, at_utc: datetime) -> float:
+    """Exact engine longitude; never estimate Moon motion from the noon sample."""
+    try:
+        value = float(engine.EclipticGeoMoon(_astro_time(engine, at_utc)).lon)
+    except (ValueError, OverflowError, AttributeError) as exc:
+        raise AstroEngineUnavailable("Не удалось вычислить положение Луны.") from exc
+    if not math.isfinite(value):
+        raise AstroEngineUnavailable("Получена некорректная долгота Луны.")
+    return value % 360.0
+
+
+def find_moon_sign_ingresses(
+    engine, start_utc: datetime, end_utc: datetime, timezone: ZoneInfo,
+) -> list[dict]:
+    """Search actual lunar sign boundary crossings to the nearest second.
+
+    Scan short UTC intervals then bisect the real ephemeris longitude.
+    The 3-hour step is far shorter than one lunar zodiac sign transit.
+    Protect against discontinuous/invalid ephemeris values: fail closed
+    instead of producing an invented sign transition or approximate date.
+    """
+    step = timedelta(hours=3)
+    left = start_utc - step
+    left_longitude = _moon_longitude(engine, left)
+    found: list[dict] = []
+    while left < end_utc:
+        right = min(left + step, end_utc)
+        right_longitude = _moon_longitude(engine, right)
+        movement = (right_longitude - left_longitude) % 360.0
+        if not 0.0 < movement < 10.0:
+            raise AstroEngineUnavailable("Некорректный переход долготы Луны.")
+
+        sign_index = int(left_longitude // 30)
+        boundary = (sign_index + 1) * 30.0
+        distance = (boundary - left_longitude) % 360.0
+        if 0.0 < distance <= movement:
+            lower, upper = left, right
+            for _ in range(19):
+                mid = lower + (upper - lower) / 2
+                advance = (_moon_longitude(engine, mid) - left_longitude) % 360.0
+                if advance >= distance:
+                    upper = mid
+                else:
+                    lower = mid
+
+            # _astro_time queries the engine at integral UTC seconds;
+            # round UP to that same resolution, not fake microsecond precision.
+            crossing = upper.replace(microsecond=0)
+            if upper.microsecond:
+                crossing += timedelta(seconds=1)
+            if start_utc <= crossing < end_utc:
+                local = crossing.astimezone(timezone)
+                found.append({
+                    "from_sign": SIGNS[sign_index],
+                    "to_sign": SIGNS[(sign_index + 1) % len(SIGNS)],
+                    "longitude_deg": boundary % 360.0,
+                    "at_utc": crossing.isoformat(),
+                    "at_local": local.isoformat(),
+                    "local_date": local.date().isoformat(),
+                })
+                if len(found) > 20:
+                    raise AstroEngineUnavailable("Слишком много переходов Луны за месяц.")
+        left, left_longitude = right, right_longitude
+    return found
 
 
 def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dict:
@@ -117,6 +185,8 @@ def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dic
             break
         scan = instant + timedelta(minutes=5)
 
+    ingresses = find_moon_sign_ingresses(engine, start_utc, end_utc, tz)
+
     days: list[dict] = []
     for day in range(1, n_days + 1):
         # Local noon is representative; sign/phase may change within a day.
@@ -163,6 +233,7 @@ def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dic
         ),
         "not_calculated": ["void_of_course", "planetary_aspects", "eclipses", "haircut_advice"],
         "events": events,
+        "ingresses": ingresses,
         "days": days,
         "disclaimer": "Астрономические данные и традиционные интерпретации не одно и то же.",
     }

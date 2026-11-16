@@ -37,6 +37,7 @@ interface LunarReport {
     events: string[]
   }>
   events: Array<{ kind: string; at_local: string }>
+  ingresses?: Array<{ from_sign: string; to_sign: string; at_local: string }>
 }
 
 interface AstroService {
@@ -465,6 +466,18 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           </ul>
           <p>Точное время фаз:</p>
           <ul>{lunarReport.events.map((event) => <li key={event.at_local}>{event.kind} — {event.at_local}</li>)}</ul>
+          {lunarReport.ingresses && lunarReport.ingresses.length > 0 && (
+            <>
+              <p>Точное время перехода Луны между знаками:</p>
+              <ul>
+                {lunarReport.ingresses.map((event) => (
+                  <li key={event.at_local}>
+                    {event.from_sign} → {event.to_sign} — {event.at_local}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
           <p>Аспекты, холостая Луна, затмения и традиционные советы по уходу пока не вычисляются.</p>
         </div>
       )}
