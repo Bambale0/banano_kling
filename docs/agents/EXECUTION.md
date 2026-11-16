@@ -1,3 +1,12 @@
+## 2026-11-16 — Astro #560: authenticated city-search API (dependent slice)
+
+- Branch feature/astro-places-api-current-20261116 based on feature/astro-geonames-offline-20261116.
+- Adds POST /mini-app/api/astro/places to existing authenticated Astro API using signed Telegram initData, current server admin role before and after response construction; VK denied.
+- Bounded request length (4096 bytes), search results capped at 10, 4s timeout and sanitized 400/503 error contracts. User city query not logged; CC BY GeoNames attribution in response.
+- Does not wire frontend or persist dates of birth; no billing, VK contour, external place providers or prod DB config. Safe 503 when offline DB not deployed.
+- Tests: request validation, role revocation during search, malformed input, missing database, no-store and route registration; 30 isolated tests including offline places domain tests passed.
+- Release dependent on #576 catalog and production asset provisioning, feature tests, exact SHA deployed smoke.
+
 ## 2026-11-16 — Astro #560: offline GeoNames places and historical timezone foundation
 
 - Baseline origin/tanyapi b1ba64a245262529a163e132fbf671d6f57c6e22; isolated branch feature/astro-geonames-offline-20261116.
