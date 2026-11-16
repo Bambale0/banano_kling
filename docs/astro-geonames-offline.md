@@ -30,3 +30,28 @@ Security: parameterized SQL plus carefully quoted FTS tokens, immutable read-onl
 Frozen CLDR country names in Russian and English / ISO codes accompany GeoNames.
 Both Russia, Saint Petersburg and Россия, Санкт-Петербург match city alias and
 country, never guessing a place from a similar-named city elsewhere.
+
+## Admin-only HTTP search (dependent follow-up)
+
+A subsequent isolated PR exposes POST /mini-app/api/astro/places with signed
+Telegram initData and server-side admin validation before and after the search.
+The response contains at most 10 trusted geonameid matches and the visible
+attribution to GeoNames. The raw city query is never logged, persisted or used
+as a billing field. Access without configuration returns 503; unauthorized 401,
+non-admin/VK 403. No birth-date data or profile is accepted at this endpoint.
+Frontend selection and the real 7-service calculations remain separate work.
+
+### Mini App picker (dependent API PR)
+
+The admin Astro UI exposes an explicit GeoNames lookup beside birthplace fields,
+shows each city's country and IANA timezone, and stores the selected canonical
+place ID separately from manually entered text. Selecting a result automatically
+sets the natal/compatibility time zone; editing the city clears the verified ID
+and derived timezone so stale coordinates cannot silently leak into calculation.
+When API/search is unavailable, birth fields remain editable and the interface
+does not claim that free-text cities have verified coordinates.
+
+Jest regression covers selection and authorization error. Browser field
+validation, standalone React TypeScript typecheck and ESLint are required CI gates.
+Actual chart-house calculations must use canonical server-resolved place IDs
+in a later secure task, not trust hidden client fields as coordinates.

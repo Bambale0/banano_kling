@@ -18,6 +18,7 @@ from bot.services.astro_lunar import (
     resolve_timezone,
 )
 from bot.services.astro_natal import build_natal_facts
+from bot.services.astro_places import AstroPlacesUnavailable, search_places
 from bot.services.astro_synastry import build_compatibility_facts
 
 logger = logging.getLogger(__name__)
@@ -250,7 +251,79 @@ async def astro_compatibility_facts(request: web.Request) -> web.Response:
         )
 
 
+
+async def astro_search_places(request: web.Request) -> web.Response:
+    """Bounded offline city lookup, Telegram-admin only, no birth data or billing."""
+    request_id = uuid4().hex
+    started = time.monotonic()
+    try:
+        if request.content_length is not None and request.content_length > 4096:
+            raise web.HTTPRequestEntityTooLarge(
+                max_size=4096, actual_size=request.content_length,
+            )
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise AstroInputError("Некорректный JSON-запрос.") from exc
+        if not isinstance(body, dict):
+            raise AstroInputError("Ожидается JSON-объект.")
+        init_data = body.get("init_data")
+        if not isinstance(init_data, str) or not init_data or init_data.startswith("vk_session:"):
+            raise web.HTTPUnauthorized()
+
+        # Use the existing signed Telegram context; the client cannot grant itself admin.
+        from bot.miniapp import _get_user_context
+
+        try:
+            actor_id, ctx = await _get_user_context(request.app, init_data)
+        except (PermissionError, ValueError):
+            raise web.HTTPUnauthorized() from None
+        assert_admin_astro_access(
+            init_data, actor_id, str(ctx.get("platform") or "telegram"),
+        )
+        result = await asyncio.wait_for(
+            asyncio.to_thread(search_places, body.get("query"), limit=10),
+            timeout=4.0,
+        )
+        if not config.is_admin(actor_id):
+            raise web.HTTPForbidden()
+        logger.info(
+            "astro_places_complete request_id=%s actor_id=%s results=%s latency_ms=%.1f",
+            request_id, actor_id, len(result), (time.monotonic() - started) * 1000,
+        )
+        return web.json_response(
+            {"ok": True, "results": result, "attribution": "© GeoNames (CC BY 4.0)",
+             "request_id": request_id},
+            headers={"Cache-Control": "no-store"},
+        )
+    except web.HTTPException:
+        raise
+    except AstroInputError as exc:
+        return web.json_response(
+            {"ok": False, "error": "invalid_input", "message": str(exc)},
+            status=400, headers={"Cache-Control": "no-store"},
+        )
+    except AstroPlacesUnavailable:
+        logger.warning("astro_places_unavailable request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "places_unavailable"},
+            status=503, headers={"Cache-Control": "no-store"},
+        )
+    except TimeoutError:
+        logger.error("astro_places_timeout request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "calculation_timeout"},
+            status=503, headers={"Cache-Control": "no-store"},
+        )
+    except Exception:
+        logger.exception("astro_places_error request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "internal_error"},
+            status=500, headers={"Cache-Control": "no-store"},
+        )
+
 def setup_astro_routes(app: web.Application, miniapp_root: str) -> None:
+    app.router.add_post(miniapp_root + "/api/astro/places", astro_search_places)
     app.router.add_post(miniapp_root + "/api/astro/lunar", astro_lunar_calendar)
     app.router.add_post(miniapp_root + "/api/astro/natal", astro_natal_facts)
     app.router.add_post(miniapp_root + "/api/astro/compatibility", astro_compatibility_facts)
