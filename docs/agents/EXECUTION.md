@@ -1,3 +1,14 @@
+## 2026-11-16 — Astro #544 natal astronomical positions, second functional slice
+
+- Baseline `tanyapi@732a0536097a171d0c65cd9f152b46209c705457`, branch `feature/astro-natal-positions-20261116`; first Astro UI and lunar slice #543/#546 merged, exact-SHA production deployment not yet confirmed.
+- Goal: authenticated admin can submit birth date/time/IANA timezone and read genuine geocentric true-ecliptic planetary positions and major angular aspects. No full natal interpretation, no invented Placidus houses/angles, no billing.
+- Engine: reuse MIT astronomy-engine 2.1.19. Versioned deterministic output `astro.natal.positions.v1`; compute Sun/Moon/Mercury/Venus/Mars/Jupiter/Saturn/Uranus/Neptune/Pluto from geocentric vectors and longitudes of ecliptic of date, motion from finite difference and aspects by shortest angular separation.
+- Time: explicit historical IANA timezone, fail closed on non-existent/ambiguous DST civil moments, fold 0/1 supported via API; unknown time uses labelled local noon, omits Moon and angular/house values. No geocoding from LLM/free-text city, no personal-data persistence.
+- Endpoint `POST /mini-app/api/astro/natal` uses existing signed Telegram initData and fresh server-side admin check per request, VK denied; 20s bounded calculation, request ID, latency, no raw birth data in logs.
+- Tests: deterministic aspect distances, UTC/DST date conversions, unknown time omissions, real equinox Sun, HTTP signed/role/revoke/input paths, frontend async report/403 and existing forms. No local suite or deployment confirmation at writing; protected CI required.
+- Remaining full #544 acceptance: validated historical place geocoding + exact coordinates, Placidus houses and angles incl polar conventions, nodes/Chiron/Lilith, all advanced techniques, six remaining service outputs, interpretation/job retries/history, billing approval. Do not claim complete.
+- Safe rollout: native squash auto-merge only after checks; confirm exact SHA in prod and admin/nonadmin smoke. Rollback: revert PR, no schema or debit impact.
+
 ## 2026-11-16 — Astro #544 lunar calculation vertical slice (review stage)
 
 - Baseline: admin-only Astro UI PR #543 head `f2f2b6a906872f10eeccd4fd725135178ced4399`; new dependent task branch `feature/astro-lunar-engine-20261116`, PR into `tanyapi`. Never reintroduce VK.
