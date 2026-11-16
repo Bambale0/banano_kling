@@ -114,3 +114,13 @@
 - не добавляем ключи и сторонние SDK в frontend;
 - не меняем существующие финансовые и генерационные маршруты;
 - не называем feature production-ready до screenshot + CI + production smoke.
+
+
+## Astro lunar factual calculation pilot (#544, 2026-11-16)
+
+- New isolated lunar calculation module `bot/services/astro_lunar.py`, MIT Astronomy Engine 2.1.19.
+- Server endpoint `POST /mini-app/api/astro/lunar` accepts authenticated Telegram `init_data`, `period` in YYYY-MM and an explicit IANA `timezone`. Every request checks `config.is_admin` server-side; VK session refused.
+- Versioned response contains each date's Moon longitude/sign/illumination/phase at local noon and exact quarter-event instants in UTC and local time. Synodic day counts complete 24-hour UTC intervals since exact new moon; it is **not** the traditional day counted by moonrise.
+- No birth data stored, no payments, no fake aspects/void-of-course/eclipses/traditional advice. Reusable calendar results do not use any LLM.
+- These changes **do not complete** natal/synastry/karma/year/month/solar interpretation, long reports, saved history, geocoding or billing. Do not represent the seven-service project as complete until #544 acceptance passes for all seven.
+- Await CI and verified exact-SHA deploy; keep admin-only gate.
