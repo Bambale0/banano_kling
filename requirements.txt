@@ -38,3 +38,6 @@ psycopg[binary,pool]>=3.2.0
 
 # Bounded PDF page validation for Wan document inputs
 pypdf>=6.20,<7
+
+# MIT chart math for Placidus natal/synastry; requires pre-provisioned JPL DE440
+openephem==0.5.0
