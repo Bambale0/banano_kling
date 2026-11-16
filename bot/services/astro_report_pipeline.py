@@ -104,6 +104,12 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         "natal_chart", "solar_chart", "samples", "events", "days",
         "accuracy", "first_accuracy", "second_accuracy", "period",
         "solar_return_at_utc", "return_location", "engine",
+        # Current MIT ephemerides output (natal #550, compatibility #553).
+        # Only these deterministic result fields may reach the interpreter;
+        # never forward arbitrary client form/profile text.
+        "positions", "cross_aspects", "person_a", "person_b",
+        "birth_time_known", "not_calculated", "warnings", "aspect_orbs_deg",
+        "utc_reference", "local_reference", "timezone",
     )
     selected = {name: facts[name] for name in fields if name in facts}
     if len(selected) < 2:
