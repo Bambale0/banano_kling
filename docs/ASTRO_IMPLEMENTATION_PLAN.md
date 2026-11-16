@@ -129,3 +129,8 @@ Module `bot/services/astro_chart_core.py` extends the factual engine beyond the 
 - No geocoding yet: currently the backend contract requires the user to provide coordinates and IANA zone. Future admin flow needs a cached, selectable geocoder with correct historical timezone.
 - No price/billing, no third-party calls, no storage, no user-facing production endpoint yet. This is draft-only pending real JPL fixture validation and release of PR #546.
 - A stable, factual calculation is **not** equivalent to the requested long structured report. #544 remains open for interpretation engine, jobs, full-period transit-event timing, history, payments, and review.
+
+
+### Integrity gate for future Placidus/JPL adapter (draft #547)
+
+The experimental MIT openephem 0.5.0 chart adapter must remain **draft-only** until the server has a separately provisioned, independently validated JPL DE440 kernel and reference-chart parity fixtures. It now rejects unconfigured, truncated or corrupted kernels. Runtime configuration requires both `ASTRO_DE440_PATH` (readable file path, not an URL) and `ASTRO_DE440_SHA256` (64 hex chars of the *exact* provisioned file); validation hashes the file once per version and fails closed on mismatch. No background download, automatic fallback to synthetic planets, production payment or public Astro access is allowed. Changes to the kernel require updating the checksum through protected configuration; never commit the 114 MB kernel or credentials to Git.
