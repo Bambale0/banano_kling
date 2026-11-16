@@ -1,3 +1,12 @@
+## 2026-11-16 — Astro #544 two-person synastry factual calculation (third slice)
+
+- Baseline `tanyapi@f49b48a1ebcc891efe631f59aed2d79c64e1650c`, branch `feature/astro-compatibility-on-merged-natal-20261116`. Original #549 conflicts because of the then-pending natal/lunar stack; selective forward-port of synastry-only files and code.
+- Functional result: `astro.synastry.facts.v1` deterministic two-person charts and interchart aspects, independent birth timezones, with server-side Telegram admin check per request. Natal #550 and lunar #546 are preserved.
+- Privacy: no stored birth profiles, geocoding, billing or LLM. Request body limited to 8192 bytes. No partner data or detailed positions in observability; request ID, actor ID, latency only.
+- Accuracy/limits: cross angles and orbs use the shared validated `data/astro_settings.json`. Unknown birth time excludes corresponding Moon and marks all cross-aspects approximate; no composite, houses, score, interpretation or financial advice fabricated.
+- Tests: existing synastry unit and HTTP role-revocation tests + frontend React and browser E2E, including independent person values and one person with unknown time. Protected CI and exact production SHA smoke remain pending.
+- Next: house system, coordinates and historical civil time, nodes/Chiron/Lilith, long report, persistence, complete 7-service flows. No config, migrations or payments for this slice; rollback revert PR.
+
 ## 2026-11-16 — Astro #544: natal planetary facts vertical slice (review stage)
 
 - Baseline: #546 first lunar calculation PR head `f2d3b6cee470293ec935b5770d9fd9fed251709b`; task branch `feature/astro-natal-facts-20261116`, dependent on #546. Do not deploy or auto-merge before #546 into tanyapi.
