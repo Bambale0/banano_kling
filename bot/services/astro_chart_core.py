@@ -222,7 +222,43 @@ def _assemble_birth(profile: BirthMoment, *, engine, kernel: str) -> dict:
         "jd_ut", "utc", "lat", "lon", "tz", "offset_hours",
         "zodiac", "house_system", "angles", "cusps", "bodies", "aspects",
     )
-    return {name: chart[name] for name in safe_keys if name in chart}
+    return _native_json_data({
+        name: chart[name] for name in safe_keys if name in chart
+    })
+
+
+def _native_json_data(value: Any) -> Any:
+    """Normalize engine-owned values to strict JSON primitives at the boundary.
+
+    OpenEphem/JPL returns NumPy zero-dimensional scalar types, including
+    numpy.bool_ for an aspect's applying flag. The standard aiohttp JSON
+    encoder cannot serialize these values even though the chart math passed.
+    Reject unknown types or nonfinite values rather than guessing or emitting
+    invalid JSON. Never mutate the engine's original dictionaries.
+    """
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise AstroChartUnavailable("Chart contains a nonfinite numeric value")
+        return value
+    if isinstance(value, dict):
+        if any(type(key) is not str for key in value):
+            raise AstroChartUnavailable("Chart contains an invalid field name")
+        return {key: _native_json_data(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_native_json_data(item) for item in value]
+    # NumPy is a transitive runtime dependency of the optional chart engine.
+    # Avoid importing it for every ordinary request and allow only scalars.
+    if type(value).__module__.split(".", 1)[0] == "numpy" and getattr(value, "ndim", None) == 0:
+        try:
+            native = value.item()
+        except Exception as exc:
+            raise AstroChartUnavailable("Invalid NumPy chart scalar") from exc
+        if native is value:
+            raise AstroChartUnavailable("Invalid NumPy chart scalar")
+        return _native_json_data(native)
+    raise AstroChartUnavailable("Unsupported chart result type")
 
 
 def build_natal_facts(payload: Any, *, engine=None, kernel=None) -> dict:
@@ -258,6 +294,7 @@ def build_synastry_facts(left: Any, right: Any, *, engine=None, kernel=None) -> 
         raise AstroChartUnavailable("Synastry aspects computation failed") from exc
     if not isinstance(aspects, list):
         raise AstroChartUnavailable("Synastry aspects missing")
+    aspects = _native_json_data(aspects)
     return {
         "schema_version": SYNASTRY_SCHEMA,
         "engine": {"name": "openephem", "version": "0.5.0", "kernel": "JPL-DE440"},
@@ -369,6 +406,7 @@ def _sample_transits(
             raise AstroChartUnavailable("Transit aspect calculation failed") from exc
         if not isinstance(aspects, list):
             raise AstroChartUnavailable("Transit aspect engine returned invalid data")
+        aspects = _native_json_data(aspects)
         samples.append({
             "date": local.date().isoformat(),
             "at_local": local.isoformat(),
@@ -476,6 +514,7 @@ def build_solar_return_facts(
     if abs(orb) > 0.001:
         raise AstroChartUnavailable("Solar return instant does not match natal Sun")
     solar_chart.pop("warnings", None)  # never leak provider/host details
+    solar_chart = _native_json_data(solar_chart)
     return {
         "schema_version": "astro.solar-facts.v1",
         "target_year": target_year,

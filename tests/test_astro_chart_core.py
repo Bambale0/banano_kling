@@ -127,6 +127,72 @@ def test_synastry_has_two_distinct_charts_and_no_fake_relationship_score():
     assert [call[0] for call in engine.calls].count("resolve") == 2
 
 
+
+def test_numpy_ephemeris_scalars_are_native_json_values():
+    """Regression: real openephem aspects applying uses numpy.bool_ (HTTP 500)."""
+    import json
+    from datetime import UTC, datetime
+
+    np = pytest.importorskip("numpy")
+
+    class NumpyEngine(FakeEngine):
+        def assemble(self, moment, **kwargs):
+            chart = super().assemble(moment, **kwargs)
+            chart["bodies"]["Sun"]["lon"] = np.float64(18.25)
+            chart["bodies"]["Sun"]["retro"] = np.bool_(False)
+            chart["aspects"][0]["applying"] = np.bool_(True)
+            chart["aspects"][0]["orb"] = np.float64(0.625)
+            return chart
+
+        def cross_aspects(self, first, second):
+            return [{
+                "a": "Sun", "b": "Moon", "aspect": "conjunction",
+                "orb": np.float64(0.5), "applying": np.bool_(False),
+            }]
+
+    engine = NumpyEngine()
+    result = build_natal_facts(PROFILE, engine=engine, kernel="de440.bsp")
+    json.dumps(result, allow_nan=False)
+    aspect = result["chart"]["aspects"][0]
+    assert type(aspect["applying"]) is bool
+    assert type(aspect["orb"]) is float
+    assert type(result["chart"]["bodies"]["Sun"]["retro"]) is bool
+    assert type(result["chart"]["bodies"]["Sun"]["lon"]) is float
+
+    synastry = build_synastry_facts(
+        PROFILE, PROFILE, engine=engine, kernel="de440.bsp",
+    )
+    json.dumps(synastry, allow_nan=False)
+    assert type(synastry["aspects"][0]["applying"]) is bool
+
+    engine.returns = SimpleNamespace(
+        jd_from_datetime=lambda dt: (
+            (dt - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds() / 86400
+            + 2440587.5
+        ),
+    )
+    from bot.services.astro_chart_core import build_transit_snapshots
+
+    monthly = build_transit_snapshots(
+        PROFILE, year=2024, month=2, engine=engine,
+        kernel="de440.bsp", planetary_engine=FakePlanetEngine(),
+    )
+    json.dumps(monthly, allow_nan=False)
+    assert type(monthly["samples"][0]["aspects_to_natal"][0]["applying"]) is bool
+
+
+def test_nonfinite_aspect_scalar_is_rejected_instead_of_leaking_invalid_json():
+    import numpy as np
+
+    class InvalidEngine(FakeEngine):
+        def assemble(self, moment, **kwargs):
+            chart = super().assemble(moment, **kwargs)
+            chart["aspects"][0]["orb"] = np.float64(float("nan"))
+            return chart
+
+    with pytest.raises(AstroChartUnavailable):
+        build_natal_facts(PROFILE, engine=InvalidEngine(), kernel="de440.bsp")
+
 def test_real_mit_engine_placidus_houses_offline():
     """Real library smoke: house math must run without downloading a kernel."""
     pytest.importorskip("openephem")

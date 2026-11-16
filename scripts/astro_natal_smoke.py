@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 
 from bot.services.astro_chart_core import build_natal_facts
@@ -25,6 +26,9 @@ def main() -> None:
     }
     result = build_natal_facts(profile)
     chart = result["chart"]
+    # Genuine openephem aspects include numpy.bool_ applying flags.
+    # Aiohttp must be able to encode the entire chart without a custom handler.
+    json.dumps(result, allow_nan=False)
     if (
         chart["house_system"] != "Placidus"
         or len(chart["cusps"]) != 12
