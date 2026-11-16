@@ -284,6 +284,32 @@ try {
       }) })
       return
     }
+    if (path.endsWith('/astro/compatibility')) {
+      const body = JSON.parse(request.postData() || '{}')
+      assert.equal(body.person_a.date, '20.03.2024')
+      assert.equal(body.person_b.date, '01.02.1995')
+      assert.equal(body.person_a.timezone, 'Europe/Moscow')
+      assert.equal(body.person_b.timezone, 'Europe/Tallinn')
+      assert.equal(body.person_a.place, undefined)
+      assert.equal(body.person_b.place, undefined)
+      if (!bootstrapPayload.is_admin) {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: '{"ok":false,"error":"forbidden"}' })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true,
+        result: {
+          schema_version: 'astro.synastry.facts.v1',
+          person_a: { birth_time_known: true }, person_b: { birth_time_known: false },
+          cross_aspects: [{
+            person_a_body: 'Sun', person_b_body: 'Venus',
+            kind: 'trine', orb_deg: 1.12, approximate: true,
+          }],
+          warnings: ['Композит и наложения на дома не рассчитаны'],
+        },
+      }) })
+      return
+    }
     if (path.endsWith('/genjutsu/upload')) {
       const kind = new URL(request.url()).searchParams.get('kind')
       // Upload completion is asynchronous. Keep this delay so the browser
@@ -1079,7 +1105,16 @@ try {
   await page.getByRole('status').getByText(/Положения рассчитаны/).waitFor()
   await page.getByRole('button', { name: /Все разделы/ }).click()
   await page.getByRole('button', { name: 'Совместимость', exact: true }).click()
-  await page.getByLabel('partner: дата рождения').waitFor()
+  await page.getByLabel('person: дата рождения').fill('20.03.2024')
+  await page.getByLabel('person: время рождения').fill('12:00')
+  await page.getByLabel('person: место рождения').fill('Москва')
+  await page.getByLabel('person: часовой пояс').fill('Europe/Moscow')
+  await page.getByLabel('partner: дата рождения').fill('01.02.1995')
+  await page.getByLabel('partner: место рождения').fill('Таллин')
+  await page.getByLabel('partner: часовой пояс').fill('Europe/Tallinn')
+  await page.getByRole('button', { name: 'Получить разбор' }).click()
+  await page.getByRole('heading', { name: 'Межкартные аспекты' }).waitFor()
+  await page.locator('[aria-label="Рассчитанные межкартные аспекты"]').getByText(/приблизительно/).waitFor()
   bootstrapPayload.is_admin = false
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: 'Motion', exact: true }).waitFor()
