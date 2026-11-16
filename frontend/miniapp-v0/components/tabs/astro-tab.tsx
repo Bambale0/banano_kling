@@ -10,6 +10,21 @@ import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
 
+interface NatalReport {
+  schema_version: string
+  timezone: string
+  birth_time_known: boolean
+  utc_reference: string
+  positions: Record<string, {
+    sign: string
+    degree_in_sign: number
+    retrograde: boolean
+    approximate: boolean
+  }>
+  aspects: Array<{ a: string; b: string; kind: string; orb_deg: number }>
+  warnings: string[]
+}
+
 interface LunarReport {
   period: string
   timezone: string
@@ -32,7 +47,7 @@ interface AstroService {
 }
 
 export const ASTRO_SERVICES: readonly AstroService[] = [
-  { id: 'natal', title: 'Натальная карта', description: 'Полный анализ вашей личности, талантов, кармы и жизненного пути' },
+  { id: 'natal', title: 'Натальная карта', description: 'Фактические положения планет и аспекты. Развёрнутый разбор готовится' },
   { id: 'compatibility', title: 'Совместимость', description: 'Астрологический разбор отношений по данным двух людей' },
   { id: 'karma', title: 'Кармический разбор', description: 'Лунные узлы, жизненные темы и символические уроки' },
   { id: 'year', title: 'Годовой прогноз', description: 'Астрологические транзиты и тенденции на выбранный год' },
@@ -210,6 +225,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
     try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
   })
   const [lunarReport, setLunarReport] = useState<LunarReport | null>(null)
+  const [natalReport, setNatalReport] = useState<NatalReport | null>(null)
+  const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -258,6 +275,45 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       setMessage('Укажите место рождения.')
       return
     }
+    if (service.id === 'natal') {
+      if (!birthTimezone.trim()) {
+        setMessage('Укажите часовой пояс места рождения, например Europe/Moscow.')
+        return
+      }
+      const foldRaw = String(form.get('birth-fold') || '')
+      setNatalReport(null)
+      setCalculating(true)
+      setMessage('Рассчитываем положения планет…')
+      try {
+        const response = await fetch('/mini-app/api/astro/natal', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            init_data: getInitData(),
+            date: String(form.get('person-date') || ''),
+            time: String(form.get('person-time') || ''),
+            timezone: birthTimezone.trim(),
+            ...(foldRaw === '0' || foldRaw === '1' ? { fold: Number(foldRaw) } : {}),
+          }),
+        })
+        if (response.status === 401 || response.status === 403) {
+          setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
+          return
+        }
+        const data = await response.json()
+        if (!response.ok || !data.ok || data.result?.schema_version !== 'astro.natal.facts.v1') {
+          setMessage(data.message || 'Расчёт сейчас недоступен. Баланс не списан.')
+          return
+        }
+        setNatalReport(data.result as NatalReport)
+        setMessage('Положения рассчитаны. Оплата не требуется.')
+      } catch {
+        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+      } finally {
+        setCalculating(false)
+      }
+      return
+    }
     if (service.id === 'solar' && !String(form.get('solar-place') || '').trim()) {
       setMessage('Укажите место, где вы встретите день рождения в выбранном году.')
       return
@@ -303,6 +359,35 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <>
             <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} />
             {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" />}
+            {service.id === 'natal' && (
+              <>
+                <label className="astro-field">
+                  <MapPin className="astro-field-icon" aria-hidden="true" />
+                  <span className="astro-field-body">
+                    <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
+                    <input aria-label="Часовой пояс рождения" name="birth-timezone"
+                      value={birthTimezone} onChange={(event) => setBirthTimezone(event.target.value)}
+                      placeholder="Europe/Moscow" autoComplete="off" />
+                  </span>
+                </label>
+                <label className="astro-field">
+                  <Clock3 className="astro-field-icon" aria-hidden="true" />
+                  <span className="astro-field-body">
+                    <span className="astro-field-label">При повторном времени перевода часов</span>
+                    <select aria-label="Повторное местное время" name="birth-fold" defaultValue="">
+                      <option value="">Не знаю / не требуется</option>
+                      <option value="0">Первое появление времени</option>
+                      <option value="1">Второе появление времени</option>
+                    </select>
+                  </span>
+                </label>
+                <p className="astro-form-message">
+                  Место рождения пока не геокодируется. Укажите его исторический часовой пояс вручную.
+                  Для неизвестного времени рождения Луна и аспекты не определяются.
+                  Дома и асцендент пока не рассчитываются.
+                </p>
+              </>
+            )}
             {service.id === 'solar' && (
               <label className="astro-field">
                 <MapPin className="astro-field-icon" aria-hidden="true" />
@@ -335,6 +420,35 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         </button>
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
+      {natalReport && (
+        <div className="astro-lunar-result" aria-label="Рассчитанные положения планет">
+          <h2>Положения планет</h2>
+          <p>Часовой пояс: {natalReport.timezone}. Расчёт на {natalReport.utc_reference} (UTC).
+            {natalReport.birth_time_known ? ' Время рождения известно.' : ' Время рождения неизвестно, позиции приближённые.'}
+          </p>
+          <ul className="astro-lunar-days">
+            {Object.entries(natalReport.positions).map(([name, item]) => (
+              <li key={name}>
+                <strong>{name}</strong>: {item.sign} {item.degree_in_sign.toFixed(2)}°
+                {item.retrograde ? ' · ретроградность' : ''}
+                {item.approximate ? ' · приблизительно' : ''}
+              </li>
+            ))}
+          </ul>
+          <h3>Основные аспекты</h3>
+          {natalReport.aspects.length ? (
+            <ul className="astro-lunar-days">
+              {natalReport.aspects.map((item) => (
+                <li key={item.a + '-' + item.b}>
+                  {item.a} — {item.b}: {item.kind}, орбис {item.orb_deg.toFixed(2)}°
+                </li>
+              ))}
+            </ul>
+          ) : <p>Точные аспекты не определены либо не обнаружены при выбранных орбисах.</p>}
+          {natalReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+          <p>Это астрономические расчётные данные, а не готовое персональное толкование.</p>
+        </div>
+      )}
       {lunarReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанный лунный календарь">
           <h2>Лунный календарь за {lunarReport.period}</h2>
