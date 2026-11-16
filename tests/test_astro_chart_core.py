@@ -1,9 +1,11 @@
 """Natal and synastry adapter regression tests (pure mock, no JPL download)."""
 
+import hashlib
 from types import SimpleNamespace
 
 import pytest
 
+from bot.services import astro_chart_core
 from bot.services.astro_chart_core import (
     BODIES,
     AstroChartInputError,
@@ -252,3 +254,23 @@ def test_unknown_time_cannot_produce_precision_solar_return():
             },
             engine=FakeEngine(), kernel="de440.bsp",
         )
+
+
+def test_jpl_kernel_must_match_operator_configured_sha256(monkeypatch, tmp_path):
+    kernel = tmp_path / "de440.bsp"
+    kernel.write_bytes(b"fixture-only-not-a-real-kernel")
+    digest = hashlib.sha256(kernel.read_bytes()).hexdigest()
+    monkeypatch.setenv("ASTRO_DE440_PATH", str(kernel))
+    monkeypatch.delenv("ASTRO_DE440_SHA256", raising=False)
+    with pytest.raises(AstroChartUnavailable, match="SHA-256"):
+        astro_chart_core._kernel_path()
+    monkeypatch.setenv("ASTRO_DE440_SHA256", "0" * 64)
+    with pytest.raises(AstroChartUnavailable, match="integrity"):
+        astro_chart_core._kernel_path()
+    monkeypatch.setenv("ASTRO_DE440_SHA256", digest.upper())
+    assert astro_chart_core._kernel_path() == str(kernel.resolve())
+    # File replacement changes stat key and must not reuse a previously
+    # successful proof for a different kernel.
+    kernel.write_bytes(b"replaced-data")
+    with pytest.raises(AstroChartUnavailable, match="integrity"):
+        astro_chart_core._kernel_path()
