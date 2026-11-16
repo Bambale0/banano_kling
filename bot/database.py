@@ -5899,6 +5899,7 @@ async def mark_task_delivery_status(
     *,
     error: str | None = None,
     retry_after_seconds: int | None = None,
+    message_id: int | None = None,
 ) -> bool:
     """Persist Telegram outcome without losing concurrent delivery state.
 
@@ -5961,6 +5962,13 @@ async def mark_task_delivery_status(
             ).isoformat()
         else:
             request_data.pop("delivery_retry_at", None)
+        if (
+            effective_status == "delivered"
+            and isinstance(message_id, int)
+            and not isinstance(message_id, bool)
+        ):
+            # Store the actual Telegram receipt in the same CAS as delivered.
+            request_data["delivery_message_id"] = message_id
         if effective_status != normalized_status and not telegram_media_too_large(error):
             request_data["delivery_error"] = "delivery_retry_budget_exhausted"
         elif error:
