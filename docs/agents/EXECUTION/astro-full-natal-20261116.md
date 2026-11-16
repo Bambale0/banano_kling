@@ -1,0 +1,18 @@
+# Execution record: precise natal chart with GeoNames/JPL DE440
+
+- Parent #544, epics #559, #560, #561, #569.
+- Branch feature/astro-natal-placidus-20261116, based on feature/astro-places-api-current-20261116 (#577). Dependencies: #576 GeoNames, #577 admin city picker/API and #575 dormant MIT chart engine.
+- Root cause seen in user UI: old POST /mini-app/api/astro/natal had no verified geographical place and returned planets/aspects only; ASC, MC and Placidus cusps could not be derived.
+- New route POST /mini-app/api/astro/natal/full accepts signed Telegram initData, selected canonical integer place_id, birth date/time/optional fold. Backend resolves place ID in operator-controlled immutable SQLite and does not trust client coordinates, timezone or is_admin.
+- Real engine openephem==0.5.0 (MIT), pinned requirement and SHA256-checked DE440; 12 house cusps and ASC/MC, retrograde and inter-planetary aspects returned, no AI-generated astronomical facts. Unknown birth time suppresses houses/ASC and Moon as indicated by accuracy. High latitudes where Placidus undefined fail closed.
+- UI requires explicit city selection from live GeoNames autocomplete, auto-populates the historical IANA zone, calls full endpoint, shows all houses and angles, planets, aspects; old disclaimer about no ASC removed.
+- Operator-provisioned external JPL and GeoNames files staged under host ignored astro-assets/, SHA256 verified; optional ignored .env.astro includes paths and digest; compose.backend.yml adds readonly mount and optional env_file, no media storage or billing changes.
+- Security: server admin access before and after compute, VK rejected, no saving birth data, request ID / duration logging without PII. User cards/finances untouched. Rollback: revert feature PR, leave assets unreferenced.
+- TDD and checks: 14 API tests initially failed as expected; implementation then passed all. 118 Astro/backend regression tests passed (one non-fatal pytest config warning), 14 React Jest passed, tsc/eslint/Ruff passed, actual offline Docker with genuine GeoNames and DE440 returned 12 houses, ASC, MC, 12 objects and cross-engine Sun/Moon/Mercury/Venus/Mars agreement within 0.05 degrees. Unknown time fail-closed. Compose rendered validated readonly mount and three Astro env keys.
+- Still required before release closure: protected PR CI (Python/deploy, safe regressions, browser E2E, image build), native protected merge to tanyapi, exact-SHA production deploy, HTTP anonymous 401 and admin WebView smoke. Extended written interpretation and seven other service flows remain #544/#568/#569; no debits allowed.
+
+## Further E2E and race verification
+
+- Old browser E2E attempted to fill read-only IANA timezone and timed out; updated it to type a city, select canonical GeoNames ID, assert server-derived timezone and verify ASC/MC plus 12 Placidus cusps in rendered output, with mocked signed backend. Do not remove coverage.
+- Natal calculation responses now have an input-epoch guard: editing date/time, city or other birth inputs invalidates outstanding responses and prevents stale person-specific chart display. 16 Astro React regressions pass, including pending-response race, ESLint and TypeScript green.
+- Host-local full critical E2E initially picked up an unrelated stale Seedance test HTTP server on 127.0.0.1:4192 from tg-vk-20261105, showing a blank VK-compiled app despite a correctly built TG export. Isolated rerun uses SEEDANCE_IDENTITY_E2E_PORT=4279 rather than killing the other process. CI runners are isolated and do not share this host port.

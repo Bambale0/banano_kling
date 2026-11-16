@@ -21,6 +21,8 @@ services:
         required: false
       - path: .env.s3
         required: false
+      - path: .env.astro
+        required: false
 
     environment:
       BANANO_SKIP_PROJECT_ENV: "1"
@@ -36,6 +38,8 @@ services:
       - ./logs:/app/logs
       - ./backups:/app/backups
       - ./outputs:/app/outputs
+      # Operator-managed JPL/GeoNames assets, never committed to Git.
+      - ${ASTRO_ASSETS_HOST_DIR:-./astro-assets}:/app/astro-assets:ro
 
     cap_drop:
       - ALL

@@ -264,22 +264,64 @@ try {
     const request = route.request()
     const path = new URL(request.url()).pathname
 
-    if (path.endsWith('/astro/natal')) {
+    if (path.endsWith('/astro/places')) {
       const body = JSON.parse(request.postData() || '{}')
-      assert.equal(body.date, '29.02.2000')
-      assert.equal(body.timezone, 'Europe/Moscow')
-      assert.equal(body.place, undefined, 'place names must not be sent before geocoding exists')
+      assert.equal(typeof body.init_data, 'string')
       if (!bootstrapPayload.is_admin) {
         await route.fulfill({ status: 403, contentType: 'application/json', body: '{"ok":false,"error":"forbidden"}' })
         return
       }
+      // Reproduce a real GeoNames lookup rather than allowing free-text to pass
+      // as a verified location. Users must choose the canonical place ID.
+      const russianMoscow = {
+        place_id: 524901, name: 'Москва', country_code: 'RU',
+        timezone: 'Europe/Moscow', latitude: 55.75, longitude: 37.62,
+        display_name: 'Москва, RU', source: 'GeoNames',
+      }
+      const tallinn = {
+        place_id: 588409, name: 'Tallinn', country_code: 'EE',
+        timezone: 'Europe/Tallinn', latitude: 59.437, longitude: 24.753,
+        display_name: 'Tallinn, EE', source: 'GeoNames',
+      }
+      const query = String(body.query || '').toLowerCase()
+      const results = query.includes('моск') ? [russianMoscow]
+        : query.includes('таллин') ? [tallinn] : []
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, results, attribution: '© GeoNames (CC BY 4.0)',
+      }) })
+      return
+    }
+    if (path.endsWith('/astro/natal/full')) {
+      const body = JSON.parse(request.postData() || '{}')
+      assert.equal(body.date, '29.02.2000')
+      assert.equal(body.time, '12:00')
+      assert.equal(body.place_id, 524901)
+      assert.equal(body.timezone, undefined, 'authoritative timezone must come from server-side GeoNames')
+      assert.equal(body.latitude, undefined, 'client-supplied coordinates must not be trusted')
+      assert.equal(body.longitude, undefined, 'client-supplied coordinates must not be trusted')
+      if (!bootstrapPayload.is_admin) {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: '{"ok":false,"error":"forbidden"}' })
+        return
+      }
+      const houseCusps = [118.27, 130.03, 145.67, 169.25, 208.70, 262.69,
+        298.27, 310.03, 325.67, 349.25, 28.70, 82.69]
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         ok: true,
         result: {
-          schema_version: 'astro.natal.facts.v1', timezone: 'Europe/Moscow',
-          utc_reference: '2000-02-29T09:00:00+00:00', birth_time_known: true,
-          positions: { Sun: { sign: 'Рыбы', degree_in_sign: 10.5, retrograde: false, approximate: false } },
-          aspects: [], warnings: ['Дома и ASC не рассчитаны'],
+          schema_version: 'astro.natal-facts.v1',
+          chart: {
+            utc: '2000-02-29T09:00:00+00:00',
+            tz: 'Europe/Moscow', house_system: 'Placidus',
+            angles: { asc: houseCusps[0], mc: houseCusps[9] },
+            cusps: houseCusps,
+            bodies: {
+              Sun: { lon: 340.15, speed: 1.0, retro: false, sign: 'Pisces', deg_in_sign: 10.15 },
+              Mercury: { lon: 342.55, speed: -0.5, retro: true, sign: 'Pisces', deg_in_sign: 12.55 },
+            },
+            aspects: [{ a: 'Sun', b: 'Mercury', aspect: 'conjunction', orb: -2.4 }],
+          },
+          accuracy: { birth_time_known: true, moon_position_known: true, houses_available: true },
+          disclaimer: 'Symbolic interpretation only',
         },
       }) })
       return
@@ -1092,8 +1134,12 @@ try {
   }
   await page.getByRole('button', { name: 'Натальная карта', exact: true }).click()
   await page.getByLabel('person: дата рождения').fill('29.02.2000')
+  await page.getByLabel('person: время рождения').fill('12:00')
   await page.getByLabel('person: место рождения').fill('Москва, Россия')
-  await page.getByLabel('Часовой пояс рождения').fill('Europe/Moscow')
+  await page.getByRole('option', { name: 'Выбрать Москва, Россия' }).waitFor()
+  await page.getByRole('option', { name: 'Выбрать Москва, Россия' }).click()
+  assert.equal(await page.getByLabel('Часовой пояс рождения').inputValue(), 'Europe/Moscow')
+  assert.equal(await page.locator('input[name="person-place-id"]').inputValue(), '524901')
   if (process.env.ASTRO_QA_SCREENSHOTS) {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-390.png' })
@@ -1101,8 +1147,9 @@ try {
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-414.png' })
   }
   await page.getByRole('button', { name: 'Построить натальную карту' }).click()
-  await page.getByRole('heading', { name: 'Положения планет' }).waitFor()
-  await page.getByRole('status').getByText(/Положения рассчитаны/).waitFor()
+  await page.getByRole('heading', { name: 'Дома Плацидуса' }).waitFor()
+  await page.getByLabel('Полная рассчитанная натальная карта').getByText(/Дом 12:/).waitFor()
+  await page.getByText(/Натальная карта, ASC\/MC и дома рассчитаны/).waitFor()
   await page.getByRole('button', { name: /Все разделы/ }).click()
   await page.getByRole('button', { name: 'Совместимость', exact: true }).click()
   await page.getByLabel('person: дата рождения').fill('20.03.2024')

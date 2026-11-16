@@ -119,3 +119,6 @@ data/*_checkpoint.json
 !tests/test_bot_start_eligibility.py
 
 !tests/test_seedance_provider_fallback.py
+
+# Large offline GeoNames/JPL assets are operator-provisioned, never in Git.
+/astro-assets/

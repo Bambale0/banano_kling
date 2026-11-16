@@ -41,3 +41,6 @@ pypdf>=6.20,<7
 
 # MIT-licensed deterministic astronomical ephemerides for admin Astro calendar
 astronomy-engine==2.1.19
+
+# MIT chart math: external JPL ephemeris, configured operator-side
+openephem==0.5.0

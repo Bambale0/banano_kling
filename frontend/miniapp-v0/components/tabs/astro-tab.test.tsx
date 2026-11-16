@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import { AstroTab, ASTRO_SERVICES } from './astro-tab'
 
@@ -30,68 +30,182 @@ describe('Astro concept screens', () => {
 
     fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
     fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
-    expect(screen.getByRole('status')).toHaveTextContent('часовой пояс')
+    expect(screen.getByRole('status')).toHaveTextContent('Выберите место рождения из предложенного списка')
   })
 
-  it('sends only validated natal date/time and IANA timezone to admin backend', async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        ok: true,
-        result: {
-          schema_version: 'astro.natal.facts.v1',
-          timezone: 'Europe/Moscow',
-          utc_reference: '2000-02-29T09:00:00+00:00',
-          birth_time_known: true,
-          positions: {
-            Sun: { sign: 'Рыбы', degree_in_sign: 10.5, retrograde: false, approximate: false },
-            Mercury: { sign: 'Водолей', degree_in_sign: 1.25, retrograde: true, approximate: false },
-          },
-          aspects: [{ a: 'Sun', b: 'Mercury', kind: 'conjunction', orb_deg: 1.4 }],
-          warnings: ['Дома и ASC не рассчитаны'],
+  it('uses the verified city ID and renders real Placidus houses, ASC/MC and planets', async () => {
+    const places = [{
+      place_id: 498817, name: 'Saint Petersburg', country_code: 'RU',
+      timezone: 'Europe/Moscow', latitude: 59.93863, longitude: 30.31413,
+      display_name: 'Saint Petersburg, RU', source: 'GeoNames',
+    }]
+    const result = {
+      schema_version: 'astro.natal-facts.v1',
+      chart: {
+        utc: '2000-02-29T10:45:00+00:00', tz: 'Europe/Moscow',
+        house_system: 'Placidus',
+        angles: { asc: 118.27, mc: 349.25 },
+        cusps: [118.27, 130.03, 145.67, 169.25, 208.70, 262.69,
+          298.27, 310.03, 325.67, 349.25, 28.70, 82.69],
+        bodies: {
+          Sun: { lon: 340.15, speed: 1, retro: false, sign: 'Pisces', deg_in_sign: 10.15 },
+          Mercury: { lon: 342.15, speed: -1, retro: true, sign: 'Pisces', deg_in_sign: 12.15 },
         },
-      }),
-    })
+        aspects: [{ a: 'Sun', b: 'Mercury', aspect: 'conjunction', orb: -2.0 }],
+      },
+      accuracy: { birth_time_known: true, moon_position_known: true, houses_available: true },
+      disclaimer: 'Symbolic tradition',
+    }
+    const fetchMock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: 200,
+      json: async () => url.endsWith('/places')
+        ? { ok: true, results: places } : { ok: true, result },
+    }))
     const originalFetch = global.fetch
     Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
     try {
       render(<AstroTab />)
       fireEvent.click(screen.getByText('Натальная карта'))
       fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
-      fireEvent.change(screen.getByLabelText('person: время рождения'), { target: { value: '12:00' } })
-      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва, Россия' } })
-      fireEvent.change(screen.getByLabelText('Часовой пояс рождения'), { target: { value: 'Europe/Moscow' } })
+      fireEvent.change(screen.getByLabelText('person: время рождения'), { target: { value: '13:45' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Россия, Санкт-Петербург' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
+      expect(screen.getByLabelText('Часовой пояс рождения')).toHaveValue('Europe/Moscow')
+      expect(screen.getByLabelText('Часовой пояс рождения')).toHaveAttribute('readOnly')
       fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
-      await waitFor(() => expect(screen.getByRole('heading', { name: 'Положения планет' })).toBeInTheDocument())
-      expect(screen.getByText(/ретроградность/)).toBeInTheDocument()
-      expect(screen.getByText(/Дома и ASC не рассчитаны/)).toBeInTheDocument()
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-      const [endpoint, request] = fetchMock.mock.calls[0]
-      expect(endpoint).toBe('/mini-app/api/astro/natal')
-      const payload = JSON.parse(request.body)
-      expect(payload).toMatchObject({ date: '29.02.2000', time: '12:00', timezone: 'Europe/Moscow' })
-      expect(payload).not.toHaveProperty('place')
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Дома Плацидуса' })).toBeInTheDocument())
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('ASC')
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('MC')
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Дом 12')
+      expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Рыбы 10.15°')
+      const natalRequests = fetchMock.mock.calls.filter(([url]) => url.endsWith('/natal/full'))
+      expect(natalRequests).toHaveLength(1)
+      const [endpoint, init] = natalRequests[0]
+      expect(endpoint).toBe('/mini-app/api/astro/natal/full')
+      const payload = JSON.parse(init.body)
+      expect(payload).toMatchObject({
+        place_id: 498817, date: '29.02.2000', time: '13:45',
+      })
+      expect(payload).not.toHaveProperty('timezone')
+      expect(payload).not.toHaveProperty('latitude')
+      expect(payload).not.toHaveProperty('longitude')
       expect(payload).not.toHaveProperty('is_admin')
     } finally {
       Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
     }
   })
 
-  it('does not display natal facts if server rejects revoked admin access', async () => {
+  it('does not reveal a natal chart if admin rights are revoked', async () => {
     const originalFetch = global.fetch
-    Object.defineProperty(global, 'fetch', {
-      configurable: true, value: jest.fn().mockResolvedValue({ status: 403, ok: false }),
-    })
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve(
+      url.endsWith('/places')
+        ? {
+          ok: true, status: 200, json: async () => ({ ok: true, results: [{
+            place_id: 498817, name: 'Saint Petersburg', country_code: 'RU',
+            timezone: 'Europe/Moscow', latitude: 59.94, longitude: 30.31,
+          }] }),
+        }
+        : { ok: false, status: 403 },
+    ))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
     try {
       render(<AstroTab />)
       fireEvent.click(screen.getByText('Натальная карта'))
       fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
-      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
-      fireEvent.change(screen.getByLabelText('Часовой пояс рождения'), { target: { value: 'Europe/Moscow' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Санкт-Петербург' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
       fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Нет доступа'))
-      expect(screen.queryByLabelText('Рассчитанные положения планет')).not.toBeInTheDocument()
+      await waitFor(() => expect(screen.getByText(/Нет доступа к расчёту/)).toBeInTheDocument())
+      expect(screen.queryByLabelText('Полная рассчитанная натальная карта')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
+    }
+  })
+
+  it('invalidates a previously calculated natal chart after changing birth inputs', async () => {
+    const originalFetch = global.fetch
+    const fetchMock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: 200,
+      json: async () => url.endsWith('/places')
+        ? { ok: true, results: [{
+          place_id: 498817, name: 'Saint Petersburg', country_code: 'RU',
+          timezone: 'Europe/Moscow', latitude: 59.94, longitude: 30.31,
+        }] }
+        : { ok: true, result: {
+          schema_version: 'astro.natal-facts.v1',
+          chart: {
+            utc: '2000-02-29T10:45:00+00:00', tz: 'Europe/Moscow',
+            house_system: 'Placidus', angles: { asc: 118, mc: 349 },
+            cusps: Array.from({ length: 12 }, (_, i) => i * 30),
+            bodies: { Sun: { lon: 340.15, speed: 1, retro: false, sign: 'Pisces', deg_in_sign: 10.15 } },
+            aspects: [],
+          },
+          accuracy: { birth_time_known: true, moon_position_known: true, houses_available: true },
+          disclaimer: 'symbolic',
+        } },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Санкт-Петербург' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
+      fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
+      await waitFor(() => expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toBeInTheDocument())
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '01.03.2000' } })
+      expect(screen.queryByLabelText('Полная рассчитанная натальная карта')).not.toBeInTheDocument()
+      expect(screen.getByLabelText('Часовой пояс рождения')).toHaveValue('Europe/Moscow')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
+    }
+  })
+
+  it('ignores a stale natal response after the birth date is edited mid-request', async () => {
+    const originalFetch = global.fetch
+    let deliver!: (response: unknown) => void
+    const unresolved = new Promise((resolve) => { deliver = resolve })
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/places')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, results: [{
+          place_id: 498817, name: 'Saint Petersburg', country_code: 'RU',
+          timezone: 'Europe/Moscow', latitude: 59.94, longitude: 30.31,
+        }] }) })
+      }
+      return unresolved
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      const date = screen.getByLabelText('person: дата рождения')
+      fireEvent.change(date, { target: { value: '29.02.2000' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Санкт-Петербург' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
+      fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
+      await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/natal/full'))).toBe(true))
+      fireEvent.change(date, { target: { value: '01.03.2000' } })
+      await act(async () => {
+        deliver({ ok: true, status: 200, json: async () => ({ ok: true, result: {
+          schema_version: 'astro.natal-facts.v1',
+          chart: {
+            utc: '2000-02-29T10:45:00+00:00', tz: 'Europe/Moscow', house_system: 'Placidus',
+            angles: { asc: 118.27, mc: 349.25 },
+            cusps: Array.from({ length: 12 }, (_, i) => i * 30),
+            bodies: { Sun: { lon: 340.15, speed: 1, retro: false, sign: 'Pisces', deg_in_sign: 10.15 } },
+            aspects: [],
+          },
+          accuracy: { birth_time_known: true, moon_position_known: true, houses_available: true },
+        } }) })
+        await unresolved
+      })
+      expect(screen.queryByLabelText('Полная рассчитанная натальная карта')).not.toBeInTheDocument()
+      expect(date).toHaveValue('01.03.2000')
+      expect(screen.getByRole('button', { name: /Построить натальную карту/ })).toBeEnabled()
     } finally {
       Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
     }
