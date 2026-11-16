@@ -107,7 +107,7 @@ def load_aspect_orbs(settings_file: Path = _SETTINGS_FILE) -> dict[str, float]:
         for key in _ANGLES:
             value = policy[key]
             if isinstance(value, bool) or not isinstance(value, (int, float)):
-                raise ValueError("invalid orb type")
+                raise TypeError("invalid orb type")
             numeric = float(value)
             if not math.isfinite(numeric) or not 0.0 < numeric <= 15.0:
                 raise ValueError("invalid orb range")
