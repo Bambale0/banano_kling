@@ -282,7 +282,10 @@ async def test_uncertain_send_retries_only_with_explicit_opt_in_and_backoff(monk
         for _ in range(4)
     ))
     assert claims.count(True) == 1
-    assert await database.mark_task_delivery_status(task_id, "delivered")
+    assert await database.mark_task_delivery_status(task_id, "delivered", message_id=702)
+    delivered_meta = json.loads((await database.get_task_by_id(task_id)).request_data)
+    assert delivered_meta["delivery_message_id"] == 702
+    assert delivered_meta["delivery_status"] == "delivered"
     assert not await database.claim_task_delivery(task_id, allow_uncertain_retry=True)
 
 
