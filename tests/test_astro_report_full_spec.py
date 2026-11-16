@@ -1,11 +1,12 @@
 """Regression: seven full original owner specifications, not a 12-card generic horoscope."""
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from bot.services.astro_report_pipeline import AstroReportError, load_report_plan
+from bot.services.astro_report_pipeline import AstroReportError, load_report_plan, report_fingerprint
 
 # Source-derived report sections, excluding computation input and format-only chapters.
 REPORT_SPECS = {
@@ -89,8 +90,6 @@ def test_solar_requires_real_twelve_periods_not_a_fake_template():
 
 
 def test_report_fingerprint_changes_when_prompt_changes_without_version_bump():
-    from dataclasses import replace
-    from bot.services.astro_report_pipeline import report_fingerprint
     plan = load_report_plan("natal")
     facts = {
         "schema_version": "astro.natal.facts.v1",
