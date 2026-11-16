@@ -84,7 +84,7 @@ async def astro_lunar_calendar(request: web.Request) -> web.Response:
             {"ok": False, "error": "engine_unavailable"},
             status=503, headers={"Cache-Control": "no-store"},
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.error("astro_lunar_timeout request_id=%s", request_id)
         return web.json_response(
             {"ok": False, "error": "calculation_timeout"},
