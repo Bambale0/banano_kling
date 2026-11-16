@@ -92,6 +92,38 @@ function zodiacPosition(lon: number): string {
   return ZODIAC_SIGNS_RU[index] + ' ' + (value % 30).toFixed(2) + '°'
 }
 
+interface KarmaReport {
+  schema_version: 'astro.karma-indicators.v1'
+  indicators: Record<string, { lon: number; retro?: boolean }>
+  aspects: Array<{ a: string; b: string; aspect: string; orb?: number }>
+}
+
+interface TransitReport {
+  schema_version: 'astro.transit-snapshots.v1'
+  scope: 'year' | 'month'
+  period: string
+  samples: Array<{
+    date: string
+    at_local: string
+    bodies: Record<string, { lon: number }>
+    aspects_to_natal: unknown[]
+  }>
+}
+
+interface SolarReport {
+  schema_version: 'astro.solar-facts.v1'
+  solar_return_at_utc: string
+  solar_return_at_local: string
+  return_location: { timezone: string }
+  solar_chart: {
+    angles: { asc: number; mc: number } | null
+    cusps: number[] | null
+    bodies: Record<string, { lon: number; retro?: boolean }>
+  }
+}
+
+type ExtendedReport = KarmaReport | TransitReport | SolarReport
+
 interface LunarReport {
   period: string
   timezone: string
@@ -469,6 +501,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   const [natalReport, setNatalReport] = useState<NatalReport | null>(null)
   const [fullNatalReport, setFullNatalReport] = useState<FullNatalReport | null>(null)
   const [compatibilityReport, setCompatibilityReport] = useState<CompatibilityReport | null>(null)
+  const [extendedReport, setExtendedReport] = useState<ExtendedReport | null>(null)
   const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
   const calculationEpoch = useRef(0)
@@ -613,8 +646,66 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       }
       return
     }
-    if (service.id === 'solar' && !String(form.get('solar-place') || '').trim()) {
-      setMessage('Укажите место, где вы встретите день рождения в выбранном году.')
+    if (['karma', 'year', 'month', 'solar'].includes(service.id)) {
+      const placeId = Number(form.get('person-place-id'))
+      if (!Number.isInteger(placeId) || placeId <= 0) {
+        setMessage('Выберите город рождения из списка, чтобы определить координаты и часовой пояс.')
+        return
+      }
+      const returnPlaceId = Number(form.get('solar-place-id'))
+      if (service.id === 'solar' && (!Number.isInteger(returnPlaceId) || returnPlaceId <= 0)) {
+        setMessage('Выберите место встречи соляра из списка городов.')
+        return
+      }
+      const foldRaw = String(form.get('birth-fold') || '')
+      const epoch = ++calculationEpoch.current
+      setExtendedReport(null)
+      setCalculating(true)
+      setMessage('Получаем точные астрономические данные…')
+      try {
+        const response = await fetch('/mini-app/api/astro/' + service.id, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            init_data: getInitData(),
+            place_id: placeId,
+            date: String(form.get('person-date') || ''),
+            time: String(form.get('person-time') || ''),
+            ...(service.id !== 'karma' ? { period } : {}),
+            ...(service.id === 'solar' ? { return_place_id: returnPlaceId } : {}),
+            ...(foldRaw === '0' || foldRaw === '1' ? { fold: Number(foldRaw) } : {}),
+          }),
+        })
+        if (epoch !== calculationEpoch.current) return
+        if (response.status === 401 || response.status === 403) {
+          setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
+          return
+        }
+        const data = await response.json()
+        if (epoch !== calculationEpoch.current) return
+        const result = data.result as ExtendedReport | undefined
+        const valid = response.ok && data.ok && result && (
+          (service.id === 'karma' && result.schema_version === 'astro.karma-indicators.v1'
+            && result.indicators && Array.isArray(result.aspects)) ||
+          (['year', 'month'].includes(service.id)
+            && result.schema_version === 'astro.transit-snapshots.v1'
+            && result.scope === service.id && Array.isArray(result.samples)) ||
+          (service.id === 'solar' && result.schema_version === 'astro.solar-facts.v1'
+            && result.solar_chart && result.solar_chart.bodies)
+        )
+        if (!valid) {
+          setMessage(data.message || 'Расчёт сейчас недоступен. Баланс не списан.')
+          return
+        }
+        setExtendedReport(result)
+        setMessage('Астрономические показатели рассчитаны. Оплата не требуется.')
+      } catch {
+        if (epoch === calculationEpoch.current) {
+          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        }
+      } finally {
+        if (epoch === calculationEpoch.current) setCalculating(false)
+      }
       return
     }
     setMessage('Интерфейс подготовлен. Для расчёта требуется подключение астрономического API — данные не отправлены, баланс не списан.')
@@ -640,6 +731,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           setFullNatalReport(null)
           setNatalReport(null)
           setCompatibilityReport(null)
+          setExtendedReport(null)
           setCalculating(false)
           setMessage('')
         }}>
@@ -668,15 +760,29 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               heading={service.id === 'compatibility' ? 'Первый человек' : undefined}
               requireTimezone={service.id === 'compatibility'}
               onPlaceSelect={(place) => {
+                calculationEpoch.current += 1
+                setExtendedReport(null)
                 if (service.id === 'natal') {
-                  calculationEpoch.current += 1
                   setBirthTimezone(place?.timezone || '')
                   setFullNatalReport(null)
-                  setCalculating(false)
-                  setMessage('')
                 }
+                setCalculating(false)
+                setMessage('')
               }} />
             {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" requireTimezone />}
+            {['karma', 'year', 'month', 'solar'].includes(service.id) && (
+              <label className="astro-field">
+                <Clock3 className="astro-field-icon" aria-hidden="true" />
+                <span className="astro-field-body">
+                  <span className="astro-field-label">При повторном времени перевода часов</span>
+                  <select aria-label="Повторное местное время" name="birth-fold" defaultValue="">
+                    <option value="">Не знаю / не требуется</option>
+                    <option value="0">Первое появление времени</option>
+                    <option value="1">Второе появление времени</option>
+                  </select>
+                </span>
+              </label>
+            )}
             {service.id === 'natal' && (
               <>
                 <label className="astro-field">
@@ -706,15 +812,19 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               </>
             )}
             {service.id === 'solar' && (
-              <label className="astro-field">
-                <MapPin className="astro-field-icon" aria-hidden="true" />
-                <span className="astro-field-body">
-                  <span className="astro-field-label">Место встречи соляра</span>
-                  <input aria-label="Место встречи соляра" name="solar-place"
-                    autoComplete="off" placeholder="Город, страна" maxLength={160} />
-                </span>
-                <Search className="astro-field-trailing" aria-hidden="true" />
-              </label>
+              <div className="astro-solar-return-place">
+                <h3 className="astro-form-heading">Где встретите день рождения?</h3>
+                <PlacePicker prefix="solar" onSelect={() => {
+                  calculationEpoch.current += 1
+                  setExtendedReport(null)
+                  setCalculating(false)
+                  setMessage('')
+                }} />
+                <p className="astro-form-message">
+                  Место соляра выбирается отдельно от места рождения: координаты и часовой пояс
+                  возвращения Солнца будут взяты из справочника.
+                </p>
+              </div>
             )}
             {['year', 'month', 'solar'].includes(service.id) && (
               <label className="astro-field">
@@ -757,6 +867,72 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             </ul>
           ) : <p>Значимые межкартные аспекты в заданных орбисах не обнаружены.</p>}
           {compatibilityReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+        </div>
+      )}
+      {extendedReport?.schema_version === 'astro.karma-indicators.v1' && (
+        <div className="astro-lunar-result" aria-label="Рассчитанные кармические показатели">
+          <h2>Лунные узлы и символические точки</h2>
+          <ul className="astro-lunar-days">
+            {Object.entries(extendedReport.indicators).map(([name, body]) => (
+              <li key={name}>
+                <strong>{name === 'TrueNode' ? 'Северный лунный узел' :
+                  name === 'MeanLilith' ? 'Средняя Лилит' : PLANET_RU[name] || name}</strong>
+                : {zodiacPosition(body.lon)}
+              </li>
+            ))}
+          </ul>
+          <p>Аспектов к выбранным показателям: {extendedReport.aspects.length}.</p>
+          <p>Положения рассчитаны по эфемеридам; кармические трактовки символичны
+            и не являются научно подтверждёнными выводами.</p>
+        </div>
+      )}
+      {extendedReport?.schema_version === 'astro.transit-snapshots.v1' && (
+        <div className="astro-lunar-result" aria-label="Рассчитанные астрономические транзиты">
+          <h2>{extendedReport.scope === 'year' ? 'Транзиты за год' : 'Транзиты за месяц'}: {extendedReport.period}</h2>
+          <p>Снимки на 12:00 местного времени. Между снимками точные моменты аспектов
+            не устанавливаются — это не непрерывный прогноз.</p>
+          <ul className="astro-lunar-days">
+            {extendedReport.samples.map((sample) => (
+              <li key={sample.date}>
+                <strong>{sample.date}</strong>
+                {sample.bodies?.Sun && <span> · Солнце: {zodiacPosition(sample.bodies.Sun.lon)}</span>}
+                {sample.bodies?.Moon && <span> · Луна: {zodiacPosition(sample.bodies.Moon.lon)}</span>}
+                <span> · Межкартных аспектов: {sample.aspects_to_natal?.length ?? 0}</span>
+              </li>
+            ))}
+          </ul>
+          <p>Астрологические прогнозы символичны; показаны реальные положения на
+            отдельные контрольные моменты, а не предсказания событий.</p>
+        </div>
+      )}
+      {extendedReport?.schema_version === 'astro.solar-facts.v1' && (
+        <div className="astro-lunar-result" aria-label="Рассчитанная карта соляра">
+          <h2>Солнечное возвращение</h2>
+          <p>Момент возвращения: {extendedReport.solar_return_at_local}
+            {' '}({extendedReport.return_location.timezone}).</p>
+          {extendedReport.solar_chart.angles && (
+            <ul className="astro-lunar-days">
+              <li>ASC: {zodiacPosition(extendedReport.solar_chart.angles.asc)}</li>
+              <li>MC: {zodiacPosition(extendedReport.solar_chart.angles.mc)}</li>
+            </ul>
+          )}
+          {extendedReport.solar_chart.cusps && (
+            <>
+              <h3>Дома соляра (Плацидус)</h3>
+              <ol className="astro-lunar-days">
+                {extendedReport.solar_chart.cusps.map((value, index) => (
+                  <li key={index}>Дом {index + 1}: {zodiacPosition(value)}</li>
+                ))}
+              </ol>
+            </>
+          )}
+          <h3>Положения объектов на момент соляра</h3>
+          <ul className="astro-lunar-days">
+            {Object.entries(extendedReport.solar_chart.bodies).map(([name, body]) => (
+              <li key={name}>{PLANET_RU[name] || name}: {zodiacPosition(body.lon)}</li>
+            ))}
+          </ul>
+          <p>Расчёт основан на возвращении долготы Солнца; толкования символичны.</p>
         </div>
       )}
       {fullNatalReport && (
