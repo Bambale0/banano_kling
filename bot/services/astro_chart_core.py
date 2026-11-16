@@ -169,13 +169,21 @@ def _assemble_birth(profile: BirthMoment, *, engine, kernel: str) -> dict:
     if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in cusps):
         raise AstroChartUnavailable("Invalid Placidus house positions")
     for essential in ("asc", "mc"):
-        if essential not in angles or not math.isfinite(float(angles[essential])):
+        angle = angles.get(essential)
+        if isinstance(angle, bool) or not isinstance(angle, (int, float)):
+            raise AstroChartUnavailable("Invalid chart angle")
+        if not math.isfinite(angle) or not 0 <= angle < 360:
             raise AstroChartUnavailable("Invalid chart angle")
 
     aspects = chart.get("aspects")
     if not isinstance(aspects, list):
         raise AstroChartUnavailable("Natal aspects missing")
-    return chart
+    # Never expose raw engine exception strings: they can contain private host paths.
+    safe_keys = (
+        "jd_ut", "utc", "lat", "lon", "tz", "offset_hours",
+        "zodiac", "house_system", "angles", "cusps", "bodies", "aspects",
+    )
+    return {name: chart[name] for name in safe_keys if name in chart}
 
 
 def build_natal_facts(payload: Any, *, engine=None, kernel=None) -> dict:
@@ -413,6 +421,13 @@ def build_solar_return_facts(
         raise AstroChartUnavailable("Solar return chart incomplete")
     if not isinstance(solar_chart.get("cusps"), list) or len(solar_chart["cusps"]) != 12:
         raise AstroChartUnavailable("Solar return Placidus houses unavailable")
+    sun_position = solar_chart["bodies"]["Sun"].get("lon")
+    if not isinstance(sun_position, (int, float)) or not math.isfinite(sun_position):
+        raise AstroChartUnavailable("Solar return Sun longitude missing")
+    orb = (sun_position - solar_lon + 180.0) % 360.0 - 180.0
+    if abs(orb) > 0.001:
+        raise AstroChartUnavailable("Solar return instant does not match natal Sun")
+    solar_chart.pop("warnings", None)  # never leak provider/host details
     return {
         "schema_version": "astro.solar-facts.v1",
         "target_year": target_year,
