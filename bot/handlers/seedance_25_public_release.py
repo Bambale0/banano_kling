@@ -1174,7 +1174,9 @@ async def _public_send_results(
 
     delivered = False
     suffix = ".mov" if output_format == "mov" else ".mp4"
-    if output_format == "mp4":
+    # A previous lost Telegram receipt switches future attempts to direct
+    # file upload, avoiding the CDN URL-fetch failure seen in production.
+    if output_format == "mp4" and request_data.get("delivery_status") != "uncertain":
         try:
             await tracked_telegram_send(request_data, True, bot.send_video,
                 telegram_id,
