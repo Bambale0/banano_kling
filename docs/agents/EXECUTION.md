@@ -1,3 +1,15 @@
+## 2026-11-16 — Astro #544 lunar calculation vertical slice (review stage)
+
+- Baseline: admin-only Astro UI PR #543 head `f2f2b6a906872f10eeccd4fd725135178ced4399`; new dependent task branch `feature/astro-lunar-engine-20261116`, PR into `tanyapi`. Never reintroduce VK.
+- User-visible goal: first **real**, unpaid Astro lunar calculation for authenticated Telegram admins; seven-service UI retained, but other 6 calculation/report flows remain unavailable rather than fabricated.
+- Licensing: Swiss Ephemeris is AGPL/Professional; use independently MIT-licensed Astronomy Engine 2.1.19 for ephemerides (no Swiss code). Calendar timezone is explicit IANA; dates computed UTC then localized. Calculation JSON schema `astro.lunar.v1`.
+- API/auth: `POST /mini-app/api/astro/lunar` authenticates signed Telegram initData via existing user context and checks `config.is_admin` server-side at every request; VK sessions rejected. No request body containing birth data or partner information, no prices, no debits, no DB migration. Dynamic public flag deferred until full MVP.
+- Calculated: lunar geocentric ecliptic longitude, zodiac sign, phase angle, illuminated percentage daily at local noon, exact quarter-event UTC and local instants. Lunar day defined as 24-hour UTC intervals since new moon, deliberately not moonrise-based. No made-up void-of-course/aspects/eclipses/advice.
+- Tests: date/year validation, IANA zone validation, Feb 29, Berlin DST transition, 2024-03-25 UTC full moon, role and platform rejection; UI async API success and 403 path. Local stdlib/unit preflight: 18 passed, 1 real-engine test skipped (dependency absent in local scratch). Full CI and deployed-smoke remain unverified until branch PR checks.
+- Operational: finite 20s CPU timeout, `request_id`, admin id, period, latency telemetry; no sensitive profile contents logged.
+- Next verticals: historical birth-place normalization + precise TZ/coordinates; houses/licensed provider and reference charts; natal, synastry, karma, annual/monthly/solar facts, structured interpretation, versioned prompts, history/checkpoint/retry and approved billing per #544.
+- Rollback: revert this task PR; no data migration or funds to reconcile.
+
 ## 2026-11-16 — Astro admin-only forward port of #434 into current tanyapi
 
 - Baseline: `a769b0bf422b0499569d31263cd348a1f870a90b`, branch: `feature/astro-admin-only-port-20261116`. Original PR #434 was 78 commits behind and conflict-blocked.
