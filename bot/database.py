@@ -5948,7 +5948,14 @@ async def mark_task_delivery_status(
         else:
             request_data["delivery_attempts"] = attempts
         request_data["delivery_updated_at"] = datetime.now(UTC).isoformat()
-        if retry_after_seconds is not None and effective_status not in TERMINAL_TASK_DELIVERY_STATUSES:
+        if normalized_status == "uncertain" and retry_after_seconds is not None:
+            request_data["delivery_uncertain_attempts"] = (
+                int(request_data.get("delivery_uncertain_attempts") or 0) + 1
+            )
+        if retry_after_seconds is not None and (
+            effective_status not in TERMINAL_TASK_DELIVERY_STATUSES
+            or (effective_status == "uncertain" and normalized_status == "uncertain")
+        ):
             request_data["delivery_retry_at"] = (
                 datetime.now(UTC) + timedelta(seconds=max(1, int(retry_after_seconds)))
             ).isoformat()
@@ -6177,7 +6184,9 @@ async def complete_task_in_app(task_id: str, result_url: str) -> bool:
     return marked
 
 
-async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool:
+async def claim_task_delivery(
+    task_id: str, *, lease_seconds: int = 300, allow_uncertain_retry: bool = False,
+) -> bool:
     """Atomically claim one Telegram delivery attempt.
 
     A short lease prevents webhook/reconcile races from sending the same result
@@ -6194,11 +6203,19 @@ async def claim_task_delivery(task_id: str, *, lease_seconds: int = 300) -> bool
             await mark_task_delivery_status(task_id, "available_in_app")
         return False
     current_status = str(request_data.get("delivery_status") or "").strip().lower()
-    if current_status in TERMINAL_TASK_DELIVERY_STATUSES:
+    # At-least-once replay is opt-in. A committed Telegram receipt always wins.
+    retrying_uncertain = (
+        allow_uncertain_retry and current_status == "uncertain"
+        and not request_data.get("delivery_message_id")
+    )
+    if current_status in TERMINAL_TASK_DELIVERY_STATUSES and not retrying_uncertain:
         return False
 
     now = datetime.now(UTC)
-    if int(request_data.get("delivery_attempts") or 0) >= MAX_DELIVERY_ATTEMPTS:
+    if (
+        int(request_data.get("delivery_attempts") or 0) >= MAX_DELIVERY_ATTEMPTS
+        and not retrying_uncertain
+    ):
         terminal = exhausted_delivery_status(
             has_link=bool(request_data.get("delivery_link_sent"))
         )
