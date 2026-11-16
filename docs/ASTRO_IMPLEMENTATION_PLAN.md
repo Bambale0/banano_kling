@@ -124,3 +124,13 @@
 - No birth data stored, no payments, no fake aspects/void-of-course/eclipses/traditional advice. Reusable calendar results do not use any LLM.
 - These changes **do not complete** natal/synastry/karma/year/month/solar interpretation, long reports, saved history, geocoding or billing. Do not represent the seven-service project as complete until #544 acceptance passes for all seven.
 - Await CI and verified exact-SHA deploy; keep admin-only gate.
+
+
+## Натальная карта: только проверяемые исходные астрономические факты (2026-11-16)
+
+- `POST /mini-app/api/astro/natal` — новый Telegram admin-only endpoint. На каждом обращении сервер валидирует подписанный `init_data` и текущую роль `config.is_admin`; VK-сессия не подходит.
+- Ввод: `date=ДД.ММ.ГГГГ`, `time=ЧЧ:ММ` (может отсутствовать), `timezone` как историческая IANA zone, необязательный `fold=0|1` при неоднозначном местном времени. Время DST gap отвергается; для fold нужен явный выбор. Произвольное название города НЕ считается координатами.
+- `astro.natal.facts.v1` — долготы Солнца, Луны и восьми планет в тропической геоцентрической ECT системе; знак, градус в знаке, приближённое суточное движение, ретроградность и основные аспекты с орбисами из `data/astro_settings.json`.
+- При неизвестном времени ставим опорную точку на местный полдень **как приближение**, не рассчитываем Луну или аспекты. Дома, ASC/MC, Лилит, узлы, Хирон и астероиды пока не рассчитаны; не выдавать этот срез за полную натальную карту.
+- Не использовать LLM для выдумывания градусов. Сервис не пишет дату, город, время рождения в логи и БД; ничего не списывает. Длинные интерпретации и все остальные услуги остаются в #544.
+- Тесты: реальный момент равноденствия, DST overlap/gap, високосный год, неизвестное время, орбисы и замыкание 360°, серверное разграничение ролей, 400/403/503 и фронтенд-мок выдачи результатов.
