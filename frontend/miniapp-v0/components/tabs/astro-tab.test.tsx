@@ -17,7 +17,7 @@ describe('Astro concept screens', () => {
     expect(screen.getByText('Лунный календарь')).toBeInTheDocument()
   })
 
-  it('validates birth date instead of submitting fictional astro results', () => {
+  it('validates birth date before submitting a natal calculation', () => {
     render(<AstroTab />)
     fireEvent.click(screen.getByText('Натальная карта'))
     fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
@@ -30,7 +30,63 @@ describe('Astro concept screens', () => {
 
     fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
     fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
-    expect(screen.getByRole('status')).toHaveTextContent('данные не отправлены, баланс не списан')
+    expect(screen.getByRole('status')).toHaveTextContent('Рассчитываем положения планет')
+  })
+
+  it('renders a computed natal chart without fake ascendant', async () => {
+    const oldFetch = global.fetch
+    const fake = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({ ok: true, result: {
+        birth_time_known: true, time_convention: 'exact local civil time',
+        positions: [{name: 'Sun', sign: 'Овен', longitude_deg: 10.123,
+          degree_in_sign: 10.123, retrograde: false}],
+        aspects: [], warnings: ['Дома пока не вычисляются'],
+      } }),
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: fake })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'),
+        { target: { value: '20.03.2024' } })
+      fireEvent.change(screen.getByLabelText('person: время рождения'),
+        { target: { value: '12:00' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'),
+        { target: { value: 'Москва, Россия' } })
+      fireEvent.change(screen.getByLabelText('Часовой пояс рождения'),
+        { target: { value: 'Europe/Moscow' } })
+      fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
+      await waitFor(() => expect(screen.getByLabelText('Астрономические положения натальной карты')).toBeInTheDocument())
+      expect(screen.getByText('Sun')).toBeInTheDocument()
+      expect(JSON.parse(fake.mock.calls[0][1].body)).toMatchObject({
+        date: '2024-03-20', time: '12:00', timezone: 'Europe/Moscow',
+      })
+      expect(fake.mock.calls[0][0]).toBe('/mini-app/api/astro/natal')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: oldFetch })
+    }
+  })
+
+  it('does not display natal data when server denies authorization', async () => {
+    const oldFetch = global.fetch
+    Object.defineProperty(global, 'fetch', {
+      configurable: true,
+      value: jest.fn().mockResolvedValue({ ok: false, status: 403 }),
+    })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'),
+        { target: { value: '20.03.2024' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'),
+        { target: { value: 'Москва, Россия' } })
+      fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Нет доступа'))
+      expect(screen.queryByLabelText('Астрономические положения натальной карты')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: oldFetch })
+    }
   })
 
   it('collects two distinct birth profiles for compatibility', () => {
