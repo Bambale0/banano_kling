@@ -10,6 +10,7 @@ from bot.services.astro_chart_core import (
     AstroChartUnavailable,
     build_natal_facts,
     build_synastry_facts,
+    build_solar_return_facts,
     parse_birth_profile,
 )
 
@@ -212,8 +213,6 @@ def test_solar_return_uses_true_sun_crossing_and_separate_location():
 
 
 def test_solar_return_rejects_incomplete_planetary_facts():
-    from bot.services.astro_chart_core import AstroChartInputError, build_solar_return_facts
-
     with pytest.raises(AstroChartInputError):
         build_solar_return_facts(
             PROFILE, target_year=2024,
