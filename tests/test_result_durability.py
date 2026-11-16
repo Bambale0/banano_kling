@@ -253,6 +253,40 @@ async def test_concurrent_storage_preserves_single_delivery_claim(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_uncertain_send_retries_only_with_explicit_opt_in_and_backoff(monkeypatch):
+    """A lost Telegram receipt cannot trigger concurrent duplicate deliveries."""
+    import asyncio
+
+    _user, task_id, url, _handler, _request = await prepare_callback(monkeypatch)
+    assert await database.store_task_result_ready(task_id, url)
+    assert await database.mark_task_delivery_status(
+        task_id, "uncertain", error="telegram_send_outcome_unknown",
+        retry_after_seconds=60,
+    )
+    metadata = json.loads((await database.get_task_by_id(task_id)).request_data)
+    assert metadata["delivery_uncertain_attempts"] == 1
+    assert metadata["delivery_retry_at"]
+    assert not await database.claim_task_delivery(task_id)
+    assert not await database.claim_task_delivery(task_id, allow_uncertain_retry=True)
+
+    # Simulate the scheduler reaching the persisted retry time.
+    metadata["delivery_retry_at"] = "2000-01-01T00:00:00+00:00"
+    async with database.db_backend.connect(database.DATABASE_PATH) as connection:
+        await connection.execute(
+            "UPDATE generation_tasks SET request_data = ? WHERE task_id = ?",
+            (json.dumps(metadata, ensure_ascii=False), task_id),
+        )
+        await connection.commit()
+    claims = await asyncio.gather(*(
+        database.claim_task_delivery(task_id, allow_uncertain_retry=True)
+        for _ in range(4)
+    ))
+    assert claims.count(True) == 1
+    assert await database.mark_task_delivery_status(task_id, "delivered")
+    assert not await database.claim_task_delivery(task_id, allow_uncertain_retry=True)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["generic", "legacy", "sensitive"])
 async def test_late_kling_failure_cannot_refund_or_erase_saved_success(
     monkeypatch, kind
