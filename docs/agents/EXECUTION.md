@@ -1,3 +1,12 @@
+## 2026-11-16 — Astro admin-only forward port of #434 into current tanyapi
+
+- Baseline: `a769b0bf422b0499569d31263cd348a1f870a90b`, branch: `feature/astro-admin-only-port-20261116`. Original PR #434 was 78 commits behind and conflict-blocked.
+- Scope: port seven Astro UI screens from #434. Show Astro only to authenticated Telegram administrators; ordinary users keep Motion; VK-native navigation remains unchanged.
+- Auth: live backend bootstrap `is_admin === true`, guarded navigation and rendering, revocation resets stale Astro state. No Astro API, billing or storage.
+- Tests: role/nav/access unit tests and form tests, E2E for regular/admin/revoked sessions with mobile screenshots. VK isolation test prevents resurrecting #451 behavior.
+- CI and rollout: protected native squash auto-merge after main gates, then exact-SHA production smoke. No config, DB, payment, provider or pricing changes.
+- Rollback: revert the squash merge. Never merge the original diverged branch without reconciling VK rollback.
+
 ## 2026-11-13 — #451 independent VK basic video trend repeat (review stage)
 
 - Base: `tanyapi@10ab1deee83a74f4feda300688f54e57b37dbd07`; branch `feat/vk451-simple-video-trend-20261113`. Dependent frontend photo/video panel lives in #495.

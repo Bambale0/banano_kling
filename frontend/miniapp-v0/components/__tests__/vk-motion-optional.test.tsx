@@ -9,7 +9,11 @@ jest.mock('next/dynamic', () => () => () => <p>Lazy tab</p>)
 jest.mock('../tabs/studio-tab', () => ({ StudioTab: () => <p>Studio tab</p> }))
 
 beforeEach(() => {
-  jest.mocked(useApp).mockReturnValue({ activeTab: 0, setActiveTab: jest.fn() } as unknown as ReturnType<typeof useApp>)
+  jest.mocked(useApp).mockReturnValue({
+    state: { mode: 'live', user: { isAdmin: false } },
+    activeTab: 0,
+    setActiveTab: jest.fn(),
+  } as unknown as ReturnType<typeof useApp>)
 })
 afterEach(() => {
   window.history.replaceState({}, '', '/')
@@ -35,14 +39,14 @@ test('Telegram retains Motion and all eight original tabs', () => {
 test('VK stale Motion selection is redirected to Video rather than mounting Motion', () => {
   window.history.replaceState({}, '', '/?vk_app_id=123&vk_user_id=2001')
   const setActiveTab = jest.fn()
-  jest.mocked(useApp).mockReturnValue({ activeTab: 3, setActiveTab } as unknown as ReturnType<typeof useApp>)
+  jest.mocked(useApp).mockReturnValue({ activeTab: 3, setActiveTab, state: { mode: 'live', user: { isAdmin: false } } } as unknown as ReturnType<typeof useApp>)
   render(<TabContent />)
   expect(setActiveTab).toHaveBeenCalledWith(2)
 })
 
 test('Telegram Motion selection is not redirected', () => {
   const setActiveTab = jest.fn()
-  jest.mocked(useApp).mockReturnValue({ activeTab: 3, setActiveTab } as unknown as ReturnType<typeof useApp>)
+  jest.mocked(useApp).mockReturnValue({ activeTab: 3, setActiveTab, state: { mode: 'live', user: { isAdmin: false } } } as unknown as ReturnType<typeof useApp>)
   render(<TabContent />)
   expect(setActiveTab).not.toHaveBeenCalled()
 })

@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic'
 import { useEffect, type ComponentType } from 'react'
 import { useApp } from '@/lib/app-context'
 import { currentAccountPlatform } from '@/lib/account-platform'
+import { ASTRO_TAB_ID, effectiveTabId } from '@/lib/astro-access'
 import { AnimatePresence, motion } from 'framer-motion'
 import { StudioTab } from './tabs/studio-tab'
 
@@ -29,18 +30,21 @@ const FeedTab = dynamicTab(() => import('./tabs/feed-tab').then((module) => ({ d
 const TrendsTab = dynamicTab(() => import('./tabs/trends-tab').then((module) => ({ default: module.TrendsTab })))
 const ServicesTab = dynamicTab(() => import('./tabs/services-tab').then((module) => ({ default: module.ServicesTab })))
 const ProfileTab = dynamicTab(() => import('./tabs/profile-tab').then((module) => ({ default: module.ProfileTab })))
+const AstroTab = dynamicTab(() => import('./tabs/astro-tab').then((module) => ({ default: module.AstroTab })))
 
-const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab]
+const tabComponents = [StudioTab, PhotoTab, VideoTab, MotionTab, FeedTab, TrendsTab, ServicesTab, ProfileTab, AstroTab]
 
 export function TabContent() {
-  const { activeTab, setActiveTab } = useApp()
+  const { activeTab, setActiveTab, state } = useApp()
   const isVk = currentAccountPlatform() === 'vk'
-  // Motion remains Telegram-only; stale VK selections safely open Video.
-  const effectiveTab = isVk && activeTab === 3 ? 2 : activeTab
+  const guardedTab = effectiveTabId(activeTab, state)
+  // VK remains independent of Telegram-only Motion and Astro.
+  const effectiveTab = isVk && guardedTab === 3 ? 2 : isVk && guardedTab === ASTRO_TAB_ID ? 0 : guardedTab
   const ActiveComponent = tabComponents[effectiveTab] || StudioTab
 
   useEffect(() => {
     if (isVk && activeTab === 3) setActiveTab(2)
+    if (isVk && activeTab === ASTRO_TAB_ID) setActiveTab(0)
   }, [isVk, activeTab, setActiveTab])
 
   useEffect(() => {

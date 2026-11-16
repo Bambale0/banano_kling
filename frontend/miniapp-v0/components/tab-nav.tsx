@@ -2,6 +2,7 @@
 
 import { useApp } from '@/lib/app-context'
 import { currentAccountPlatform } from '@/lib/account-platform'
+import { ASTRO_TAB_ID, isAstroVisible } from '@/lib/astro-access'
 import { cn } from '@/lib/utils'
 import { LayoutDashboard, Image, Video, Sparkles, Grid3X3, Images, Flame, UserRound } from 'lucide-react'
 
@@ -22,11 +23,16 @@ interface AppTabBarProps {
   activeTab: number
   onTabChange: (tab: number) => void
   isVk: boolean
+  astroVisible?: boolean
 }
 
 /** Presentational shared tab bar: a signed VK actor never mounts TG AppProvider. */
-export function AppTabBar({ activeTab, onTabChange, isVk }: AppTabBarProps) {
-  const visibleTabs = isVk ? tabs.filter(tab => tab.id !== 3) : tabs
+export function AppTabBar({ activeTab, onTabChange, isVk, astroVisible = false }: AppTabBarProps) {
+  const visibleTabs = isVk
+    ? tabs.filter(tab => tab.id !== 3)
+    : astroVisible
+      ? tabs.map(tab => tab.id === 3 ? { ...tab, id: ASTRO_TAB_ID, label: 'Астро' } : tab)
+      : tabs
 
   return (
     <nav aria-label="Разделы приложения" className="fixed bottom-0 left-0 right-0 z-50 px-0 sm:px-3 lg:px-4">
@@ -82,10 +88,11 @@ export function AppTabBar({ activeTab, onTabChange, isVk }: AppTabBarProps) {
 }
 
 export function TabNav() {
-  const { activeTab, setActiveTab } = useApp()
+  const { activeTab, setActiveTab, state } = useApp()
   return <AppTabBar
     activeTab={activeTab}
     onTabChange={setActiveTab}
     isVk={currentAccountPlatform() === 'vk'}
+    astroVisible={isAstroVisible(state)}
   />
 }
