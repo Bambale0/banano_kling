@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 import re
 from datetime import UTC, datetime, timedelta
-from zoneinfo import ZoneInfo
 
 from bot.services.astro_lunar import (
     SIGNS,
