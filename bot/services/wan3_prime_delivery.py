@@ -5,12 +5,12 @@ import asyncio
 import html
 import os
 import tempfile
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-import aiohttp
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -18,7 +18,7 @@ from bot.services.delivery_state import terminal_telegram_delivery_reason
 from bot.services.media_input_utils import is_local_upload_source
 
 
-async def _download_owned_retry_media(url: str, task_id: str) -> Path | None:
+def _download_owned_retry_media(url: str, task_id: str) -> Path | None:
     """Transient direct-upload source for a completed, owned Wan result.
 
     A remote Telegram URL fetch already had an ambiguous outcome; a later
@@ -41,16 +41,16 @@ async def _download_owned_retry_media(url: str, task_id: str) -> Path | None:
     result = Path(tmp_name)
     total = 0
     try:
-        timeout = aiohttp.ClientTimeout(total=120, connect=20)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(url, allow_redirects=True) as response:
-                response.raise_for_status()
-                with result.open("wb") as file:
-                    async for chunk in response.content.iter_chunked(262144):
-                        total += len(chunk)
-                        if total > max_bytes:
-                            raise ValueError("wan3_retry_media_too_large")
-                        file.write(chunk)
+        # Run this synchronous stream in a worker thread, never the event loop.
+        with urllib.request.urlopen(url, timeout=60) as response, result.open("wb") as file:
+            while True:
+                chunk = response.read(262144)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ValueError("wan3_retry_media_too_large")
+                file.write(chunk)
         if total < 1024:
             raise ValueError("wan3_retry_media_empty")
         return result
@@ -140,7 +140,10 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
         # unknown previous receipt may have succeeded, so no immediate
         # fallback is sent after a transient Telegram error.
         try:
-            retry_file = await _download_owned_retry_media(url, task_id)
+            retry_file = await asyncio.wait_for(
+                asyncio.to_thread(_download_owned_retry_media, url, task_id),
+                timeout=120,
+            )
         except Exception as exc:  # noqa: BLE001 - keep the result for future retries
             return DeliveryOutcome("pending", error=f"retry_download_{type(exc).__name__}")
         if retry_file is None:
