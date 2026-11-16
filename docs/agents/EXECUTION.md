@@ -31,6 +31,21 @@
 - Test plan: cross-chart real ephemerides, DST fold/gap, invalid request, non-admin/VK authorization, permission revocation during async compute, Mini App two-profile flow, all required CI; exact-SHA production smoke after guarded merge.
 - Blocking follow-ups: location resolver #560; house overlay and composite #562; long reports #568, full 7-service acceptance #544.
 
+## 2026-11-16 — Astro #568: exact source plan migration and period coverage
+
+- Full original TЗ from #571 converted to independent plans for natal (18 / 10k), compatibility (25 / 10k), karma (27 / 8k), year (29 / 12k), month (23 / 5k), solar (21 / 12k), lunar (14 / 5k); source chapter details retained as per-section instructions, methodology/ethics in service rules.
+- Dynamic period sections require complete exact daily/monthly date rows from deterministic AstroFacts before generating narratives; no fake days or silent omissions.
+- Versioning and HMAC owner/fingerprint include plan content hash (not merely version string). Malformed runtime policy fails closed.
+- Isolated production-dependency Docker tests: 31 passing, 1 unrelated pytest warning.
+- Not wired to provider/billing/frontend; real charts, lease and admin consent remain blockers.
+
+## 2026-11-16 — Astro #568: durable report pipeline foundation (rebased)
+
+- Baseline current origin/tanyapi b1ba64a245262529a163e132fbf671d6f57c6e22; source PR #555 old base. No Telegram API, billing, provider call, VK or published reports in this slice.
+- Reuse versioned plans + deterministic AstroFacts allowlist, HMAC owner-scoped fingerprints, resume-by-section store, PostgreSQL/SQLite adapter, privacy delete and retention.
+- Mandatory release blockers still open: exact full seven-service original spec (#571), prompt length/coverage, admin configuration, real provider adapter and consent, distributed lease to prevent duplicate provider calls, factual cross-reference verifier, missing astronomy for 5 services, owner-scoped API and paid invariant checks.
+- Test plan: isolated offline Docker for pipeline/resume/privacy/DB regressions; full CI and exact-SHA deploy. Do not introduce user-visible paid path until #544 acceptance.
+
 ## 2026-11-16 — Telegram domain recovery
 
 Live differential TLS diagnosis, reversible runtime URL recovery, media-origin regression and protected release evidence: [execution record](EXECUTION/telegram-domain-recovery-20261116.md).
