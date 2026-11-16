@@ -225,66 +225,81 @@ describe('Astro concept screens', () => {
     expect(screen.getByLabelText('partner: дата рождения')).toBeInTheDocument()
   })
 
-  it('calculates a real two-person compatibility aspect result and keeps profiles separate', async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true, status: 200,
-      json: async () => ({
-        ok: true,
-        result: {
-          schema_version: 'astro.synastry.facts.v1',
-          person_a: { birth_time_known: true },
-          person_b: { birth_time_known: false },
-          cross_aspects: [{
-            person_a_body: 'Sun', person_b_body: 'Moon',
-            kind: 'trine', orb_deg: 1.1, approximate: true,
-          }],
-          warnings: ['Наложения на дома и композит не рассчитаны'],
-        },
-      }),
+  it('uses two verified GeoNames IDs for exact JPL compatibility', async () => {
+    const old = global.fetch
+    const mock = jest.fn().mockImplementation((url: string, init: { body: string }) => {
+      const input = JSON.parse(init.body)
+      const city = String(input.query || '').includes('Таллин')
+        ? { place_id: 588409, name: 'Tallinn', country_code: 'EE', timezone: 'Europe/Tallinn' }
+        : { place_id: 524901, name: 'Москва', country_code: 'RU', timezone: 'Europe/Moscow' }
+      return Promise.resolve({ ok: true, status: 200, json: async () => url.endsWith('/places')
+        ? { ok: true, results: [{ ...city, latitude: 55, longitude: 37 }] }
+        : { ok: true, result: { schema_version: 'astro.synastry-facts.v1',
+          first_accuracy: { birth_time_known: true }, second_accuracy: { birth_time_known: false },
+          aspects: [{ a: 'Sun', b: 'Moon', aspect: 'trine', orb: 1.1 }],
+          house_overlays: { first_in_second: null, second_in_first: { Sun: 3 } },
+        } } })
     })
-    const originalFetch = global.fetch
-    Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
     try {
       render(<AstroTab />)
       fireEvent.click(screen.getByText('Совместимость'))
       fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '20.03.2024' } })
-      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
-      fireEvent.change(screen.getByLabelText('person: часовой пояс'), { target: { value: 'Europe/Moscow' } })
       fireEvent.change(screen.getByLabelText('partner: дата рождения'), { target: { value: '01.02.1995' } })
-      fireEvent.change(screen.getByLabelText('partner: место рождения'), { target: { value: 'Таллин' } })
-      fireEvent.change(screen.getByLabelText('partner: часовой пояс'), { target: { value: 'Europe/Tallinn' } })
-      fireEvent.click(screen.getByRole('button', { name: /Получить разбор/ }))
-      await waitFor(() => expect(screen.getByRole('heading', { name: 'Межкартные аспекты' })).toBeInTheDocument())
-      expect(screen.getByText(/приблизительно/)).toBeInTheDocument()
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-      const [endpoint, init] = fetchMock.mock.calls[0]
-      expect(endpoint).toBe('/mini-app/api/astro/compatibility')
-      const data = JSON.parse(init.body)
-      expect(data.person_a).toMatchObject({ date: '20.03.2024', timezone: 'Europe/Moscow' })
-      expect(data.person_b).toMatchObject({ date: '01.02.1995', timezone: 'Europe/Tallinn' })
-      expect(data.person_a).not.toHaveProperty('place')
-      expect(data.person_b).not.toHaveProperty('place')
-    } finally {
-      Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
-    }
+      for (const [prefix, query, name] of [
+        ['person', 'Москва', 'Выбрать Москва, Россия'],
+        ['partner', 'Таллин', 'Выбрать Tallinn, Эстония'],
+      ]) {
+        fireEvent.change(screen.getByLabelText(prefix + ': место рождения'), { target: { value: query } })
+        await waitFor(() => expect(screen.getByRole('option', { name })).toBeInTheDocument())
+        fireEvent.click(screen.getByRole('option', { name }))
+      }
+      expect(screen.getByLabelText('person: часовой пояс')).toHaveValue('Europe/Moscow')
+      expect(screen.getByLabelText('partner: часовой пояс')).toHaveAttribute('readOnly')
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      const result = await screen.findByLabelText('Рассчитанные межкартные аспекты')
+      expect(result).toHaveTextContent('Солнце — дом 3')
+      expect(result).toHaveTextContent('Дома не определены')
+      const post = mock.mock.calls.find(([url]) => url.endsWith('/compatibility/full'))
+      expect(JSON.parse(post[1].body)).toMatchObject({
+        person_a: { date: '20.03.2024', place_id: 524901 },
+        person_b: { date: '01.02.1995', place_id: 588409 },
+      })
+      expect(JSON.parse(post[1].body).person_a).not.toHaveProperty('timezone')
+      expect(JSON.parse(post[1].body).person_b).not.toHaveProperty('latitude')
+    } finally { Object.defineProperty(global, 'fetch', { configurable: true, value: old }) }
   })
 
-  it('blocks two-person facts if server rejects access after admin revocation', async () => {
+  it('does not reveal two-person house data after admin role revocation', async () => {
     const originalFetch = global.fetch
-    Object.defineProperty(global, 'fetch', {
-      configurable: true, value: jest.fn().mockResolvedValue({ status: 403, ok: false }),
+    const mock = jest.fn().mockImplementation((url: string, init: { body: string }) => {
+      const query = String(JSON.parse(init.body).query || '')
+      return Promise.resolve(url.endsWith('/places')
+        ? { ok: true, status: 200, json: async () => ({ ok: true, results: [{
+          place_id: query.includes('Таллин') ? 588409 : 524901,
+          name: query.includes('Таллин') ? 'Tallinn' : 'Москва',
+          country_code: query.includes('Таллин') ? 'EE' : 'RU',
+          timezone: query.includes('Таллин') ? 'Europe/Tallinn' : 'Europe/Moscow',
+          latitude: 55, longitude: 37,
+        }] }) }
+        : { ok: false, status: 403 })
     })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
     try {
       render(<AstroTab />)
       fireEvent.click(screen.getByText('Совместимость'))
       fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '20.03.2024' } })
-      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
-      fireEvent.change(screen.getByLabelText('person: часовой пояс'), { target: { value: 'Europe/Moscow' } })
       fireEvent.change(screen.getByLabelText('partner: дата рождения'), { target: { value: '01.02.1995' } })
-      fireEvent.change(screen.getByLabelText('partner: место рождения'), { target: { value: 'Таллин' } })
-      fireEvent.change(screen.getByLabelText('partner: часовой пояс'), { target: { value: 'Europe/Tallinn' } })
-      fireEvent.click(screen.getByRole('button', { name: /Получить разбор/ }))
-      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Нет доступа'))
+      for (const [prefix, query, name] of [
+        ['person', 'Москва', 'Выбрать Москва, Россия'],
+        ['partner', 'Таллин', 'Выбрать Tallinn, Эстония'],
+      ]) {
+        fireEvent.change(screen.getByLabelText(prefix + ': место рождения'), { target: { value: query } })
+        await waitFor(() => expect(screen.getByRole('option', { name })).toBeInTheDocument())
+        fireEvent.click(screen.getByRole('option', { name }))
+      }
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      await waitFor(() => expect(screen.getByText('Нет доступа к расчёту. Повторно откройте приложение Telegram.')).toBeInTheDocument())
       expect(screen.queryByLabelText('Рассчитанные межкартные аспекты')).not.toBeInTheDocument()
     } finally {
       Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })

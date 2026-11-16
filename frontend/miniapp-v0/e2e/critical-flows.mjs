@@ -326,12 +326,14 @@ try {
       }) })
       return
     }
-    if (path.endsWith('/astro/compatibility')) {
+    if (path.endsWith('/astro/compatibility/full')) {
       const body = JSON.parse(request.postData() || '{}')
       assert.equal(body.person_a.date, '20.03.2024')
       assert.equal(body.person_b.date, '01.02.1995')
-      assert.equal(body.person_a.timezone, 'Europe/Moscow')
-      assert.equal(body.person_b.timezone, 'Europe/Tallinn')
+      assert.equal(body.person_a.place_id, 524901)
+      assert.equal(body.person_a.timezone, undefined)
+      assert.equal(body.person_b.place_id, 588409)
+      assert.equal(body.person_b.timezone, undefined)
       assert.equal(body.person_a.place, undefined)
       assert.equal(body.person_b.place, undefined)
       if (!bootstrapPayload.is_admin) {
@@ -341,13 +343,10 @@ try {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         ok: true,
         result: {
-          schema_version: 'astro.synastry.facts.v1',
-          person_a: { birth_time_known: true }, person_b: { birth_time_known: false },
-          cross_aspects: [{
-            person_a_body: 'Sun', person_b_body: 'Venus',
-            kind: 'trine', orb_deg: 1.12, approximate: true,
-          }],
-          warnings: ['Композит и наложения на дома не рассчитаны'],
+          schema_version: 'astro.synastry-facts.v1',
+          first_accuracy: { birth_time_known: true }, second_accuracy: { birth_time_known: false },
+          aspects: [{ a: 'Sun', b: 'Venus', aspect: 'trine', orb: 1.12 }],
+          house_overlays: { first_in_second: null, second_in_first: { Sun: 3 } },
         },
       }) })
       return
@@ -1155,13 +1154,15 @@ try {
   await page.getByLabel('person: дата рождения').fill('20.03.2024')
   await page.getByLabel('person: время рождения').fill('12:00')
   await page.getByLabel('person: место рождения').fill('Москва')
-  await page.getByLabel('person: часовой пояс').fill('Europe/Moscow')
+  await page.getByRole('option', { name: 'Выбрать Москва, Россия' }).click()
+  assert.equal(await page.getByLabel('person: часовой пояс').inputValue(), 'Europe/Moscow')
   await page.getByLabel('partner: дата рождения').fill('01.02.1995')
   await page.getByLabel('partner: место рождения').fill('Таллин')
-  await page.getByLabel('partner: часовой пояс').fill('Europe/Tallinn')
+  await page.getByRole('option', { name: 'Выбрать Tallinn, Эстония' }).click()
+  assert.equal(await page.getByLabel('partner: часовой пояс').inputValue(), 'Europe/Tallinn')
   await page.getByRole('button', { name: 'Получить разбор' }).click()
   await page.getByRole('heading', { name: 'Межкартные аспекты' }).waitFor()
-  await page.locator('[aria-label="Рассчитанные межкартные аспекты"]').getByText(/приблизительно/).waitFor()
+  await page.locator('[aria-label="Рассчитанные межкартные аспекты"]').getByText('Солнце — дом 3').waitFor()
   bootstrapPayload.is_admin = false
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: 'Motion', exact: true }).waitFor()
