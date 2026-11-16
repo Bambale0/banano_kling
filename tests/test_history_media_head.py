@@ -27,6 +27,23 @@ def test_owner_history_preserves_url_without_s3_download(monkeypatch, presence, 
     assert resolved == ([url] if visible else [])
 
 
+def test_owner_bootstrap_history_skips_s3_head_without_hydrating(monkeypatch):
+    url = "https://tanyapp.chillcreative.ru/uploads/result.jpg"
+    monkeypatch.setattr(media_input_utils, "is_local_upload_source", lambda source: source == url)
+
+    def no_remote_head(_source):
+        raise AssertionError("bootstrap must not block on S3 HEAD")
+
+    monkeypatch.setattr(media_input_utils, "local_upload_presence_without_download", no_remote_head)
+    monkeypatch.setattr(media_input_utils, "resolve_local_upload_path", no_remote_head)
+    row = {"result_url": url, "result_urls": "[]", "created_at": None}
+
+    result = database.resolve_public_generation_result_urls(
+        row, hydrate_local_uploads=False, skip_remote_upload_probe=True,
+    )
+    assert result == [url]
+
+
 def test_history_s3_head_is_read_only_and_distinguishes_failures(monkeypatch, tmp_path):
     monkeypatch.setattr(media_storage, "local_upload_path", lambda relative: tmp_path / relative)
     monkeypatch.setattr(media_storage, "is_s3_enabled", lambda: True)
