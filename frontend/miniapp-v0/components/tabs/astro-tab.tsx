@@ -10,6 +10,29 @@ import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
 
+interface CompatibilityReport {
+  schema_version: string
+  person_a: NatalReport
+  person_b: NatalReport
+  cross_aspects: Array<{
+    person_a_body: string
+    person_b_body: string
+    kind: string
+    orb_deg: number
+    approximate: boolean
+  }>
+  warnings: string[]
+}
+
+const PLANET_RU: Record<string, string> = {
+  Sun: 'Солнце', Moon: 'Луна', Mercury: 'Меркурий', Venus: 'Венера', Mars: 'Марс',
+  Jupiter: 'Юпитер', Saturn: 'Сатурн', Uranus: 'Уран', Neptune: 'Нептун', Pluto: 'Плутон',
+}
+const ASPECT_RU: Record<string, string> = {
+  conjunction: 'соединение', sextile: 'секстиль', square: 'квадрат',
+  trine: 'трин', opposition: 'оппозиция',
+}
+
 interface NatalReport {
   schema_version: string
   timezone: string
@@ -48,7 +71,7 @@ interface AstroService {
 
 export const ASTRO_SERVICES: readonly AstroService[] = [
   { id: 'natal', title: 'Натальная карта', description: 'Фактические положения планет и аспекты. Развёрнутый разбор готовится' },
-  { id: 'compatibility', title: 'Совместимость', description: 'Астрологический разбор отношений по данным двух людей' },
+  { id: 'compatibility', title: 'Совместимость', description: 'Реальные межкартные аспекты двух людей. Развёрнутый разбор отношений готовится' },
   { id: 'karma', title: 'Кармический разбор', description: 'Лунные узлы, жизненные темы и символические уроки' },
   { id: 'year', title: 'Годовой прогноз', description: 'Астрологические транзиты и тенденции на выбранный год' },
   { id: 'month', title: 'Гороскоп на месяц', description: 'Персональные астрологические тенденции месяца' },
@@ -178,7 +201,7 @@ function dateFromPicker(value: string) {
   return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : ''
 }
 
-function BirthFields({ prefix, heading }: { prefix: string; heading?: string }) {
+function BirthFields({ prefix, heading, requireTimezone = false }: { prefix: string; heading?: string; requireTimezone?: boolean }) {
   const [date, setDate] = useState('')
   return (
     <div className="astro-birth-fields">
@@ -214,6 +237,29 @@ function BirthFields({ prefix, heading }: { prefix: string; heading?: string }) 
         </span>
         <Search className="astro-field-trailing" aria-hidden="true" />
       </label>
+      {requireTimezone && (
+        <>
+          <label className="astro-field">
+            <MapPin className="astro-field-icon" aria-hidden="true" />
+            <span className="astro-field-body">
+              <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
+              <input aria-label={prefix + ': часовой пояс'} name={prefix + '-timezone'}
+                placeholder="Europe/Moscow" autoComplete="off" />
+            </span>
+          </label>
+          <label className="astro-field">
+            <Clock3 className="astro-field-icon" aria-hidden="true" />
+            <span className="astro-field-body">
+              <span className="astro-field-label">При повторном времени (перевод часов)</span>
+              <select aria-label={prefix + ': повторное время'} name={prefix + '-fold'} defaultValue="">
+                <option value="">Не знаю / не требуется</option>
+                <option value="0">Первое появление времени</option>
+                <option value="1">Второе появление времени</option>
+              </select>
+            </span>
+          </label>
+        </>
+      )}
     </div>
   )
 }
@@ -226,6 +272,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   })
   const [lunarReport, setLunarReport] = useState<LunarReport | null>(null)
   const [natalReport, setNatalReport] = useState<NatalReport | null>(null)
+  const [compatibilityReport, setCompatibilityReport] = useState<CompatibilityReport | null>(null)
   const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
 
@@ -273,6 +320,49 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
     const places = service.id === 'compatibility' ? ['person-place', 'partner-place'] : ['person-place']
     if (places.some((name) => !String(form.get(name) || '').trim())) {
       setMessage('Укажите место рождения.')
+      return
+    }
+    if (service.id === 'compatibility') {
+      const profiles = (['person', 'partner'] as const).map((prefix) => {
+        const foldRaw = String(form.get(prefix + '-fold') || '')
+        return {
+          date: String(form.get(prefix + '-date') || ''),
+          time: String(form.get(prefix + '-time') || ''),
+          timezone: String(form.get(prefix + '-timezone') || '').trim(),
+          ...(foldRaw === '0' || foldRaw === '1' ? { fold: Number(foldRaw) } : {}),
+        }
+      })
+      if (profiles.some((item) => !item.timezone)) {
+        setMessage('Укажите часовой пояс рождения каждого человека.')
+        return
+      }
+      setCompatibilityReport(null)
+      setCalculating(true)
+      setMessage('Рассчитываем межкартные аспекты…')
+      try {
+        const response = await fetch('/mini-app/api/astro/compatibility', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            init_data: getInitData(), person_a: profiles[0], person_b: profiles[1],
+          }),
+        })
+        if (response.status === 401 || response.status === 403) {
+          setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
+          return
+        }
+        const data = await response.json()
+        if (!response.ok || !data.ok || data.result?.schema_version !== 'astro.synastry.facts.v1') {
+          setMessage(data.message || 'Расчёт сейчас недоступен. Баланс не списан.')
+          return
+        }
+        setCompatibilityReport(data.result as CompatibilityReport)
+        setMessage('Межкартные аспекты рассчитаны. Оплата не требуется.')
+      } catch {
+        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+      } finally {
+        setCalculating(false)
+      }
       return
     }
     if (service.id === 'natal') {
@@ -357,8 +447,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           </>
         ) : (
           <>
-            <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} />
-            {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" />}
+            <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} requireTimezone={service.id === 'compatibility'} />
+            {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" requireTimezone />}
             {service.id === 'natal' && (
               <>
                 <label className="astro-field">
@@ -420,6 +510,28 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         </button>
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
+      {compatibilityReport && (
+        <div className="astro-lunar-result" aria-label="Рассчитанные межкартные аспекты">
+          <h2>Межкартные аспекты</h2>
+          <p>Первый человек — {compatibilityReport.person_a.birth_time_known ? 'время рождения известно' : 'время рождения неизвестно'};
+            второй человек — {compatibilityReport.person_b.birth_time_known ? 'время рождения известно' : 'время рождения неизвестно'}.
+          </p>
+          {compatibilityReport.cross_aspects.length ? (
+            <ul className="astro-lunar-days">
+              {compatibilityReport.cross_aspects.map((item) => (
+                <li key={item.person_a_body + '-' + item.person_b_body}>
+                  {PLANET_RU[item.person_a_body] || item.person_a_body} (1) —
+                  {' '}{PLANET_RU[item.person_b_body] || item.person_b_body} (2):
+                  {' '}{ASPECT_RU[item.kind] || item.kind},
+                  орбис {item.orb_deg.toFixed(2)}°
+                  {item.approximate ? ' · приблизительно' : ''}
+                </li>
+              ))}
+            </ul>
+          ) : <p>Значимые межкартные аспекты в заданных орбисах не обнаружены.</p>}
+          {compatibilityReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+        </div>
+      )}
       {natalReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанные положения планет">
           <h2>Положения планет</h2>
@@ -429,7 +541,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <ul className="astro-lunar-days">
             {Object.entries(natalReport.positions).map(([name, item]) => (
               <li key={name}>
-                <strong>{name}</strong>: {item.sign} {item.degree_in_sign.toFixed(2)}°
+                <strong>{PLANET_RU[name] || name}</strong>: {item.sign} {item.degree_in_sign.toFixed(2)}°
                 {item.retrograde ? ' · ретроградность' : ''}
                 {item.approximate ? ' · приблизительно' : ''}
               </li>
@@ -440,7 +552,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             <ul className="astro-lunar-days">
               {natalReport.aspects.map((item) => (
                 <li key={item.a + '-' + item.b}>
-                  {item.a} — {item.b}: {item.kind}, орбис {item.orb_deg.toFixed(2)}°
+                  {PLANET_RU[item.a] || item.a} — {PLANET_RU[item.b] || item.b}: {ASPECT_RU[item.kind] || item.kind}, орбис {item.orb_deg.toFixed(2)}°
                 </li>
               ))}
             </ul>
