@@ -427,7 +427,7 @@ async def test_delivery_sends_a_video_not_only_a_link_and_syncs_history():
 @pytest.mark.asyncio
 async def test_wan_uncertain_retries_after_backoff_and_uploads_file(monkeypatch):
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, Mock
 
     from bot.services import wan3_prime_delivery
 
@@ -453,10 +453,8 @@ async def test_wan_uncertain_retries_after_backoff_and_uploads_file(monkeypatch)
         send_document=AsyncMock(),
         send_message=AsyncMock(),
     )
-    monkeypatch.setattr(
-        wan3_prime_delivery, "_download_owned_retry_media",
-        AsyncMock(return_value=output),
-    )
+    downloader = Mock(return_value=output)
+    monkeypatch.setattr(wan3_prime_delivery, "_download_owned_retry_media", downloader)
     try:
         assert await lifecycle.deliver_ready_once(bot) == 0
         async with database.db_backend.connect(database.DATABASE_PATH) as connection:
@@ -480,7 +478,7 @@ async def test_wan_uncertain_retries_after_backoff_and_uploads_file(monkeypatch)
         assert await lifecycle.deliver_ready_once(bot) == 1
         assert bot.send_video.await_count == 2
         assert bot.send_message.await_count == 0
-        assert wan3_prime_delivery._download_owned_retry_media.await_count == 1
+        assert downloader.call_count == 1
         metadata = json.loads((await database.get_task_by_id(launched["task_id"])).request_data)
         assert metadata["delivery_status"] == "delivered"
         assert metadata["delivery_message_id"] == 902
