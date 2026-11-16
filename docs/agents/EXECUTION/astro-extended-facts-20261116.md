@@ -82,3 +82,14 @@ exact-SHA deployment. No claim of complete production release.
 - **Not a real Telegram production WebView test.** A signed live admin request
   and external provider/long-text delivery cannot be claimed until released.
 - Billing, payment providers, consumer access and VK must remain unchanged.
+
+## Integration status after natal JSON hotfix
+
+PR #580 is merged and its exact merge SHA 399fe26d was observed running
+healthy with S3 on the operator host. This PR remains admin-only and
+billing-disabled. The subsequent house annotations and overlays are being
+reviewed independently in stacked PR #581; do not count them as merged here.
+
+The protected CI pipeline must rerun against this branch's current `tanyapi`
+base before merge. Passing offline seven-service HTTP checks alone does not
+prove the actual Telegram WebView or signed live-admin delivery flow.
