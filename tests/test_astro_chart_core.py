@@ -122,3 +122,15 @@ def test_synastry_has_two_distinct_charts_and_no_fake_relationship_score():
     assert result["interpretation"] is None
     assert "score" not in result
     assert [call[0] for call in engine.calls].count("resolve") == 2
+
+
+def test_real_mit_engine_placidus_houses_offline():
+    """Real library smoke: house math must run without downloading a kernel."""
+    pytest.importorskip("openephem")
+    from openephem.houses import houses_from_jd
+
+    h = houses_from_jd(2451545.0, 51.5, -0.1, "Placidus")
+    assert len(h.cusps) == 12
+    assert all(0 <= longitude < 360 for longitude in h.cusps)
+    assert abs((h.cusps[0] - h.asc + 180) % 360 - 180) < 0.01
+    assert abs((h.cusps[9] - h.mc + 180) % 360 - 180) < 0.01
