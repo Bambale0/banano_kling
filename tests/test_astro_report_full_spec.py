@@ -1,7 +1,7 @@
 """Regression: seven full original owner specifications, not a 12-card generic horoscope."""
 
-import json
 from dataclasses import replace
+import json
 from pathlib import Path
 
 import pytest
