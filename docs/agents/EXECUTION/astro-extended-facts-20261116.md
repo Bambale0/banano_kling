@@ -29,3 +29,36 @@ WebView smoke are not yet confirmed and must be checked before release.
 
 Release dependency: merge #578 and verify exact SHA before retargeting this PR
 to tanyapi. Do not remove VK rollback, do not enable payments or public Astro.
+
+## Real operator-host smoke on 2026-11-16
+
+Tested against the REAL host's GeoNames database and SHA-256 checked JPL DE440,
+not mock ephemeris values or user birth data, in a network-isolated, read-only
+Docker container with no wallet/backend DB access. Reproducible command:
+
+    docker run --rm --network none --read-only --tmpfs /tmp -w /app \
+      --env-file .env.astro -e PYTHONPATH=/app:/vendor \
+      -e ASTRO_DE440_PATH=/assets/de440.bsp \
+      -e ASTRO_PLACES_DB_PATH=/assets/geonames-20261116.sqlite3 \
+      -v <feature-checkout>:/app:ro -v <vendor-deps>:/vendor:ro \
+      -v <operator-assets>:/assets:ro --entrypoint python \
+      banano-kling-bot:local scripts/astro_extended_smoke.py
+
+Observed PASS: 4 factual karma indicators, 12 annual samples, all 29 days
+of 2028-02, exact solar return 2028-02-29T05:27:36.894667+00:00 for
+fixture born 2000-02-29 13:45 Europe/Moscow, solar location Berlin;
+12 solar Placidus cusps, 12 objects, ASC/MC, natal-to-return Sun longitude
+agreement <0.001 degree. Unknown time of birth correctly rejected for solar.
+The test files themselves were run without any external web/provider requests.
+
+Asset integrity checked on operator host:
+DE440 SHA256 a4ce9bf9b3282becc9f4b2ac3cebe03a2ae7599981aabd7265fd8482fff7c4b5;
+GeoNames SQLite SHA256 98f6fd9046819ff380a5e0ef24bff4a851a58cbc593290e66c158c11a7fa8350.
+
+Running production container at smoke moment: healthy, revision
+0733bd0d374405b96af4a5be18ddf57c7c175b18, S3 backend healthy.
+Anonymous POST /mini-app/api/astro/places and lunar/compatibility -> 401
+(expected signed Telegram requirement). Full natal, karma, year/month, solar
+-> 404 because dependent #578 and #579 are NOT deployed. End-to-end signed
+Telegram-admin WebView/HTTP smoke remains pending until protected CI merge and
+exact-SHA deployment. No claim of complete production release.
