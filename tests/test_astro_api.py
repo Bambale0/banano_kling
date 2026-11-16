@@ -93,3 +93,47 @@ def test_unsupported_ephemeris_returns_503_not_fake_calendar(monkeypatch):
     response = invoke({"init_data": "valid", "period": "2024-03", "timezone": "UTC"})
     assert response.status == 503
     assert json.loads(response.text)["error"] == "engine_unavailable"
+
+
+def invoke_natal(body):
+    return asyncio.run(astro_api.astro_natal_chart(Request(body)))
+
+
+@pytest.mark.parametrize("init_data", ["", None, "vk_session:" + "a" * 43])
+def test_natal_endpoint_rejects_unsigned_and_vk_sessions(monkeypatch, init_data):
+    async def bad_actor(*args, **kwargs):
+        raise AssertionError("untrusted credentials must not hit DB")
+    monkeypatch.setattr(miniapp, "_get_user_context", bad_actor)
+    with pytest.raises(web.HTTPUnauthorized):
+        invoke_natal({"init_data": init_data, "date": "2000-01-01",
+                      "time": "12:00", "timezone": "UTC"})
+
+
+def test_natal_endpoint_rechecks_admin_on_every_request(monkeypatch):
+    roles = {"admin": True}
+    async def actor(app, init_data):
+        return 123, {"platform": "telegram"}
+    monkeypatch.setattr(miniapp, "_get_user_context", actor)
+    monkeypatch.setattr(astro_api.config, "is_admin", lambda uid: roles["admin"])
+    monkeypatch.setattr(astro_api, "build_natal_positions", lambda *a, **kw: {
+        "birth_time_known": True, "positions": [], "aspects": [],
+    })
+    payload = {"init_data": "signed-test", "date": "2000-01-01",
+               "time": "12:00", "timezone": "UTC", "is_admin": True}
+    assert invoke_natal(payload).status == 200
+    roles["admin"] = False
+    with pytest.raises(web.HTTPForbidden):
+        invoke_natal(payload)
+
+
+def test_natal_endpoint_invalid_dates_are_rejected_before_ephemerides(monkeypatch):
+    async def actor(app, init_data):
+        return 123, {"platform": "telegram"}
+    monkeypatch.setattr(miniapp, "_get_user_context", actor)
+    monkeypatch.setattr(astro_api.config, "is_admin", lambda uid: True)
+    def bad_engine(*args, **kwargs):
+        raise AssertionError("invalid input touched ephemeris")
+    monkeypatch.setattr(astro_api, "build_natal_positions", bad_engine)
+    payload = {"init_data": "signed-test", "date": "2000-02-31",
+               "time": "12:00", "timezone": "UTC"}
+    assert invoke_natal(payload).status == 400
