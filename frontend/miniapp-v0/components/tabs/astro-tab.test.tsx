@@ -74,7 +74,7 @@ describe('Astro concept screens', () => {
       fireEvent.change(screen.getByLabelText('Часовой пояс'), { target: { value: 'Europe/Moscow' } })
       fireEvent.click(screen.getByRole('button', { name: /Открыть лунный календарь/ }))
       await waitFor(() => expect(screen.getByText(/Лунный календарь за 2024-03/)).toBeInTheDocument())
-      expect(screen.getByText(/2024-03-25/)).toBeInTheDocument()
+      expect(screen.getByText('2024-03-25')).toBeInTheDocument()
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const payload = JSON.parse(fetchMock.mock.calls[0][1].body)
       expect(payload).toMatchObject({ period: '2024-03', timezone: 'Europe/Moscow' })
