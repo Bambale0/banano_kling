@@ -106,6 +106,72 @@ describe('Astro concept screens', () => {
     expect(screen.getByLabelText('partner: дата рождения')).toBeInTheDocument()
   })
 
+  it('calculates a real two-person compatibility aspect result and keeps profiles separate', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true,
+        result: {
+          schema_version: 'astro.synastry.facts.v1',
+          person_a: { birth_time_known: true },
+          person_b: { birth_time_known: false },
+          cross_aspects: [{
+            person_a_body: 'Sun', person_b_body: 'Moon',
+            kind: 'trine', orb_deg: 1.1, approximate: true,
+          }],
+          warnings: ['Наложения на дома и композит не рассчитаны'],
+        },
+      }),
+    })
+    const originalFetch = global.fetch
+    Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Совместимость'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '20.03.2024' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
+      fireEvent.change(screen.getByLabelText('person: часовой пояс'), { target: { value: 'Europe/Moscow' } })
+      fireEvent.change(screen.getByLabelText('partner: дата рождения'), { target: { value: '01.02.1995' } })
+      fireEvent.change(screen.getByLabelText('partner: место рождения'), { target: { value: 'Таллин' } })
+      fireEvent.change(screen.getByLabelText('partner: часовой пояс'), { target: { value: 'Europe/Tallinn' } })
+      fireEvent.click(screen.getByRole('button', { name: /Получить разбор/ }))
+      await waitFor(() => expect(screen.getByRole('heading', { name: 'Межкартные аспекты' })).toBeInTheDocument())
+      expect(screen.getByText(/приблизительно/)).toBeInTheDocument()
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [endpoint, init] = fetchMock.mock.calls[0]
+      expect(endpoint).toBe('/mini-app/api/astro/compatibility')
+      const data = JSON.parse(init.body)
+      expect(data.person_a).toMatchObject({ date: '20.03.2024', timezone: 'Europe/Moscow' })
+      expect(data.person_b).toMatchObject({ date: '01.02.1995', timezone: 'Europe/Tallinn' })
+      expect(data.person_a).not.toHaveProperty('place')
+      expect(data.person_b).not.toHaveProperty('place')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
+    }
+  })
+
+  it('blocks two-person facts if server rejects access after admin revocation', async () => {
+    const originalFetch = global.fetch
+    Object.defineProperty(global, 'fetch', {
+      configurable: true, value: jest.fn().mockResolvedValue({ status: 403, ok: false }),
+    })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Совместимость'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '20.03.2024' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
+      fireEvent.change(screen.getByLabelText('person: часовой пояс'), { target: { value: 'Europe/Moscow' } })
+      fireEvent.change(screen.getByLabelText('partner: дата рождения'), { target: { value: '01.02.1995' } })
+      fireEvent.change(screen.getByLabelText('partner: место рождения'), { target: { value: 'Таллин' } })
+      fireEvent.change(screen.getByLabelText('partner: часовой пояс'), { target: { value: 'Europe/Tallinn' } })
+      fireEvent.click(screen.getByRole('button', { name: /Получить разбор/ }))
+      await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Нет доступа'))
+      expect(screen.queryByLabelText('Рассчитанные межкартные аспекты')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
+    }
+  })
+
   it('has a separate month picker for the lunar calendar', () => {
     render(<AstroTab />)
     fireEvent.click(screen.getByText('Лунный календарь'))
