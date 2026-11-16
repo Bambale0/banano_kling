@@ -248,17 +248,15 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       return
     }
     // Never imitate an astronomical calculation or send sensitive birth data to a nonexistent API.
-    if (service.id !== 'lunar') {
-      const dates = service.id === 'compatibility' ? ['person-date', 'partner-date'] : ['person-date']
-      if (dates.some((name) => !isDateValid(String(form.get(name) || '')))) {
-        setMessage('Укажите корректную дату рождения в формате ДД.ММ.ГГГГ.')
-        return
-      }
-      const places = service.id === 'compatibility' ? ['person-place', 'partner-place'] : ['person-place']
-      if (places.some((name) => !String(form.get(name) || '').trim())) {
-        setMessage('Укажите место рождения.')
-        return
-      }
+    const dates = service.id === 'compatibility' ? ['person-date', 'partner-date'] : ['person-date']
+    if (dates.some((name) => !isDateValid(String(form.get(name) || '')))) {
+      setMessage('Укажите корректную дату рождения в формате ДД.ММ.ГГГГ.')
+      return
+    }
+    const places = service.id === 'compatibility' ? ['person-place', 'partner-place'] : ['person-place']
+    if (places.some((name) => !String(form.get(name) || '').trim())) {
+      setMessage('Укажите место рождения.')
+      return
     }
     if (service.id === 'solar' && !String(form.get('solar-place') || '').trim()) {
       setMessage('Укажите место, где вы встретите день рождения в выбранном году.')
