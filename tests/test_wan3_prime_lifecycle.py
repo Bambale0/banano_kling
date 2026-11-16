@@ -425,6 +425,71 @@ async def test_delivery_sends_a_video_not_only_a_link_and_syncs_history():
 
 
 @pytest.mark.asyncio
+async def test_wan_uncertain_retries_after_backoff_and_uploads_file(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot.services import wan3_prime_delivery
+
+    actor = await user_actor(credits=50, telegram_id=1112231)
+    provider = Provider()
+    output = Path("static/uploads/wan3_prime/results/test-media-uncertain-retry.mp4")
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(file_duration=5), preset_manager=Prices({"720p": 2}),
+        transport=provider, downloader=Downloader(output),
+    )
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, "media-uncertain-retry-key")
+    provider.statuses["provider_1"] = {
+        "taskId": "provider_1", "state": "success",
+        "response": {"resultUrls": ["https://kie.example.com/out.mp4"]},
+    }
+    await lifecycle.reconcile_once(provider_task_id="provider_1")
+    bot = SimpleNamespace(
+        send_video=AsyncMock(side_effect=[
+            TimeoutError("Telegram response lost"),
+            SimpleNamespace(message_id=902),
+        ]),
+        send_document=AsyncMock(),
+        send_message=AsyncMock(),
+    )
+    monkeypatch.setattr(
+        wan3_prime_delivery, "_download_owned_retry_media",
+        AsyncMock(return_value=output),
+    )
+    try:
+        assert await lifecycle.deliver_ready_once(bot) == 0
+        async with database.db_backend.connect(database.DATABASE_PATH) as connection:
+            pending = await (await connection.execute(
+                "SELECT delivery_status, next_attempt_at FROM wan3_prime_intents "
+                "WHERE internal_task_id = ?", (launched["task_id"],),
+            )).fetchone()
+            assert pending["delivery_status"] == "uncertain"
+            assert pending["next_attempt_at"] is not None
+
+        assert await lifecycle.deliver_ready_once(bot) == 0
+        assert bot.send_video.await_count == 1
+
+        async with database.db_backend.connect(database.DATABASE_PATH) as connection:
+            await connection.execute(
+                "UPDATE wan3_prime_intents SET next_attempt_at = ? "
+                "WHERE internal_task_id = ?",
+                ("2000-01-01 00:00:00", launched["task_id"]),
+            )
+            await connection.commit()
+        assert await lifecycle.deliver_ready_once(bot) == 1
+        assert bot.send_video.await_count == 2
+        assert bot.send_message.await_count == 0
+        assert wan3_prime_delivery._download_owned_retry_media.await_count == 1
+        metadata = json.loads((await database.get_task_by_id(launched["task_id"])).request_data)
+        assert metadata["delivery_status"] == "delivered"
+        assert metadata["delivery_message_id"] == 902
+        assert provider.creates == 1
+    finally:
+        output.unlink(missing_ok=True)
+
+
+@pytest.mark.asyncio
 async def test_wan3_vk_launch_persists_verified_destination():
     actor = await user_actor(credits=50, telegram_id=880204)
     actor = Wan3PrimeActor(
