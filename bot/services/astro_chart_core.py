@@ -7,11 +7,13 @@ No network downloads, geocoding, or personal-data persistence are performed.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -99,6 +101,14 @@ def parse_birth_profile(payload: Any) -> BirthMoment:
     )
 
 
+@lru_cache(maxsize=8)
+def _kernel_digest(path: str, size: int, mtime_ns: int, inode: int) -> str:
+    """Hash a pre-provisioned immutable JPL kernel once per filesystem version."""
+    # Stat fields are part of the cache key, so replacement invalidates proof.
+    with open(path, "rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
 def _kernel_path() -> str:
     raw = os.getenv("ASTRO_DE440_PATH", "").strip()
     if not raw:
@@ -106,8 +116,20 @@ def _kernel_path() -> str:
     path = Path(raw).expanduser()
     if not path.is_file() or path.suffix.lower() != ".bsp":
         raise AstroChartUnavailable("JPL ephemeris asset not present")
-    if path.stat().st_size == 0:
-        raise AstroChartUnavailable("JPL ephemeris asset is empty")
+    try:
+        info = path.stat()
+        if info.st_size <= 0:
+            raise AstroChartUnavailable("JPL ephemeris asset is empty")
+        expected = os.getenv("ASTRO_DE440_SHA256", "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected):
+            raise AstroChartUnavailable("JPL SHA-256 checksum must be configured")
+        verified = _kernel_digest(
+            str(path.resolve()), info.st_size, info.st_mtime_ns, info.st_ino
+        )
+        if verified != expected:
+            raise AstroChartUnavailable("JPL ephemeris integrity check failed")
+    except OSError as exc:
+        raise AstroChartUnavailable("JPL ephemeris cannot be verified") from exc
     return str(path.resolve())
 
 
