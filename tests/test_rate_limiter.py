@@ -7,7 +7,9 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiohttp import web
 
+from bot.config import config
 from bot.services.rate_limiter import (
     _cleanup_loop,
     _client_ip,
@@ -244,9 +246,6 @@ class TestTelegramWebhookSharedIPRegressions:
 
     @pytest.mark.parametrize("real_ip", ["91.108.5.83", "149.154.161.12"])
     async def test_legitimate_telegram_webhook_bypasses_shared_ip_limit(self, real_ip):
-        from aiohttp import web
-        from bot.config import config
-
         req = MagicMock()
         req.method = "POST"
         req.path = "/telegram/webhook"
@@ -272,8 +271,6 @@ class TestTelegramWebhookSharedIPRegressions:
     async def test_untrusted_or_other_routes_are_still_limited(
         self, method, path, real_ip, forwarded
     ):
-        from bot.config import config
-
         req = MagicMock()
         req.method = method
         req.path = path
