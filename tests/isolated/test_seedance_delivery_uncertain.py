@@ -120,8 +120,8 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_retry_policy_is_paced_deterministic_and_capped(self):
         ns = {}
-        exec(compile((ROOT / "bot/services/delivery_state.py").read_text(),
-                     "delivery_state.py", "exec"), ns)  # noqa: S102 - pure fixed repo module
+        source = (ROOT / "bot/services/delivery_state.py").read_text()
+        exec(compile(source, "delivery_state.py", "exec"), ns)  # noqa: S102 - pure fixed repo module
         delay_1 = ns["uncertain_retry_seconds"]("task-a", 1)
         delay_2 = ns["uncertain_retry_seconds"]("task-a", 2)
         delay_many = ns["uncertain_retry_seconds"]("task-a", 50)
