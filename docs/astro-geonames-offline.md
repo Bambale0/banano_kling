@@ -24,3 +24,9 @@ The import file and output SQLite are managed deployment assets, **not committed
 This is an offline search/calculation library only, not a new public Astro endpoint or persistent birth profile. It changes no VK, Telegram FSM, provider pricing/payment, S3, frontend or production service. Before exposure add signed Telegram admin-only API with rate limits, consent/PII safeguards, explicit place picker and end-to-end tests.
 
 Security: parameterized SQL plus carefully quoted FTS tokens, immutable read-only SQLite, input size bounds, no network from user API. Do not log exact birth records. Where historical IANA data is incomplete, surface that limitation.
+
+
+### Country-aware search
+Frozen CLDR country names in Russian and English / ISO codes accompany GeoNames.
+Both Russia, Saint Petersburg and Россия, Санкт-Петербург match city alias and
+country, never guessing a place from a similar-named city elsewhere.

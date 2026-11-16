@@ -57,6 +57,29 @@ def test_russian_and_latin_names_and_alias_search(city_db):
     assert get_place(524901, db_path=city_db)["timezone"] == "Europe/Moscow"
 
 
+
+@pytest.mark.parametrize("query,expected_country,expected_place", [
+    ("Россия, Москва", "RU", 524901),
+    ("Москва, Россия", "RU", 524901),
+    ("Russian Federation, Moscow", "RU", 524901),
+    ("РФ, Москва", "RU", 524901),
+    ("Moscow, US", "US", 6167865),
+    ("United States, Moscow", "US", 6167865),
+    ("Эстония, Таллин", "EE", 588409),
+])
+def test_country_names_are_resolved_from_offline_country_catalog(
+    query, expected_country, expected_place, city_db,
+):
+    results = search_places(query, db_path=city_db)
+    assert results
+    assert all(r["country_code"] == expected_country for r in results)
+    assert results[0]["place_id"] == expected_place
+
+
+def test_unsupported_country_does_not_return_random_city(city_db):
+    assert search_places("Wakanda, Moscow", db_path=city_db) == []
+
+
 def test_ambiguous_moscow_requires_explicit_place_id(city_db):
     hits = search_places("Moscow", db_path=city_db)
     assert {p["country_code"] for p in hits} == {"RU", "US"}

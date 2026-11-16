@@ -6,10 +6,12 @@ required; the database is an immutable operator-provisioned artifact (CC BY 4.0)
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sqlite3
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 
 from bot.services.astro_lunar import AstroInputError, resolve_timezone
@@ -17,6 +19,33 @@ from bot.services.astro_natal import _resolve_civil_time
 
 PLACES_SCHEMA = "astro.places.v1"
 _TOKENS = re.compile(r"[^\W_]+", re.UNICODE)
+
+
+def _normalize_country(text: str) -> str:
+    return " ".join(_TOKENS.findall(unicodedata.normalize("NFKC", text).casefold()))
+
+
+@lru_cache(maxsize=1)
+def _country_aliases() -> dict[str, str]:
+    # Frozen CLDR country-name catalog. No network or optional Babel runtime.
+    with Path(__file__).with_name("astro_country_names.json").open(encoding="utf-8") as handle:
+        source = json.load(handle)
+    return {_normalize_country(alias): code for code, aliases in source.items()
+            for alias in aliases if alias}
+
+
+def _city_and_country(query: str) -> tuple[str, str | None]:
+    parts = [part.strip() for part in query.split(",")]
+    if len(parts) == 2 and all(parts):
+        codes = _country_aliases()
+        first = codes.get(_normalize_country(parts[0]))
+        last = codes.get(_normalize_country(parts[1]))
+        if first and not last:
+            return parts[1], first
+        if last and not first:
+            return parts[0], last
+    return query, None
+
 
 
 class AstroPlacesUnavailable(RuntimeError):
@@ -80,7 +109,8 @@ def search_places(query: object, *, db_path: str | Path | None = None, limit: in
         raise AstroInputError("Название города содержит управляющие символы.")
     if any(ch in normalized for ch in ("/", "\\", "=", ";", "<", ">")):
         raise AstroInputError("Введите корректное название города.")
-    tokens = _TOKENS.findall(normalized.casefold())
+    city_text, country_code = _city_and_country(normalized)
+    tokens = _TOKENS.findall(city_text.casefold())
     if not tokens or len(tokens) > 8:
         raise AstroInputError("Введите корректное название города.")
     expression = " AND ".join(f'"{word}"*' for word in tokens)
@@ -92,11 +122,11 @@ def search_places(query: object, *, db_path: str | Path | None = None, limit: in
                    p.latitude, p.longitude, p.timezone, p.population
             FROM places_fts
             JOIN places AS p ON p.geoname_id = places_fts.rowid
-            WHERE places_fts MATCH ?
+            WHERE places_fts MATCH ? AND (? IS NULL OR p.country_code = ?)
             ORDER BY p.population DESC, p.geoname_id ASC
             LIMIT ?
             """,
-            (expression, limit),
+            (expression, country_code, country_code, limit),
         ).fetchall()
     except sqlite3.DatabaseError as exc:
         raise AstroPlacesUnavailable("Не удалось выполнить поиск города.") from exc
