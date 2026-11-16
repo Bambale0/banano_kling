@@ -75,7 +75,7 @@ tanyapi.chillcreative.ru (144.76.188.75)
   -> Docker banano-kling-bot за локальным Nginx
 ```
 
-Сверено 2026-10-07. `cdn.chillcreative.ru` и `media.chillcreative.ru` — legacy origins: сохранённые `/uploads/` ссылки нормализуются к текущему `STATIC_BASE_URL`, без массовой перезаписи истории. Старый Cloudflare/bind-mount workflow не является текущим media deploy path; DNS не меняется автоматически.
+Сверено 2026-10-07. Старые media origins — legacy origins только для сохранённых `/uploads/` ссылок; они нормализуются к текущему `STATIC_BASE_URL` без массовой перезаписи истории и не используются для загрузки Mini App. Старый Cloudflare/bind-mount workflow не является текущим media deploy path; DNS не меняется автоматически.
 
 Production topology относится только к ветке `tanyapi`. DEV domains, paths и credentials задаются GitHub environment `development` и DEV server `.env`; они не должны использовать production bot token, database или media root.
 

@@ -35,7 +35,7 @@ Runtime topology:
 
 ```text
 Telegram WebView
-  -> https://cdn.chillcreative.ru/mini-app/
+  -> https://neuromixbot.com/mini-app/
   -> static Next.js export
   -> /mini-app/api/* proxy
   -> aiohttp backend
@@ -517,7 +517,7 @@ Production API proxy auth boundary:
 
 ```bash
 curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  https://neuromixbot.com/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```

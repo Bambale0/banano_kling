@@ -171,7 +171,7 @@ grep -RniE 'Banano AI Studio|Banana Studio|Banano Studio|Banano Kling' \
 Проверить публичный title:
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 

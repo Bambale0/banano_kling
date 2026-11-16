@@ -23,8 +23,8 @@ Roadmap фиксирует ближайшие направления стаби�
 ### Frontend
 
 - Next.js static export;
-- production frontend на `cdn.chillcreative.ru`;
-- remote deployment через `cdn.sh` и профиль `tanyafrontend`;
+- production frontend на `neuromixbot.com/mini-app/`;
+- deployment exact SHA через `scripts/deploy_miniapp_local.sh` в production workflow;
 - отдельный initial loader;
 - Telegram auth gate после завершённой проверки;
 - единый пользовательский бренд NEUROMIX;

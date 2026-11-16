@@ -156,7 +156,8 @@ curl -fsS http://127.0.0.1:1888/health
 
 ```bash
 cd /root/tanya/banano_kling
-sudo bash cdn.sh --remote-status tanyafrontend
+curl -fsSI https://neuromixbot.com/mini-app/
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
 ### Media origin

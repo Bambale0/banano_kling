@@ -7,10 +7,10 @@ Frontend не является отдельным backend. Он собирает
 ## 1. Production URL
 
 ```text
-https://cdn.chillcreative.ru/mini-app/
+https://neuromixbot.com/mini-app/
 ```
 
-Production build обслуживается Nginx на `91.200.84.187`. API запросы под `/mini-app/api/*` проксируются по HTTPS на `https://tanyapi.chillcreative.ru`.
+Production build обслуживается Nginx на основном production host `144.76.188.75`. Mini App и API используют один origin; `/mini-app/api/*` проксируется backend на `https://tanyapi.chillcreative.ru`.
 
 ## 2. Стек
 
@@ -194,17 +194,10 @@ out/
 
 ## 11. Static deployment
 
-Рекомендуемая команда из backend/operator host:
+Production release выполняет GitHub Actions после merge в `tanyapi`. Workflow вызывает `scripts/deploy_miniapp_local.sh` для точного SHA и публикует export на основном production host. Отдельный CDN/frontend host для запуска или выкладки Mini App не используется.
 
 ```bash
-cd /root/tanya/banano_kling
-sudo bash cdn.sh --remote-deploy tanyafrontend
-```
-
-После завершения:
-
-```bash
-sudo bash cdn.sh --remote-status tanyafrontend
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
 Подробности: `../../docs/miniapp-frontend-deployment.md`.
@@ -307,14 +300,14 @@ npm test
 ### Title
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 
 ### Assets
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -oE '/mini-app/_next/static/[^" ]+\.(js|css)' \
   | sort -u
 ```
@@ -323,7 +316,7 @@ curl -fsS https://cdn.chillcreative.ru/mini-app/ \
 
 ```bash
 curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  https://neuromixbot.com/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```

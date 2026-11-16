@@ -1,6 +1,6 @@
 # Production deployment NEUROMIX
 
-Документ описывает схему ветки `tanyapi`, сверенную 2026-10-22. Текущий frontend и media используют один домен; разделы про отдельный `cdn` host ниже обозначены как legacy и не являются текущим release path.
+Документ описывает production-схему ветки `tanyapi`, сверенную 2026-10-22. Mini App открывается и выкладывается на общем production host по `neuromixbot.com`.
 
 ## 1. Целевая инфраструктура
 
@@ -29,15 +29,10 @@ tanyapi
 - сертификат для backend-домена;
 - локальный aiohttp runtime на `127.0.0.1:1888` либо другом значении из config.
 
-### Legacy separate frontend host (не текущий release path)
+### Mini App frontend
 
-- root или sudo без пароля для deploy user;
-- Node.js версии, ожидаемой installer script;
-- npm;
-- Nginx;
-- Certbot;
-- Git checkout `/opt/banano-kling-src`;
-- профиль домена `/etc/banano-miniapp/profiles/cdn.chillcreative.ru.env`.
+The Mini App uses the production host listed above and is released by
+`deploy-production.yml`; no separate frontend host/profile is required.
 
 ### Legacy Cloudflare media automation
 
@@ -78,7 +73,7 @@ A  tanyapi  -> 144.76.188.75
 neuromixbot.com -> 144.76.188.75
 ```
 
-Один TLS vhost обслуживает `/mini-app/`, проксирует `/mini-app/api/*`, `/uploads/*` и подписанные `/genjutsu/*` на backend. Старые `cdn.chillcreative.ru` и `media.chillcreative.ru` остаются legacy именами в сохранённых ссылках; это не указание менять их DNS или удалять инфраструктуру. Proxy status и TTL нового домена здесь не предполагаются.
+Один TLS vhost обслуживает `/mini-app/`, проксирует `/mini-app/api/*`, `/uploads/*` и подписанные `/genjutsu/*` на backend. Старые media URL могут встречаться в сохранённых ссылках для обратной совместимости; они не являются адресом запуска Mini App. Proxy status и TTL нового домена здесь не предполагаются.
 
 Read-only проверка:
 
@@ -253,77 +248,30 @@ Expected: ordinary media returns `200`; a valid ranged video request returns `20
 
 The standalone `media.chillcreative.ru` installer under `ops/media/` is legacy infrastructure and is not the current production deploy path.
 
-## 9. Legacy frontend remote profile (не текущий release path)
+## 9. Mini App frontend deploy
 
-Профиль `tanyafrontend` хранится на операторском/backend host в root-only каталоге `cdn.sh`.
+The Mini App is served from `https://neuromixbot.com/mini-app/` on the production
+backend host. The `deploy-production.yml` workflow runs
+`scripts/deploy_miniapp_local.sh` for the exact release SHA and verifies
+`/mini-app/revision.txt`. Do not deploy the Mini App through a separate frontend host.
 
-Создание/обновление профиля выполняется интерактивным режимом `cdn.sh`. Ожидаемые значения:
-
-```text
-REMOTE_SSH_HOST=root@91.200.84.187
-REMOTE_SOURCE_DIR=/opt/banano-kling-src
-REMOTE_DOMAIN=cdn.chillcreative.ru
-REMOTE_BRANCH=tanyapi
-REMOTE_USE_SUDO=0
-```
-
-Проверить SSH:
+Read-only status checks:
 
 ```bash
-ssh -o BatchMode=yes -o ConnectTimeout=15 root@91.200.84.187 'echo SSH_OK'
+curl -fsSI https://neuromixbot.com/mini-app/
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
-## 10. Legacy separate frontend deploy
+## 10. Mini App publisher behavior
 
-На backend/operator host:
+`scripts/deploy_miniapp_local.sh` verifies the requested commit, runs frontend
+install/lint/build on the production host, backs up the active static root,
+publishes the export without deleting older hashed assets, writes
+`revision.txt`, and checks the public HTML/assets against the exact release
+SHA. The production workflow also verifies backend health and the Mini App
+revision. Telegram WebView smoke remains a separate client-level check.
 
-```bash
-cd /root/tanya/banano_kling
-
-git fetch --prune origin tanyapi
-git switch tanyapi
-git reset --hard origin/tanyapi
-
-git log -1 --oneline
-sudo bash cdn.sh --remote-deploy tanyafrontend
-```
-
-Не запускать `--remote-status` в той же цепочке до завершения deploy.
-
-После успешного deploy:
-
-```bash
-sudo bash cdn.sh --remote-status tanyafrontend
-```
-
-Ожидаемые status fields:
-
-```text
-branch=tanyapi
-profile=ok
-nginx=active
-miniapp_http=200
-health={..."ok":true...}
-```
-
-## 11. Что происходит внутри legacy frontend deploy
-
-1. SSH на `91.200.84.187`;
-2. проверка чистого checkout;
-3. `fetch/switch/reset` до `origin/tanyapi`;
-4. запуск domain installer;
-5. `npm ci`;
-6. lint/build и проверка `out/index.html` согласно installer;
-7. backup текущей версии;
-8. публикация static export;
-9. `nginx -t` и reload при необходимости;
-10. frontend health и HTML smoke.
-
-Frontend static assets предыдущей сборки не должны удаляться сразу. Telegram WebView может держать старый HTML и запрашивать старые hashed chunks.
-
-Текущий production release выполняется через CI/CD для точного SHA ветки `tanyapi`. Проверяются контейнер backend и static frontend на новом shared origin. Команды legacy remote deploy выше не запускать для текущего релиза без отдельного плана.
-
-## 12. Post-deploy smoke tests
+## 11. Post-deploy smoke tests
 
 ### Frontend HTML
 
@@ -380,24 +328,15 @@ curl -i -X POST \
 - публикация и profile/feed работают;
 - новые media-превью используют `neuromixbot.com`; legacy `/uploads/` ссылки нормализуются без массовой перезаписи истории.
 
-## 13. Rollback frontend
+## 12. Rollback frontend
 
-### Legacy separate frontend через `cdn.sh`
+Frontend backups are retained under
+`/var/backups/banano-miniapp/neuromixbot.com/`. Any restore must be an
+operator-approved recovery against the matching `neuromixbot.com` static root;
+never restore a separate-host backup or remove old assets as part of a normal
+release. Verify `/mini-app/revision.txt`, HTML, and assets after recovery.
 
-На frontend host/interactive manager выбрать backup для домена и выполнить rollback. Скрипт восстанавливает backup через `rsync --delete`, затем проверяет Nginx и HTML.
-
-### Ручной аварийный вариант
-
-1. Найти последнюю подтверждённую backup-директорию.
-2. Сравнить её содержимое с текущим deployment.
-3. Для текущего frontend восстановить в `/var/www/neuromixbot.com`; legacy backup нельзя автоматически применять к новому vhost.
-4. Проверить права.
-5. Выполнить `nginx -t`.
-6. Проверить HTML и реальный asset.
-
-Не удалять backup до успешного Telegram smoke.
-
-## 14. Rollback backend
+## 13. Rollback backend
 
 ```bash
 cd /root/tanya/banano_kling
@@ -411,13 +350,13 @@ curl -fsS http://127.0.0.1:1888/health
 
 Лучше откатывать ветку через revert/исправляющий commit, а detached checkout использовать только как краткосрочный аварийный шаг.
 
-## 15. Rollback media
+## 14. Rollback media
 
 Для текущего shared origin сначала определить, что сломано: release кода, выбранная public-base configuration или Nginx routing. Сохранить `/uploads/` и подписанные `/genjutsu/` маршруты; не откатывать их вместе с legacy vhost без отдельного плана. Любое изменение live Nginx или DNS выполняется только после проверки и согласования; затем нужны syntax check и smoke нового origin.
 
 Старый standalone media installer создавал backup server block и использовал bind mount/Cloudflare. Его rollback относится только к legacy `media.chillcreative.ru`; нельзя автоматически применять его к текущему vhost или отключать proxy во время обычного release.
 
-## 16. Release checklist
+## 15. Release checklist
 
 Перед deploy:
 

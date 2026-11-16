@@ -10,10 +10,10 @@
 | Backend branch | `tanyapi` |
 | Backend service | `banano-kling.service` |
 | Backend local health | `http://127.0.0.1:1888/health` |
-| Frontend host | `91.200.84.187` |
-| Frontend domain | `cdn.chillcreative.ru` |
-| Frontend public URL | `https://cdn.chillcreative.ru/mini-app/` |
-| Frontend remote profile | `tanyafrontend` |
+| Frontend host | `144.76.188.75` (same production host as backend) |
+| Frontend domain | `neuromixbot.com` |
+| Frontend public URL | `https://neuromixbot.com/mini-app/` |
+| Frontend release path | `deploy-production.yml` + `scripts/deploy_miniapp_local.sh` |
 | Media domain | `tanyapp.xn--e1aikcel5c5a.online` |
 | Media source | `/root/tanya/banano_kling/static/uploads` |
 
@@ -127,30 +127,18 @@ journalctl -u banano-kling.service -n 100 --no-pager
 
 ## 6. Frontend deploy
 
-### Deploy
+Обычный frontend release выполняет GitHub Actions после merge в `tanyapi`; он собирает и публикует статический export на основном production host. Отдельный CDN/frontend deploy не используется.
 
 ```bash
-cd /root/tanya/banano_kling
-
-git fetch --prune origin tanyapi
-git switch tanyapi
-git reset --hard origin/tanyapi
-
-git log -1 --oneline
-sudo bash cdn.sh --remote-deploy tanyafrontend
-```
-
-Дождаться полного завершения. Только затем:
-
-```bash
-sudo bash cdn.sh --remote-status tanyafrontend
+curl -fsSI https://neuromixbot.com/mini-app/
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
 ### Frontend smoke
 
 ```bash
-curl -fsSI https://cdn.chillcreative.ru/mini-app/
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsSI https://neuromixbot.com/mini-app/
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 
@@ -164,7 +152,7 @@ curl -fsS https://cdn.chillcreative.ru/mini-app/ \
 
 ```bash
 curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  https://neuromixbot.com/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -180,21 +168,9 @@ curl -i -X POST \
 
 ## 7. Frontend deploy logs
 
-На операторском/backend host:
-
-```bash
-tail -n 200 /var/log/banano-miniapp-cdn.log
-```
-
-На frontend host:
-
-```bash
-ssh root@91.200.84.187 '
-  tail -n 200 /var/log/banano-miniapp-cdn.log 2>/dev/null || true
-  LAST=$(ls -t /root/.npm/_logs/*.log 2>/dev/null | head -n1)
-  [ -n "$LAST" ] && tail -n 200 "$LAST" || true
-'
-```
+Проверяйте job logs конкретного `deploy-production.yml` run и SHA. Frontend
+build/deploy исполняется на production host через `scripts/deploy_miniapp_local.sh`;
+отдельного frontend host или CDN deploy log для текущего Mini App нет.
 
 ## 8. Media checks
 
@@ -236,22 +212,16 @@ sudo systemctl status nginx --no-pager
 sudo journalctl -u nginx -n 100 --no-pager
 ```
 
-### Frontend host
+### Mini App host
 
-```bash
-ssh root@91.200.84.187 '
-  nginx -t
-  systemctl is-active nginx
-  systemctl status nginx --no-pager
-'
-```
+Frontend и backend используют основной production Nginx host.
 
-## 10. TLS checks
+## 11. TLS checks
 
 ```bash
 openssl s_client \
-  -connect cdn.chillcreative.ru:443 \
-  -servername cdn.chillcreative.ru \
+  -connect neuromixbot.com:443 \
+  -servername neuromixbot.com \
   -verify_return_error </dev/null
 
 openssl s_client \

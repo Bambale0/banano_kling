@@ -17,114 +17,43 @@
 
 ## 2. Frontend deploy завис на `npm ci`
 
-### Симптом
+Production Mini App собирается на том же host, который обслуживает
+`neuromixbot.com`; deploy запускается workflow `deploy-production.yml`.
+`npm warn deprecated` сам по себе не является ошибкой. Сначала проверьте
+конкретный GitHub Actions run и не запускайте второй deploy параллельно.
 
-Последняя строка похожа на:
-
-```text
-Installing locked frontend dependencies
-npm warn deprecated ...
-```
-
-и долго нет нового вывода.
-
-`deprecated` warning сам по себе не является ошибкой.
-
-### Проверить процессы
+На production host процессы и ресурсы можно проверить так:
 
 ```bash
-ssh root@91.200.84.187 '
 ps -eo pid,ppid,etime,%cpu,%mem,stat,cmd \
-  | grep -E "[n]pm ci|[n]ode|[n]ext build|install_miniapp|[c]dn.sh"
-'
-```
-
-### Проверить ресурсы
-
-```bash
-ssh root@91.200.84.187 '
+  | grep -E '[n]pm ci|[n]ext build|deploy_miniapp_local'
 free -h
 df -h /
 df -i /
-'
 ```
 
-### Проверить registry
+Не завершайте build вручную, пока не проверили состояние production deploy
+lock и текущего workflow.
+
+## 3. Frontend release interrupted
+
+Отдельного SSH/CDN frontend deploy больше нет, поэтому прежняя ошибка SSH
+`255` не является сигналом о состоянии Mini App. Проверьте результат workflow
+`deploy-production.yml` и опубликованную ревизию:
 
 ```bash
-ssh root@91.200.84.187 '
-getent hosts registry.npmjs.org
-curl -4 -I --connect-timeout 10 --max-time 20 https://registry.npmjs.org/
-npm config get registry
-'
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
-Ожидаемый registry:
-
-```text
-https://registry.npmjs.org/
-```
-
-### Npm logs
-
-```bash
-ssh root@91.200.84.187 '
-LAST=$(ls -t /root/.npm/_logs/*.log 2>/dev/null | head -n1)
-[ -n "$LAST" ] && tail -n 200 "$LAST" || echo "npm log not found"
-'
-```
-
-### Безопасно остановить зависший install
-
-```bash
-ssh root@91.200.84.187 '
-PIDS=$(pgrep -f "npm ci" || true)
-if [ -n "$PIDS" ]; then
-  kill -TERM $PIDS
-  sleep 5
-  kill -KILL $PIDS 2>/dev/null || true
-fi
-'
-```
-
-### Ручная проверка
-
-```bash
-ssh root@91.200.84.187 '
-set -e
-cd /opt/banano-kling-src/frontend/miniapp-v0
-rm -rf node_modules
-npm cache verify
-npm ci --no-audit --no-fund --foreground-scripts --loglevel verbose
-'
-```
-
-Если ручной install успешен, повторить normal remote deploy.
-
-## 3. После `Ctrl+C` получена ошибка строки 562, код 255
-
-Это типичный результат прерванной SSH-команды `cdn.sh`.
-
-```text
-Ошибка на строке 562, код 255
-```
-
-Код `255` в этом контексте означает, что SSH session завершилась с ошибкой или была прервана пользователем. Он не доказывает отдельную ошибку приложения.
-
-После прерывания:
-
-1. проверить оставшиеся процессы на frontend host;
-2. остановить только зависший `npm ci`, если он остался;
-3. проверить текущую опубликованную версию;
-4. изучить `/var/log/banano-miniapp-cdn.log`;
-5. повторить deploy после устранения причины.
+Не запускайте повторный deploy, пока не подтверждены завершение предыдущего
+workflow и точный SHA на production.
 
 ## 4. Frontend deploy завершился, но видна старая версия
 
 ### Причины
 
 - Telegram WebView держит старый document;
-- Cloudflare/browser cache;
+- browser/Telegram WebView cache;
 - deploy собрал старый commit;
 - checkout frontend host не обновился;
 - HTML обновился, но старые assets ещё в памяти WebView.
@@ -132,22 +61,13 @@ npm ci --no-audit --no-fund --foreground-scripts --loglevel verbose
 ### Проверить commit
 
 ```bash
-sudo bash cdn.sh --remote-status tanyafrontend
-```
-
-Либо:
-
-```bash
-ssh root@91.200.84.187 '
-git -C /opt/banano-kling-src branch --show-current
-git -C /opt/banano-kling-src log -1 --oneline
-'
+curl -fsS https://neuromixbot.com/mini-app/revision.txt
 ```
 
 ### Проверить title снаружи
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -o '<title>[^<]*</title>'
 ```
 
@@ -158,13 +78,13 @@ curl -fsS https://cdn.chillcreative.ru/mini-app/ \
 ### Проверить HTML
 
 ```bash
-curl -fsSI https://cdn.chillcreative.ru/mini-app/
+curl -fsSI https://neuromixbot.com/mini-app/
 ```
 
 ### Проверить assets из текущего HTML
 
 ```bash
-curl -fsS https://cdn.chillcreative.ru/mini-app/ \
+curl -fsS https://neuromixbot.com/mini-app/ \
   | grep -oE '/mini-app/_next/static/[^" ]+\.(js|css)' \
   | sort -u
 ```
@@ -190,7 +110,7 @@ API proxy smoke:
 
 ```bash
 curl -i -X POST \
-  https://cdn.chillcreative.ru/mini-app/api/bootstrap \
+  https://neuromixbot.com/mini-app/api/bootstrap \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -283,13 +203,14 @@ timedatectl status
 curl -v https://tanyapi.chillcreative.ru/health
 ```
 
-Проверить frontend Nginx config:
+Проверить Nginx config на production host:
 
 ```bash
-ssh root@91.200.84.187 'nginx -t'
+sudo nginx -t
 ```
 
-Проверить SNI/Host upstream и TLS verification. Secure frontend installer должен проксировать на HTTPS backend domain, а не raw IP:1888.
+Проверить SNI/Host upstream и TLS verification. Production vhost обслуживает
+Mini App на `neuromixbot.com`; backend runtime port не публикуется напрямую.
 
 ## 10. Backend service не запускается
 
@@ -482,7 +403,7 @@ redis-cli -u "$REDIS_URL" ping
   git -C /root/tanya/banano_kling log -1 --oneline
   systemctl show banano-kling.service -p ActiveState -p SubState -p NRestarts
   curl -sS -o /dev/null -w 'backend=%{http_code}\n' https://tanyapi.chillcreative.ru/health
-  curl -sS -o /dev/null -w 'frontend=%{http_code}\n' https://cdn.chillcreative.ru/mini-app/
+  curl -sS -o /dev/null -w 'frontend=%{http_code}\n' https://neuromixbot.com/mini-app/
   nginx -t 2>&1
 } | tee /tmp/neuromix-diagnostic.txt
 ```

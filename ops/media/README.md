@@ -39,7 +39,7 @@ Telegram Mini App / браузер
 | Nginx-readable mount | `/var/www/media.chillcreative.ru/uploads` |
 | Backend service | `banano-kling.service` |
 | Required branch | `tanyapi` |
-| Frontend | `https://cdn.chillcreative.ru/mini-app/` |
+| Frontend | `https://neuromixbot.com/mini-app/` |
 
 ## 3. Почему нужен bind mount
 

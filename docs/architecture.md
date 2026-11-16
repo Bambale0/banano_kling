@@ -24,7 +24,7 @@ https://tanyapi.chillcreative.ru
   -> Docker banano-kling-bot, compose service bot
 ```
 
-Новый frontend и публичные media используют общий origin. Локальный backend port не требуется открывать в интернет. `cdn.chillcreative.ru` и `media.chillcreative.ru` относятся к прежней separate-host/Cloudflare схеме; старые upload URL поддерживаются как входы и нормализуются к `STATIC_BASE_URL`. Это не означает удаления старых DNS records или переписывания истории в БД.
+Новый frontend и публичные media используют общий origin. Локальный backend port не требуется открывать в интернет. Прежние separate-host/Cloudflare origins сохраняются только как входы для старых upload URL и нормализуются к `STATIC_BASE_URL`; Mini App не загружается с них. Это не означает удаления старых DNS records или переписывания истории в БД.
 
 ## 3. Backend runtime
 
@@ -294,7 +294,7 @@ Production branch — `tanyapi`. Release проходит CI для точног
 - Frontend: статический Next.js export на `tanyapp.xn--e1aikcel5c5a.online`; старые hashed chunks сохраняются для Telegram WebView
 - Media: выбранные public config fields `STATIC_BASE_URL` и `GENJUTSU_PUBLIC_BASE_URL` указывают на shared origin; обычные webhook origins не меняются
 - Nginx: `/uploads/` и `/genjutsu/` уже присутствуют в live vhost; installer содержит такие же routes, но его выполнение и изменение сетевой конфигурации требуют отдельной проверки
-- `cdn.sh --remote-deploy tanyafrontend` и `scripts/deploy_media_origin.sh` описывают legacy separate-host workflow, а не текущий обязательный production release step
+- Separate-host Mini App deployment is retired; `deploy-production.yml` is the production release path. The standalone media installer remains legacy and is unrelated to app delivery.
 
 ## 11. Security boundaries
 

@@ -292,7 +292,7 @@ npm run build
 
 ## 21. Production references
 
-- Production URL: `https://cdn.chillcreative.ru/mini-app/`;
+- Production URL: `https://neuromixbot.com/mini-app/`;
 - Backend: `https://tanyapi.chillcreative.ru`;
 - Media: `https://media.chillcreative.ru`.
 
