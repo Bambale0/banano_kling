@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from bot.services.astro_report_pipeline import AstroReportError, load_report_plan, report_fingerprint
+from bot.services.astro_report_pipeline import (
+    AstroReportError,
+    load_report_plan,
+    report_fingerprint,
+)
 
 # Source-derived report sections, excluding computation input and format-only chapters.
 REPORT_SPECS = {
