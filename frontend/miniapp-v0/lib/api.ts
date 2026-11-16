@@ -320,8 +320,9 @@ function rewriteBackendUploadUrl(value: string): string {
     const url = new URL(value)
     const host = url.hostname.toLowerCase()
     if (
-      (host === 'tanyapi.chillcreative.ru' || host === 'tanyapp.xn--e1aikcel5c5a.online' || host === 'neuromixbot.com')
-      && url.pathname.startsWith('/uploads/feed/thumbs/')
+      (host === 'tanyapi.chillcreative.ru' || host === 'tanyapp.chillcreative.ru'
+        || host === 'tanyapp.xn--e1aikcel5c5a.online' || host === 'neuromixbot.com')
+      && url.pathname.startsWith('/uploads/')
     ) {
       return `${window.location.origin}${url.pathname}${url.search}${url.hash}`
     }
@@ -364,10 +365,12 @@ function rewriteTemporaryMedia(value: unknown): unknown {
 
   const taskId = typeof source.task_id === 'string' ? source.task_id.trim() : ''
   if (!taskId) return rewritten
-  const originalUrls = Array.isArray(source.result_urls)
-    ? source.result_urls.filter((item): item is string => typeof item === 'string')
+  // Keep the same-origin upload URLs produced by the recursive pass above.
+  // Reusing source here would put an unreachable historical host back in arrays.
+  const originalUrls = Array.isArray(rewritten.result_urls)
+    ? rewritten.result_urls.filter((item): item is string => typeof item === 'string')
     : []
-  const primaryUrl = typeof source.result_url === 'string' ? source.result_url : ''
+  const primaryUrl = typeof rewritten.result_url === 'string' ? rewritten.result_url : ''
   if (primaryUrl && !originalUrls.includes(primaryUrl)) originalUrls.unshift(primaryUrl)
   const proxyUrl = (index: number) =>
     `${getApiBasePath()}/media/${encodeURIComponent(taskId)}/${index}`
