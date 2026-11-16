@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import calendar
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 ASTRO_LUNAR_SCHEMA = "astro.lunar.v1"
@@ -50,7 +50,7 @@ def resolve_timezone(name: str) -> ZoneInfo:
 
 def _astro_time(astro, instant: datetime):
     # Astronomy Engine accepts UTC ISO-8601 timestamps ending in Z.
-    return astro.Time.Parse(instant.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return astro.Time.Parse(instant.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
 def _instant(value: object) -> datetime:
@@ -58,7 +58,7 @@ def _instant(value: object) -> datetime:
     raw = str(value)
     if not raw.endswith("Z"):
         raise AstroEngineUnavailable("Эфемерида вернула дату без указания UTC.")
-    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    return datetime.fromisoformat(raw)
 
 
 def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dict:
@@ -79,8 +79,8 @@ def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dic
     n_days = calendar.monthrange(year, month)[1]
     first_local = datetime(year, month, 1, tzinfo=tz)
     last_local = first_local + timedelta(days=n_days)
-    start_utc = first_local.astimezone(timezone.utc)
-    end_utc = last_local.astimezone(timezone.utc)
+    start_utc = first_local.astimezone(UTC)
+    end_utc = last_local.astimezone(UTC)
 
     # Collect *actual* quarter instants, including days near month boundaries.
     quarter = engine.SearchMoonQuarter(_astro_time(engine, start_utc - timedelta(days=2)))
@@ -121,7 +121,7 @@ def build_lunar_calendar(period: str, timezone_name: str, *, engine=None) -> dic
     for day in range(1, n_days + 1):
         # Local noon is representative; sign/phase may change within a day.
         local_noon = datetime(year, month, day, 12, tzinfo=tz)
-        utc_noon = local_noon.astimezone(timezone.utc)
+        utc_noon = local_noon.astimezone(UTC)
         at = _astro_time(engine, utc_noon)
         moon_lon = float(engine.EclipticGeoMoon(at).lon) % 360.0
         angle = float(engine.MoonPhase(at)) % 360.0
