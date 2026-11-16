@@ -40,8 +40,8 @@ class BirthMoment:
     year: int
     month: int
     day: int
-    hour: int
-    minute: int
+    hour: int | None
+    minute: int | None
     latitude: float
     longitude: float
     timezone: str
@@ -68,14 +68,15 @@ def parse_birth_profile(payload: Any) -> BirthMoment:
     time_text = payload.get("time")
     if not isinstance(date_text, str) or not _DATE_PATTERN.fullmatch(date_text):
         raise AstroChartInputError("Укажите дату рождения в формате ДД.ММ.ГГГГ.")
-    if not isinstance(time_text, str) or not _TIME_PATTERN.fullmatch(time_text):
-        raise AstroChartInputError(
-            "Для домов Плацидуса требуется точное время рождения ЧЧ:ММ."
-        )
+    if time_text not in ("", None) and (
+        not isinstance(time_text, str) or not _TIME_PATTERN.fullmatch(time_text)
+    ):
+        raise AstroChartInputError("Время рождения должно быть ЧЧ:ММ либо неизвестно.")
     try:
-        birth = datetime.strptime(date_text + " " + time_text, "%d.%m.%Y %H:%M")
+        birth = datetime.strptime(date_text, "%d.%m.%Y")
     except ValueError as exc:
-        raise AstroChartInputError("Дата или время рождения не существует.") from exc
+        raise AstroChartInputError("Дата рождения не существует.") from exc
+    hour, minute = map(int, time_text.split(":")) if time_text else (None, None)
     if not 1900 <= birth.year <= 2100:
         raise AstroChartInputError("Дата рождения вне диапазона 1900–2100.")
 
@@ -93,7 +94,7 @@ def parse_birth_profile(payload: Any) -> BirthMoment:
     latitude = _coordinate(payload.get("latitude"), maximum=90, label="широты")
     longitude = _coordinate(payload.get("longitude"), maximum=180, label="долготы")
     return BirthMoment(
-        birth.year, birth.month, birth.day, birth.hour, birth.minute,
+        birth.year, birth.month, birth.day, hour, minute,
         latitude, longitude, tz_name, fold,
     )
 
@@ -124,7 +125,7 @@ def _assemble_birth(profile: BirthMoment, *, engine, kernel: str) -> dict:
     try:
         moment = engine.resolve(
             date=(profile.year, profile.month, profile.day),
-            time=(profile.hour, profile.minute),
+            time=(profile.hour, profile.minute) if profile.hour is not None else None,
             lat=profile.latitude,
             lon=profile.longitude,
             tz=profile.timezone,
@@ -163,21 +164,37 @@ def _assemble_birth(profile: BirthMoment, *, engine, kernel: str) -> dict:
 
     cusps = chart.get("cusps")
     angles = chart.get("angles")
-    if not isinstance(cusps, list) or len(cusps) != 12 or not isinstance(angles, dict):
-        # Placidus can be undefined at high latitudes; don't silently change systems.
-        raise AstroChartUnavailable("Placidus houses not available for this birth moment")
-    if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in cusps):
-        raise AstroChartUnavailable("Invalid Placidus house positions")
-    for essential in ("asc", "mc"):
-        angle = angles.get(essential)
-        if isinstance(angle, bool) or not isinstance(angle, (int, float)):
-            raise AstroChartUnavailable("Invalid chart angle")
-        if not math.isfinite(angle) or not 0 <= angle < 360:
-            raise AstroChartUnavailable("Invalid chart angle")
+    time_known = profile.hour is not None
+    if time_known:
+        if not isinstance(cusps, list) or len(cusps) != 12 or not isinstance(angles, dict):
+            # Placidus can be undefined at high latitudes; don't silently change systems.
+            raise AstroChartUnavailable("Placidus houses not available for this birth moment")
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) for v in cusps):
+            raise AstroChartUnavailable("Invalid Placidus house positions")
+        for essential in ("asc", "mc"):
+            angle = angles.get(essential)
+            if isinstance(angle, bool) or not isinstance(angle, (int, float)):
+                raise AstroChartUnavailable("Invalid chart angle")
+            if not math.isfinite(angle) or not 0 <= angle < 360:
+                raise AstroChartUnavailable("Invalid chart angle")
+    elif cusps is not None or angles is not None:
+        # Fail closed: unknown birth time must never manufacture houses/angles.
+        raise AstroChartUnavailable("Unknown birth time unexpectedly yielded angles")
 
     aspects = chart.get("aspects")
     if not isinstance(aspects, list):
         raise AstroChartUnavailable("Natal aspects missing")
+    if not time_known:
+        # Unknown clock time makes houses, Asc/MC, the Moon and Moon aspects unreliable.
+        # Remove uncertain lunar data rather than guessing a Moon sign or natal house.
+        bodies = dict(bodies)
+        bodies.pop("Moon", None)
+        aspects = [
+            aspect for aspect in aspects
+            if isinstance(aspect, dict)
+            and aspect.get("a") != "Moon" and aspect.get("b") != "Moon"
+        ]
+        chart = {**chart, "bodies": bodies, "aspects": aspects}
     # Never expose raw engine exception strings: they can contain private host paths.
     safe_keys = (
         "jd_ut", "utc", "lat", "lon", "tz", "offset_hours",
@@ -197,6 +214,11 @@ def build_natal_facts(payload: Any, *, engine=None, kernel=None) -> dict:
         "calculation": "tropical-geocentric-placidus",
         "engine": {"name": "openephem", "version": "0.5.0", "kernel": "JPL-DE440"},
         "chart": chart,
+        "accuracy": {
+            "birth_time_known": profile.hour is not None,
+            "moon_position_known": profile.hour is not None,
+            "houses_available": profile.hour is not None,
+        },
         "interpretation": None,
         "disclaimer": "Астрологические трактовки символичны и не являются научными прогнозами.",
     }
