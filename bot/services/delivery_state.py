@@ -187,4 +187,7 @@ async def tracked_telegram_send(progress: dict, primary: bool, send, *args, **kw
     progress["_telegram_send_inflight"] = False
     if primary:
         progress["_telegram_primary_delivered"] = True
+        message_id = getattr(response, "message_id", None)
+        if isinstance(message_id, int) and not isinstance(message_id, bool):
+            progress["_telegram_primary_message_id"] = message_id
     return response
