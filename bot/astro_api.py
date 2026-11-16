@@ -437,3 +437,6 @@ def setup_astro_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_post(miniapp_root + "/api/astro/natal", astro_natal_facts)
     app.router.add_post(miniapp_root + "/api/astro/natal/full", astro_full_natal_facts)
     app.router.add_post(miniapp_root + "/api/astro/compatibility", astro_compatibility_facts)
+
+    from bot.astro_extended_api import setup_astro_extended_routes
+    setup_astro_extended_routes(app, miniapp_root)

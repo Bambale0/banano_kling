@@ -351,7 +351,7 @@ describe('Astro concept screens', () => {
     render(<AstroTab />)
     fireEvent.click(screen.getByText('Соляр'))
     expect(screen.getByLabelText('person: место рождения')).toBeInTheDocument()
-    expect(screen.getByLabelText('Место встречи соляра')).toBeInTheDocument()
+    expect(screen.getByLabelText('solar: место рождения')).toBeInTheDocument()
     expect(screen.getByLabelText('Период прогноза')).toHaveAttribute('type', 'number')
   })
 
@@ -445,6 +445,80 @@ describe('Astro concept screens', () => {
     } finally {
       Object.defineProperty(global, 'fetch', { configurable: true, value: originalFetch })
     }
+  })
+
+  it('calculates karma only after choosing a verified city', async () => {
+    const original = global.fetch
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: 200, json: async () => url.endsWith('/places') ? {
+        ok: true, results: [{
+          place_id: 498817, name: 'Saint Petersburg', country_code: 'RU',
+          timezone: 'Europe/Moscow', latitude: 59.94, longitude: 30.31,
+        }],
+      } : {
+        ok: true, result: {
+          schema_version: 'astro.karma-indicators.v1',
+          indicators: { TrueNode: { lon: 205.5 } },
+          aspects: [{ a: 'Saturn', b: 'TrueNode', aspect: 'square', orb: 2.3 }],
+        },
+      },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Кармический разбор'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      expect(screen.getByRole('status')).toHaveTextContent('Укажите место рождения')
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Санкт' } })
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      expect(screen.getByRole('status')).toHaveTextContent('Выберите город рождения')
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      await waitFor(() => expect(screen.getByLabelText('Рассчитанные кармические показатели')).toBeInTheDocument())
+      expect(screen.getByLabelText('Рассчитанные кармические показатели')).toHaveTextContent('Северный лунный узел')
+      const post = mock.mock.calls.find(([url]) => url.endsWith('/karma'))
+      expect(JSON.parse(post[1].body)).toMatchObject({ place_id: 498817, date: '29.02.2000' })
+      expect(JSON.parse(post[1].body)).not.toHaveProperty('latitude')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: original })
+    }
+  })
+
+  it('requires independent verified return city for relocated solar', async () => {
+    const old = global.fetch
+    const mock = jest.fn().mockImplementation((url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body)
+      return Promise.resolve({ ok: true, json: async () => url.endsWith('/places')
+        ? { ok: true, results: [{ place_id: body.query.includes('Берлин') ? 2950159 : 498817,
+          name: body.query.includes('Берлин') ? 'Berlin' : 'Saint Petersburg',
+          country_code: body.query.includes('Берлин') ? 'DE' : 'RU',
+          timezone: 'Europe/Moscow', latitude: 59.9, longitude: 30.3 }] }
+        : { ok: true, result: { schema_version: 'astro.solar-facts.v1',
+          solar_return_at_local: '2028-02-29T05:12:00+01:00',
+          return_location: { timezone: 'Europe/Berlin' },
+          solar_chart: { angles: { asc: 110, mc: 300 },
+            cusps: Array.from({ length: 12 }, (_, i) => i * 30), bodies: { Sun: { lon: 340 } } },
+        } } })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Соляр'))
+      fireEvent.change(screen.getByLabelText('person: дата рождения'), { target: { value: '29.02.2000' } })
+      fireEvent.change(screen.getByLabelText('Период прогноза'), { target: { value: '2028' } })
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Санкт' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' }))
+      fireEvent.change(screen.getByLabelText('solar: место рождения'), { target: { value: 'Берлин' } })
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Berlin, Германия' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('option', { name: 'Выбрать Berlin, Германия' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
+      await waitFor(() => expect(screen.getByLabelText('Рассчитанная карта соляра')).toBeInTheDocument())
+      expect(JSON.parse(mock.mock.calls.find(([url]) => url.endsWith('/solar'))[1].body))
+        .toMatchObject({ place_id: 498817, return_place_id: 2950159, period: '2028' })
+    } finally { Object.defineProperty(global, 'fetch', { configurable: true, value: old }) }
   })
 
 })
