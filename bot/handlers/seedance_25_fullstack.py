@@ -46,6 +46,7 @@ from bot.services.delivery_state import (
     TERMINAL_TASK_DELIVERY_STATUSES,
     is_terminal_telegram_delivery_error,
     terminal_telegram_delivery_reason,
+    uncertain_retry_seconds,
 )
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.preset_manager import preset_manager
@@ -751,7 +752,7 @@ async def _send_seedance25_results(
 
     delivered = False
     suffix = ".mov" if output_format == "mov" else ".mp4"
-    if output_format == "mp4":
+    if output_format == "mp4" and request_data.get("delivery_status") != "uncertain":
         try:
             await tracked_telegram_send(request_data, True, bot.send_video,
                 telegram_id,
@@ -1399,7 +1400,10 @@ def _stored_result_urls(row) -> list[str]:
 async def _claim_seedance25_delivery(task_id: str) -> bool:
     from bot.database import claim_task_delivery
 
-    return await claim_task_delivery(task_id, lease_seconds=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS + 60)
+    return await claim_task_delivery(
+        task_id, lease_seconds=SEEDANCE25_DELIVERY_TIMEOUT_SECONDS + 60,
+        allow_uncertain_retry=True,
+    )
 
 
 async def _can_attempt_seedance25_result_delivery(
@@ -1463,7 +1467,14 @@ async def _retry_seedance25_delivery(
             await _mark_seedance25_delivery(task_id, "delivered")
             return True
         state = "uncertain" if request_data.get("_telegram_send_inflight") else "pending"
-        await _mark_seedance25_delivery(task_id, state, error="delivery_attempt_timed_out")
+        await _mark_seedance25_delivery(
+            task_id, state, error="delivery_attempt_timed_out",
+            retry_after_seconds=(
+                uncertain_retry_seconds(
+                    task_id, int(request_data.get("delivery_uncertain_attempts") or 0) + 1,
+                ) if state == "uncertain" else None
+            ),
+        )
         return False
     except TelegramDeliveryUncertain as exc:
         if request_data.get("_telegram_primary_delivered"):
@@ -1471,7 +1482,12 @@ async def _retry_seedance25_delivery(
             return True
         logger.warning("Seedance 2.5 delivery outcome unknown: task_id=%s error_type=%s",
                        task_id, type(exc).__name__)
-        await _mark_seedance25_delivery(task_id, "uncertain", error="telegram_send_outcome_unknown")
+        await _mark_seedance25_delivery(
+            task_id, "uncertain", error="telegram_send_outcome_unknown",
+            retry_after_seconds=uncertain_retry_seconds(
+                task_id, int(request_data.get("delivery_uncertain_attempts") or 0) + 1,
+            ),
+        )
         return False
     except Exception as exc:
         if request_data.get("_telegram_primary_delivered"):
@@ -1533,7 +1549,10 @@ async def _process_seedance25_payload(app: web.Application, payload: dict[str, A
             result_url = str(row["result_url"] or "")
             return bool(result_url and await complete_task_in_app(task_id, result_url))
         delivery_status = str(request_data.get("delivery_status") or "").lower()
-        if not delivery_status or delivery_status in TERMINAL_TASK_DELIVERY_STATUSES:
+        if not delivery_status or (
+            delivery_status in TERMINAL_TASK_DELIVERY_STATUSES
+            and delivery_status != "uncertain"
+        ):
             return True
         await _retry_seedance25_delivery(app, row, request_data)
         return True
@@ -1705,7 +1724,7 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                                 AND result_url IS NOT NULL
                                 AND {recent_completed_expr}
                                 AND {delivery_state_expr}
-                                    IN ('result_ready', 'pending', 'delivering', 'link_sent')
+                                    IN ('result_ready', 'pending', 'delivering', 'link_sent', 'uncertain')
                             )
                       )
                     ORDER BY COALESCE(updated_at, created_at) ASC, id ASC
@@ -1729,6 +1748,7 @@ async def _seedance25_reconcile_loop(app: web.Application) -> None:
                         "pending",
                         "delivering",
                         "link_sent",
+                        "uncertain",
                     }:
                         continue
                     await _process_seedance25_payload(
