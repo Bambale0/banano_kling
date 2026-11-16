@@ -134,3 +134,13 @@
 - При неизвестном времени ставим опорную точку на местный полдень **как приближение**, не рассчитываем Луну или аспекты. Дома, ASC/MC, Лилит, узлы, Хирон и астероиды пока не рассчитаны; не выдавать этот срез за полную натальную карту.
 - Не использовать LLM для выдумывания градусов. Сервис не пишет дату, город, время рождения в логи и БД; ничего не списывает. Длинные интерпретации и все остальные услуги остаются в #544.
 - Тесты: реальный момент равноденствия, DST overlap/gap, високосный год, неизвестное время, орбисы и замыкание 360°, серверное разграничение ролей, 400/403/503 и фронтенд-мок выдачи результатов.
+
+
+## Versioned multi-section reports: isolated foundation (2026-11-16)
+
+- Scope: `bot/astro_report_plans.json` defines seven long-form document plans and per-section word minimums; `bot/services/astro_report_pipeline.py` validates section responses and can resume by checkpoint with owner-scoped HMAC fingerprints; `bot/services/astro_report_store.py` implements durable SQLite/PostgreSQL section storage, expiry and owner-data erasure.
+- Imported from the exploratory draft #547 as a separately reviewable foundation. There is **no** Mini App endpoint, no provider adapter wiring, no background queue/worker, no Telegram delivery, no billing, no user-accessible report generation and no automatic database migration in this slice.
+- A caller must independently verify Telegram actor, admin access, data-storage consent and report ownership, provide a trusted deterministic source of facts, resolve concurrent active jobs with a durable distributed lease, and enforce provider timeouts/limits and reconciliation before enabling generation.
+- Report templates must be versioned and safely admin-configurable before public service. The current static JSON is not an administrative runtime editor.
+- Tests address report completeness, section validation, resume after provider errors, owner-key isolation and SQLite storage/erasure/TTL. All seven real-world report journeys remain unaccepted and #544 remains open.
+- Do not claim a production Astro report from the existence of library code alone.

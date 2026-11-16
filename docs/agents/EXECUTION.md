@@ -1,3 +1,14 @@
+## 2026-11-16 — Astro #544 versioned long-report engine foundation, not user-facing
+
+- Baseline: merged `tanyapi` after #550 (`f49b48a1ebcc891efe631f59aed2d79c64e1650c`). Task branch `feature/astro-report-core-20261116`. Adapted report-only source from exploratory draft #547, without openephem/JPL-dependent chart code.
+- Goal: independently testable seven-service plans and structured interpretation assembly using trusted astronomical facts, per-section minimum lengths, stable plan versions, owner-bound HMAC request fingerprint, checkpoint resume and completed-only outputs.
+- Storage: `AstroReportSqlStore` lazy creates `astro_report_sections` when *explicitly instantiated*, owner-scoped access and erasure, retention expiry and first successful section wins. No deployment migration or job auto-start from this commit.
+- Explicit safety blockers: no secured HTTP routes or client exposure, no approved consent or retention UI, no distributed job lease / task reconciliation, no bounded provider execution, no independent validation against concrete production astronomy facts, no provider integration, no billing/charges. Not complete or releasable as a service.
+- Tests: `tests/test_astro_report_pipeline.py`, `tests/test_astro_report_store.py` exercising plan consistency, resume, malformed outputs, owner isolation, SQLite write+read, expiry and erasure; check CI for runtime environment. No production smoke claims.
+- Non-goals: no changes to VK, existing lunar/natal/compatibility endpoints, currency, settings, pricing or deploy workflow.
+- Next steps: test PostgreSQL compatibility, durable job locking and idempotency, owner access/consent, source-fact schema validation, admin-editable versioned templates, provider timeout/retry budgets, report history and deletion API, all seven E2E user journeys.
+- Rollback: revert task PR; no schema changes should occur without explicit store construction.
+
 ## 2026-11-16 — Astro #544: natal planetary facts vertical slice (review stage)
 
 - Baseline: #546 first lunar calculation PR head `f2d3b6cee470293ec935b5770d9fd9fed251709b`; task branch `feature/astro-natal-facts-20261116`, dependent on #546. Do not deploy or auto-merge before #546 into tanyapi.
