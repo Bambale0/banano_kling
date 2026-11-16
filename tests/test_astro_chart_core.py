@@ -11,8 +11,8 @@ from bot.services.astro_chart_core import (
     AstroChartInputError,
     AstroChartUnavailable,
     build_natal_facts,
-    build_synastry_facts,
     build_solar_return_facts,
+    build_synastry_facts,
     parse_birth_profile,
 )
 
