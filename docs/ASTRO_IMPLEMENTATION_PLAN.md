@@ -114,3 +114,18 @@
 - не добавляем ключи и сторонние SDK в frontend;
 - не меняем существующие финансовые и генерационные маршруты;
 - не называем feature production-ready до screenshot + CI + production smoke.
+
+
+## Multi-service astronomical facts core (draft PR #547)
+
+Module `bot/services/astro_chart_core.py` extends the factual engine beyond the lunar pilot:
+
+- Natal: true date/time, explicit latitude/longitude/IANA timezone, DST fold handling, required Sun–Pluto/TrueNode/Lilith, 12 Placidus houses, Asc/MC and major aspects.
+- Synastry: independently calculated natal charts and real cross-chart aspects; **no invented compatibility percentage**.
+- Karma indicators: lunar node, Lilith, Saturn, Pluto and their aspects as astronomical facts only — karma interpretation not asserted as science.
+- Annual and monthly: twelve 1st-of-month and 28–31 daily local-noon **transit snapshots** respectively, not exact aspect-event dates and not a complete narrative forecast.
+- Solar: exact Sun longitude return by numerical root-finding; independent return location and historical local time; separate return chart.
+- Pin MIT `openephem==0.5.0`; requires `ASTRO_DE440_PATH` pointing to a **pre-provisioned** local JPL DE440 `.bsp` asset. Unavailable or missing positions/houses fail closed. Never download 114 MB on a user request.
+- No geocoding yet: currently the backend contract requires the user to provide coordinates and IANA zone. Future admin flow needs a cached, selectable geocoder with correct historical timezone.
+- No price/billing, no third-party calls, no storage, no user-facing production endpoint yet. This is draft-only pending real JPL fixture validation and release of PR #546.
+- A stable, factual calculation is **not** equivalent to the requested long structured report. #544 remains open for interpretation engine, jobs, full-period transit-event timing, history, payments, and review.
