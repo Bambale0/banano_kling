@@ -1,3 +1,12 @@
+## 2026-11-16 — Astro #560: offline GeoNames places and historical timezone foundation
+
+- Baseline origin/tanyapi b1ba64a245262529a163e132fbf671d6f57c6e22; isolated branch feature/astro-geonames-offline-20261116.
+- Source official GeoNames cities1000 ZIP staged outside repo, CC BY attribution, SQLite FTS5 immutable read-only catalog of 171939 entries, source/output SHA-256 recorded in docs/astro-geonames-offline.md.
+- User-selected explicit geonameid → verified coords+IANA zone, historical UTC resolved with existing _resolve_civil_time including DST gaps/repeats; no guessing cities or using device timezone.
+- TDD: invalid SQL/path/control chars and IDs, ambiguous city names, Cyrillic aliases, DST/leap zone, corrupt DB, no overwrite. 20 isolated tests passed; real Moscow/Tallinn/SPB queries smoke passed.
+- Dormant library only. Follow-up before user-visible flow: signed Telegram admin-only search API, rate limit, city picker, opt-in data storage, incomplete rural-place coverage.
+- No migration, billing, VK, provider or prod config change.
+
 ## 2026-11-16 — Astro #562: compatibility admin-only real cross-chart facts (rebased)
 
 - Baseline: current `origin/tanyapi` b1ba64a245262529a163e132fbf671d6f57c6e22. Source changes from PR #553, reconciled against the post-#570 lunar ingress release and #572 Telegram webhook fix.
