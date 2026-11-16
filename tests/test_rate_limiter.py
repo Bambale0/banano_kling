@@ -7,7 +7,9 @@ import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiohttp import web
 
+from bot.config import config
 from bot.services.rate_limiter import (
     _cleanup_loop,
     _client_ip,
@@ -233,3 +235,50 @@ class TestCleanupLoop:
             await _cleanup_loop()
         assert "stale_ip" not in _counters
         _counters.clear()
+
+
+class TestTelegramWebhookSharedIPRegressions:
+    @pytest.fixture(autouse=True)
+    def reset_counters(self):
+        _counters.clear()
+        yield
+        _counters.clear()
+
+    @pytest.mark.parametrize("real_ip", ["91.108.5.83", "149.154.161.12"])
+    async def test_legitimate_telegram_webhook_bypasses_shared_ip_limit(self, real_ip):
+        req = MagicMock()
+        req.method = "POST"
+        req.path = "/telegram/webhook"
+        req.headers = {"X-Real-IP": real_ip, "X-Forwarded-For": real_ip}
+        req.transport.get_extra_info.return_value = ("127.0.0.1", 1234)
+        _counters[real_ip].timestamps = [time.monotonic()] * 200
+        handler = AsyncMock(return_value=web.Response(text="OK"))
+        with patch.object(config, "WEBHOOK_PATH", "/telegram/webhook"):
+            response = await rate_limiter_middleware(req, handler)
+        assert response.status == 200
+        handler.assert_awaited_once()
+        assert _counters[real_ip].count() == 200
+
+    @pytest.mark.parametrize(
+        ("method", "path", "real_ip", "forwarded"),
+        [
+            ("POST", "/telegram/webhook", "203.0.113.10", "91.108.5.83"),
+            ("POST", "/telegram/webhook", "", "91.108.5.83"),
+            ("GET", "/telegram/webhook", "91.108.5.83", "91.108.5.83"),
+            ("POST", "/mini-app/api/bootstrap", "91.108.5.83", "91.108.5.83"),
+        ],
+    )
+    async def test_untrusted_or_other_routes_are_still_limited(
+        self, method, path, real_ip, forwarded
+    ):
+        req = MagicMock()
+        req.method = method
+        req.path = path
+        req.headers = {"X-Real-IP": real_ip, "X-Forwarded-For": forwarded}
+        req.transport.get_extra_info.return_value = ("127.0.0.1", 1234)
+        _counters[forwarded].timestamps = [time.monotonic()] * 200
+        handler = AsyncMock(return_value=MagicMock())
+        with patch.object(config, "WEBHOOK_PATH", "/telegram/webhook"):
+            response = await rate_limiter_middleware(req, handler)
+        assert response.status == 429
+        handler.assert_not_awaited()

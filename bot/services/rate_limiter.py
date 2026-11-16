@@ -11,6 +11,7 @@ Config:
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import time
@@ -23,6 +24,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_RPM = 120
 WINDOW_SEC = 60
 CLEANUP_INTERVAL = 300  # 5 min
+
+# Telegram Bot API webhook delivery IP ranges published at
+# https://core.telegram.org/bots/webhooks (not general Telegram CDN IPs).
+_TELEGRAM_WEBHOOK_NETWORKS = (
+    ipaddress.ip_network("149.154.160.0/20"),
+    ipaddress.ip_network("91.108.4.0/22"),
+)
+
 
 _whitelist = {
     ip.strip()
@@ -68,6 +77,32 @@ _counters: dict[str, _SlidingWindowCounter] = defaultdict(_SlidingWindowCounter)
 _rate_limit = int(os.environ.get("RATE_LIMIT_RPM", str(DEFAULT_RPM)))
 
 
+def _is_verified_telegram_webhook_source(request: web.Request) -> bool:
+    """Exempt only Telegram's webhook delivery IPs, never caller-supplied XFF.
+
+    Production Nginx overwrites X-Real-IP with its actual remote_addr and
+    the aiohttp backend listens on loopback only. X-Forwarded-For can be
+    supplied by an arbitrary caller, so it must NOT authorize exemption.
+    """
+    if request.method != "POST":
+        return False
+
+    from bot.config import config
+
+    webhook_path = (config.WEBHOOK_PATH or "/telegram/webhook").strip()
+    webhook_path = webhook_path if webhook_path.startswith("/") else f"/{webhook_path}"
+    if request.path != webhook_path:
+        return False
+
+    try:
+        real_ip = ipaddress.ip_address(
+            request.headers.get("X-Real-IP", "").strip()
+        )
+    except ValueError:
+        return False
+    return any(real_ip in subnet for subnet in _TELEGRAM_WEBHOOK_NETWORKS)
+
+
 def _is_exempt_request(request: web.Request) -> bool:
     """Return True for routes that must not consume the API request budget.
 
@@ -76,6 +111,8 @@ def _is_exempt_request(request: web.Request) -> bool:
     load user state.
     """
     path = request.path
+    if _is_verified_telegram_webhook_source(request):
+        return True
     if request.method == "GET":
         if path == "/health":
             return True
@@ -112,6 +149,7 @@ async def rate_limiter_middleware(
     Exempts:
     - Health endpoint (GET /health)
     - HMAC-protected internal admin API (it has its own network allowlist)
+    - Telegram webhook POSTs from the published Telegram delivery networks
     - IPs in RATE_LIMIT_WHITELIST
     """
     if request.path.startswith("/internal/admin/"):
