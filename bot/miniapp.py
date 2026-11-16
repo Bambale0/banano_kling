@@ -6877,6 +6877,8 @@ def setup_miniapp_routes(app: web.Application):
     setup_wan3_prime_routes(app, miniapp_root)
     from bot.trend_catalog_api import setup_trend_catalog_routes
     setup_trend_catalog_routes(app, miniapp_root)
+    from bot.astro_api import setup_astro_routes
+    setup_astro_routes(app, miniapp_root)
     app.router.add_post(miniapp_root + "/api/bootstrap", miniapp_bootstrap)
     app.router.add_post(miniapp_root + "/api/write-access", miniapp_write_access)
     app.router.add_post(miniapp_root + "/api/client-log", miniapp_client_log)
