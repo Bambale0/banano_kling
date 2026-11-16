@@ -5,9 +5,24 @@ import {
   ArrowLeft, CalendarDays, ChevronDown, ChevronRight, Clock3,
   MapPin, Search, Sparkles, Star,
 } from 'lucide-react'
+import { getInitData } from '../../lib/api'
 import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
+
+interface LunarReport {
+  period: string
+  timezone: string
+  days: Array<{
+    date: string
+    moon_sign: string
+    phase: string
+    illumination_percent: number
+    synodic_day: number
+    events: string[]
+  }>
+  events: Array<{ kind: string; at_local: string }>
+}
 
 interface AstroService {
   id: AstroKind
@@ -191,12 +206,45 @@ function BirthFields({ prefix, heading }: { prefix: string; heading?: string }) 
 function AstroForm({ service, onBack }: { service: AstroService; onBack: () => void }) {
   const [message, setMessage] = useState('')
   const [period, setPeriod] = useState('')
+  const [timezoneName, setTimezoneName] = useState(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' } catch { return 'UTC' }
+  })
+  const [lunarReport, setLunarReport] = useState<LunarReport | null>(null)
+  const [calculating, setCalculating] = useState(false)
 
-  function submit(event: FormEvent<HTMLFormElement>) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     if (['lunar', 'year', 'month', 'solar'].includes(service.id) && !period) {
       setMessage('Выберите период для расчёта.')
+      return
+    }
+    if (service.id === 'lunar') {
+      setLunarReport(null)
+      setCalculating(true)
+      setMessage('Получаем астрономические данные…')
+      try {
+        const response = await fetch('/mini-app/api/astro/lunar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init_data: getInitData(), period, timezone: timezoneName.trim() }),
+        })
+        if (response.status === 401 || response.status === 403) {
+          setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
+          return
+        }
+        const data = await response.json()
+        if (!response.ok || !data.ok || !Array.isArray(data.result?.days)) {
+          setMessage(data.message || 'Расчёт сейчас недоступен. Баланс не списан.')
+          return
+        }
+        setLunarReport(data.result as LunarReport)
+        setMessage('Лунный календарь рассчитан. Оплата не требуется.')
+      } catch {
+        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+      } finally {
+        setCalculating(false)
+      }
       return
     }
     // Never imitate an astronomical calculation or send sensitive birth data to a nonexistent API.
@@ -235,6 +283,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       </div>
       <form className="astro-form-panel" noValidate onSubmit={submit}>
         {service.id === 'lunar' ? (
+          <>
           <label className="astro-field">
             <CalendarDays className="astro-field-icon" aria-hidden="true" />
             <span className="astro-field-body">
@@ -243,6 +292,15 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                 value={period} onChange={(event) => setPeriod(event.target.value)} />
             </span>
           </label>
+          <label className="astro-field">
+            <MapPin className="astro-field-icon" aria-hidden="true" />
+            <span className="astro-field-body">
+              <span className="astro-field-label">Часовой пояс (IANA)</span>
+              <input aria-label="Часовой пояс" name="timezone" value={timezoneName}
+                onChange={(event) => setTimezoneName(event.target.value)} placeholder="Europe/Moscow" />
+            </span>
+          </label>
+          </>
         ) : (
           <>
             <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} />
@@ -272,13 +330,32 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             )}
           </>
         )}
-        <button type="submit" className="astro-submit">
+        <button type="submit" className="astro-submit" disabled={calculating}>
           <Sparkles size={24} aria-hidden="true" />
           <span>{service.id === 'natal' ? 'Построить натальную карту' : service.id === 'lunar' ? 'Открыть лунный календарь' : 'Получить разбор'}</span>
           <ChevronRight size={25} aria-hidden="true" />
         </button>
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
+      {lunarReport && (
+        <div className="astro-lunar-result" aria-label="Рассчитанный лунный календарь">
+          <h2>Лунный календарь за {lunarReport.period}</h2>
+          <p>Часовой пояс: {lunarReport.timezone}. Положение Луны указано на 12:00 местного времени; внутри дня оно может измениться.</p>
+          <p>Синодический день — полные 24-часовые интервалы после новолуния + 1; это не традиционный лунный день от восхода Луны.</p>
+          <ul className="astro-lunar-days">
+            {lunarReport.days.map((day) => (
+              <li key={day.date}>
+                <strong>{day.date}</strong> · {day.moon_sign}, {day.phase}, освещённость {day.illumination_percent}%
+                <span> · {day.synodic_day}-й синодический день</span>
+                {day.events.length > 0 && <span> · {day.events.join(', ')}</span>}
+              </li>
+            ))}
+          </ul>
+          <p>Точное время фаз:</p>
+          <ul>{lunarReport.events.map((event) => <li key={event.at_local}>{event.kind} — {event.at_local}</li>)}</ul>
+          <p>Аспекты, холостая Луна, затмения и традиционные советы по уходу пока не вычисляются.</p>
+        </div>
+      )}
       <p className="astro-disclaimer">Астрологические интерпретации носят развлекательный характер.</p>
     </div>
   )
