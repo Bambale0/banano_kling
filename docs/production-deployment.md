@@ -108,11 +108,9 @@ certbot renew --cert-name neuromixbot.com --dry-run --run-deploy-hooks --no-rand
 ```
 
 `certbot.timer` is active, and the certificate is valid through 2027-01-20.
-On 2026-11-16, the shared default HTTPS vhost was pinned to TLS 1.2 after a
-client access incident. Nginx negotiates the protocol on the shared `:443`
-listener, so this affects all HTTPS domains on the server. The live setting is
-in `/etc/nginx/sites-available/aicrm-neyrony.conf`, not the per-domain vhost.
-Check both protocol negotiation and all affected domains before changing it.
+The server currently accepts TLS 1.2 and TLS 1.3. Nginx negotiates TLS on the
+shared `:443` listener; a default-vhost protocol change can affect other
+domains. Keep this policy unchanged unless the scope is explicitly approved.
 
 `MINI_APP_URL` remains an environment setting; bot/env.py respects an explicit
 value. Production deploy selects `PRODUCTION_MINI_APP_URL` (defaulting to the new
