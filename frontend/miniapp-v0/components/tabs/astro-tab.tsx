@@ -471,6 +471,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   const [compatibilityReport, setCompatibilityReport] = useState<CompatibilityReport | null>(null)
   const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
+  const calculationEpoch = useRef(0)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -568,6 +569,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         return
       }
       const foldRaw = String(form.get('birth-fold') || '')
+      const epoch = ++calculationEpoch.current
       setNatalReport(null)
       setFullNatalReport(null)
       setCalculating(true)
@@ -584,11 +586,14 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             ...(foldRaw === '0' || foldRaw === '1' ? { fold: Number(foldRaw) } : {}),
           }),
         })
+        // An earlier response must never replace facts for edited birth inputs.
+        if (epoch !== calculationEpoch.current) return
         if (response.status === 401 || response.status === 403) {
           setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
           return
         }
         const data = await response.json()
+        if (epoch !== calculationEpoch.current) return
         if (!response.ok || !data.ok || data.result?.schema_version !== 'astro.natal-facts.v1'
           || !data.result.chart || !data.result.accuracy
           || !data.result.chart.bodies) {
@@ -600,9 +605,11 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           ? 'Натальная карта, ASC/MC и дома рассчитаны. Оплата не требуется.'
           : 'Планеты рассчитаны. Для ASC и домов необходимо точное время рождения.')
       } catch {
-        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        if (epoch === calculationEpoch.current) {
+          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        }
       } finally {
-        setCalculating(false)
+        if (epoch === calculationEpoch.current) setCalculating(false)
       }
       return
     }
@@ -628,7 +635,14 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         <div className="astro-orbit astro-orbit-right">♄</div>
       </div>
       <form className="astro-form-panel" noValidate onSubmit={submit}
-        onChange={() => { setFullNatalReport(null); setNatalReport(null); setCompatibilityReport(null) }}>
+        onChange={() => {
+          calculationEpoch.current += 1
+          setFullNatalReport(null)
+          setNatalReport(null)
+          setCompatibilityReport(null)
+          setCalculating(false)
+          setMessage('')
+        }}>
         {service.id === 'lunar' ? (
           <>
           <label className="astro-field">
@@ -655,8 +669,11 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               requireTimezone={service.id === 'compatibility'}
               onPlaceSelect={(place) => {
                 if (service.id === 'natal') {
+                  calculationEpoch.current += 1
                   setBirthTimezone(place?.timezone || '')
                   setFullNatalReport(null)
+                  setCalculating(false)
+                  setMessage('')
                 }
               }} />
             {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" requireTimezone />}
