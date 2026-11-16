@@ -10,6 +10,13 @@ from uuid import uuid4
 from aiohttp import web
 
 from bot.config import config
+from bot.services.astro_chart_core import (
+    AstroChartInputError,
+    AstroChartUnavailable,
+)
+from bot.services.astro_chart_core import (
+    build_natal_facts as build_full_natal_facts,
+)
 from bot.services.astro_lunar import (
     AstroEngineUnavailable,
     AstroInputError,
@@ -18,7 +25,7 @@ from bot.services.astro_lunar import (
     resolve_timezone,
 )
 from bot.services.astro_natal import build_natal_facts
-from bot.services.astro_places import AstroPlacesUnavailable, search_places
+from bot.services.astro_places import AstroPlacesUnavailable, get_place, search_places
 from bot.services.astro_synastry import build_compatibility_facts
 
 logger = logging.getLogger(__name__)
@@ -322,8 +329,110 @@ async def astro_search_places(request: web.Request) -> web.Response:
             status=500, headers={"Cache-Control": "no-store"},
         )
 
+
+async def astro_full_natal_facts(request: web.Request) -> web.Response:
+    """Precise Placidus natal from a SERVER-RESOLVED GeoNames place ID.
+
+    No client coordinates/timezone accepted, no birth data stored, Telegram
+    admin authorization checked before and after the CPU-bound calculation.
+    """
+    request_id = uuid4().hex
+    started = time.monotonic()
+    try:
+        if request.content_length is not None and request.content_length > 8192:
+            raise web.HTTPRequestEntityTooLarge(max_size=8192, actual_size=request.content_length)
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise AstroInputError("Некорректный JSON-запрос.") from exc
+        if not isinstance(body, dict):
+            raise AstroInputError("Ожидается JSON-объект.")
+
+        init_data = body.get("init_data")
+        if not isinstance(init_data, str) or not init_data or init_data.startswith("vk_session:"):
+            raise web.HTTPUnauthorized()
+        from bot.miniapp import _get_user_context
+
+        try:
+            actor_id, ctx = await _get_user_context(request.app, init_data)
+        except (PermissionError, ValueError):
+            raise web.HTTPUnauthorized() from None
+        assert_admin_astro_access(
+            init_data, actor_id, str(ctx.get("platform") or "telegram"),
+        )
+
+        place_id = body.get("place_id")
+        if type(place_id) is not int or not 1 <= place_id <= 2_147_483_647:
+            raise AstroInputError("Выберите город из справочника.")
+        # Never trust coordinates, date offsets or IANA names in client POST.
+        place = await asyncio.wait_for(asyncio.to_thread(get_place, place_id), timeout=4.0)
+        profile = {
+            "date": body.get("date"),
+            "time": body.get("time"),
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "timezone": place["timezone"],
+        }
+        if "fold" in body:
+            profile["fold"] = body["fold"]
+
+        chart = await asyncio.wait_for(
+            asyncio.to_thread(build_full_natal_facts, profile),
+            timeout=25.0,
+        )
+        # An administrator can lose access while a report is processing.
+        if not config.is_admin(actor_id):
+            raise web.HTTPForbidden()
+
+        logger.info(
+            "astro_full_natal_complete request_id=%s actor_id=%s "
+            "houses_available=%s latency_ms=%.1f",
+            request_id, actor_id, chart["accuracy"]["houses_available"],
+            (time.monotonic() - started) * 1000,
+        )
+        return web.json_response(
+            {
+                "ok": True, "result": chart,
+                "place": {
+                    "place_id": place["place_id"],
+                    "name": place["name"],
+                    "country_code": place["country_code"],
+                    "timezone": place["timezone"],
+                },
+                "request_id": request_id,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+    except web.HTTPException:
+        raise
+    except (AstroInputError, AstroChartInputError) as exc:
+        return web.json_response(
+            {"ok": False, "error": "invalid_input", "message": str(exc)},
+            status=400, headers={"Cache-Control": "no-store"},
+        )
+    except (AstroPlacesUnavailable, AstroChartUnavailable):
+        logger.warning("astro_full_natal_unavailable request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "engine_unavailable",
+             "message": "Полный расчёт сейчас недоступен. Баланс не списан."},
+            status=503, headers={"Cache-Control": "no-store"},
+        )
+    except TimeoutError:
+        logger.warning("astro_full_natal_timeout request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "calculation_timeout"},
+            status=503, headers={"Cache-Control": "no-store"},
+        )
+    except Exception:
+        logger.exception("astro_full_natal_error request_id=%s", request_id)
+        return web.json_response(
+            {"ok": False, "error": "internal_error"},
+            status=500, headers={"Cache-Control": "no-store"},
+        )
+
 def setup_astro_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_post(miniapp_root + "/api/astro/places", astro_search_places)
     app.router.add_post(miniapp_root + "/api/astro/lunar", astro_lunar_calendar)
     app.router.add_post(miniapp_root + "/api/astro/natal", astro_natal_facts)
+    app.router.add_post(miniapp_root + "/api/astro/natal/full", astro_full_natal_facts)
     app.router.add_post(miniapp_root + "/api/astro/compatibility", astro_compatibility_facts)
