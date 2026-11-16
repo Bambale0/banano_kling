@@ -1,3 +1,10 @@
+## 2026-11-16 — Astro post-calculation admin revocation race (#553)
+
+- Access security invariant: every Astro HTTP request verifies signed Telegram identity and current `config.is_admin` before computing, and checks the admin role again after awaited computation, before returning personal chart facts.
+- Reproduction: revoke admin permission from a mocked actor while a lunar, natal or synastry engine is running in a worker thread.
+- Regression: `tests/test_astro_revocation_race.py` expects HTTP 403 from all three handlers and no result delivered; the prior implementation lacked the second authorization check.
+- Change limited to `bot/astro_api.py`; no wallet, data migration or VK behavior. Await required CI and exact-SHA smoke.
+
 ## 2026-11-16 — Astro #544: two-person compatibility facts vertical slice (review stage)
 
 - Baseline: natal engine branch `feature/astro-natal-facts-20261116` / PR #548, itself dependent on lunar PR #546. Branch `feature/astro-compatibility-facts-20261116`. No direct production changes.
