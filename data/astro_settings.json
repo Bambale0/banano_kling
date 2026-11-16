@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "aspects": {
+    "orbs_deg": {
+      "conjunction": 8,
+      "sextile": 4,
+      "square": 6,
+      "trine": 6,
+      "opposition": 8
+    }
+  }
+}
