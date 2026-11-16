@@ -126,6 +126,7 @@ describe('Astro concept screens', () => {
             illumination_percent: 100, synodic_day: 15, events: ['Полнолуние'],
           }],
           events: [{ kind: 'Полнолуние', at_local: '2024-03-25T10:00:00+03:00' }],
+          ingresses: [{ from_sign: 'Рыбы', to_sign: 'Овен', at_local: '2024-03-12T03:15:00+03:00' }],
         },
       }),
     })
@@ -139,6 +140,7 @@ describe('Astro concept screens', () => {
       fireEvent.click(screen.getByRole('button', { name: /Открыть лунный календарь/ }))
       await waitFor(() => expect(screen.getByText(/Лунный календарь за 2024-03/)).toBeInTheDocument())
       expect(screen.getByText('2024-03-25')).toBeInTheDocument()
+      expect(screen.getByText(/Рыбы → Овен/)).toBeInTheDocument()
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const payload = JSON.parse(fetchMock.mock.calls[0][1].body)
       expect(payload).toMatchObject({ period: '2024-03', timezone: 'Europe/Moscow' })
