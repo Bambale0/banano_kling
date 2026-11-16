@@ -264,6 +264,26 @@ try {
     const request = route.request()
     const path = new URL(request.url()).pathname
 
+    if (path.endsWith('/astro/natal')) {
+      const body = JSON.parse(request.postData() || '{}')
+      assert.equal(body.date, '29.02.2000')
+      assert.equal(body.timezone, 'Europe/Moscow')
+      assert.equal(body.place, undefined, 'place names must not be sent before geocoding exists')
+      if (!bootstrapPayload.is_admin) {
+        await route.fulfill({ status: 403, contentType: 'application/json', body: '{"ok":false,"error":"forbidden"}' })
+        return
+      }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true,
+        result: {
+          schema_version: 'astro.natal.facts.v1', timezone: 'Europe/Moscow',
+          utc_reference: '2000-02-29T09:00:00+00:00', birth_time_known: true,
+          positions: { Sun: { sign: 'Рыбы', degree_in_sign: 10.5, retrograde: false, approximate: false } },
+          aspects: [], warnings: ['Дома и ASC не рассчитаны'],
+        },
+      }) })
+      return
+    }
     if (path.endsWith('/genjutsu/upload')) {
       const kind = new URL(request.url()).searchParams.get('kind')
       // Upload completion is asynchronous. Keep this delay so the browser
@@ -1047,6 +1067,7 @@ try {
   await page.getByRole('button', { name: 'Натальная карта', exact: true }).click()
   await page.getByLabel('person: дата рождения').fill('29.02.2000')
   await page.getByLabel('person: место рождения').fill('Москва, Россия')
+  await page.getByLabel('Часовой пояс рождения').fill('Europe/Moscow')
   if (process.env.ASTRO_QA_SCREENSHOTS) {
     await page.setViewportSize({ width: 390, height: 844 })
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-390.png' })
@@ -1054,7 +1075,8 @@ try {
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-natal-414.png' })
   }
   await page.getByRole('button', { name: 'Построить натальную карту' }).click()
-  await page.locator('.astro-form-message').getByText(/данные не отправлены, баланс не списан/).waitFor()
+  await page.getByRole('heading', { name: 'Положения планет' }).waitFor()
+  await page.getByRole('status').getByText(/Положения рассчитаны/).waitFor()
   await page.getByRole('button', { name: /Все разделы/ }).click()
   await page.getByRole('button', { name: 'Совместимость', exact: true }).click()
   await page.getByLabel('partner: дата рождения').waitFor()
