@@ -7585,6 +7585,7 @@ def _is_feed_result_expired(row: db_backend.Row, url: str) -> bool:
 
 def _is_feed_result_url_available(
     row: db_backend.Row, url: str, *, hydrate_local_uploads: bool = True,
+    skip_remote_upload_probe: bool = False,
 ) -> bool:
     candidate = str(url or "").strip()
     if not candidate.startswith(("http://", "https://")):
@@ -7598,6 +7599,10 @@ def _is_feed_result_url_available(
         )
 
         if is_local_upload_source(candidate):
+            if skip_remote_upload_probe:
+                # Owner-scoped history should not block on an S3 HEAD. The
+                # media route will validate existence when it is fetched.
+                return True
             if not hydrate_local_uploads:
                 # HEAD errors are inconclusive, not evidence of deletion.
                 presence = local_upload_presence_without_download(candidate)
@@ -7612,6 +7617,7 @@ def _is_feed_result_url_available(
 
 def _feed_result_urls(
     row: db_backend.Row, *, hydrate_local_uploads: bool = True,
+    skip_remote_upload_probe: bool = False,
 ) -> list[str]:
     available: list[str] = []
     for url in _generation_result_urls(row):
@@ -7620,13 +7626,19 @@ def _feed_result_urls(
             continue
         # Keep the historical two-argument call contract for feed/publication
         # integrations that wrap this validator.
-        is_available = (
-            _is_feed_result_url_available(row, normalized)
-            if hydrate_local_uploads
-            else _is_feed_result_url_available(
+        if skip_remote_upload_probe:
+            is_available = _is_feed_result_url_available(
                 row, normalized, hydrate_local_uploads=False,
+                skip_remote_upload_probe=True,
             )
-        )
+        else:
+            is_available = (
+                _is_feed_result_url_available(row, normalized)
+                if hydrate_local_uploads
+                else _is_feed_result_url_available(
+                    row, normalized, hydrate_local_uploads=False,
+                )
+            )
         if is_available:
             available.append(normalized)
     return available
@@ -7634,13 +7646,17 @@ def _feed_result_urls(
 
 def resolve_public_generation_result_urls(
     row: db_backend.Row | dict[str, Any], *, hydrate_local_uploads: bool = True,
+    skip_remote_upload_probe: bool = False,
 ) -> list[str]:
     """Resolve media under the shared TTL and availability policy.
 
     History preview callers may disable local cache hydration; other public
     surfaces keep the existing behavior.
     """
-    return _feed_result_urls(row, hydrate_local_uploads=hydrate_local_uploads)
+    return _feed_result_urls(
+        row, hydrate_local_uploads=hydrate_local_uploads,
+        skip_remote_upload_probe=skip_remote_upload_probe,
+    )
 
 
 def _reference_url_candidates(urls: Any) -> list[str]:

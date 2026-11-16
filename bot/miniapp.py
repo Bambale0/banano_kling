@@ -2205,10 +2205,10 @@ async def _fetch_recent_tasks(
     db_ms = (time.monotonic() - query_started) * 1000
     media_started = time.monotonic()
 
-    # Reading S3 media can take seconds and uses a synchronous SDK. Resolve
-    # owner-visible history media off the aiohttp/Telegram event loop, with a
-    # bounded fanout and stable input/output ordering. DB rows are snapshotted
-    # before passing to worker threads; financial and privacy policy are unchanged.
+    # Bootstrap must not wait on synchronous S3 HEAD per recent task. Return
+    # owner-scoped stored URLs and defer remote existence checks to media reads.
+    # The bounded worker fanout preserves stable ordering and keeps formatting
+    # off the event loop; financial and privacy policy are unchanged.
     media_limiter = asyncio.Semaphore(4)
 
     async def resolve_media(row_data: dict[str, Any]) -> list[str]:
@@ -2217,6 +2217,7 @@ async def _fetch_recent_tasks(
                 resolve_public_generation_result_urls,
                 row_data,
                 hydrate_local_uploads=False,
+                skip_remote_upload_probe=True,
             )
 
     resolved_media = await asyncio.gather(*(resolve_media(dict(row)) for row in rows))
