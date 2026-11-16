@@ -65,6 +65,10 @@ async def astro_lunar_calendar(request: web.Request) -> web.Response:
             asyncio.to_thread(build_lunar_calendar, period, zone),
             timeout=20.0,
         )
+        # An administrator can lose access while calculation is running.
+        # Fail closed before returning any personal astronomical facts.
+        if not config.is_admin(actor_id):
+            raise web.HTTPForbidden()
         logger.info(
             "astro_lunar_complete request_id=%s actor_id=%s period=%s latency_ms=%.1f",
             request_id, actor_id, period, (time.monotonic() - started) * 1000,
@@ -135,6 +139,10 @@ async def astro_natal_facts(request: web.Request) -> web.Response:
             ),
             timeout=20.0,
         )
+        # An administrator can lose access while calculation is running.
+        # Fail closed before returning any personal astronomical facts.
+        if not config.is_admin(actor_id):
+            raise web.HTTPForbidden()
         logger.info(
             "astro_natal_complete request_id=%s actor_id=%s time_known=%s latency_ms=%.1f",
             request_id, actor_id, result["birth_time_known"],
@@ -203,6 +211,10 @@ async def astro_compatibility_facts(request: web.Request) -> web.Response:
             ),
             timeout=25.0,
         )
+        # An administrator can lose access while calculation is running.
+        # Fail closed before returning any personal astronomical facts.
+        if not config.is_admin(actor_id):
+            raise web.HTTPForbidden()
         logger.info(
             "astro_compatibility_complete request_id=%s actor_id=%s latency_ms=%.1f",
             request_id, actor_id, (time.monotonic() - started) * 1000,
