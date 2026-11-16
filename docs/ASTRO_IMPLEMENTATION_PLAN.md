@@ -144,3 +144,31 @@
 - Наложения планет на дома, оси ASC/Desc и MC/IC, истинный композит и художественный текстовый разбор **не вычисляются**. Не выводить их как готовые результаты.
 - Ни параметры рождения, ни сведения о партнёре не сохраняются в БД/логах. Никаких списаний, VK-сессий или открытой публичной видимости.
 - Тесты: пересечение углов через 360°, реальная независимость карт, неизвестное время, статус 400/401/403, revoke роли и UI с двумя профилями.
+
+## Versioned multi-section reports: isolated foundation (2026-11-16)
+
+- Scope: `bot/astro_report_plans.json` defines seven long-form document plans and per-section word minimums; `bot/services/astro_report_pipeline.py` validates section responses and can resume by checkpoint with owner-scoped HMAC fingerprints; `bot/services/astro_report_store.py` implements durable SQLite/PostgreSQL section storage, expiry and owner-data erasure.
+- Imported from the exploratory draft #547 as a separately reviewable foundation. There is **no** Mini App endpoint, no provider adapter wiring, no background queue/worker, no Telegram delivery, no billing, no user-accessible report generation and no automatic database migration in this slice.
+- A caller must independently verify Telegram actor, admin access, data-storage consent and report ownership, provide a trusted deterministic source of facts, resolve concurrent active jobs with a durable distributed lease, and enforce provider timeouts/limits and reconciliation before enabling generation.
+- Report templates must be versioned and safely admin-configurable before public service. The current static JSON is not an administrative runtime editor.
+- Tests address report completeness, section validation, resume after provider errors, owner-key isolation and SQLite storage/erasure/TTL. All seven real-world report journeys remain unaccepted and #544 remains open.
+- Do not claim a production Astro report from the existence of library code alone.
+
+## Full original user specification coverage — 2026-11-16
+
+The formerly uniform 12-section/5,400-word preview plans are replaced by source-derived,
+individually versioned section plans (version 2.0.0-full-original-20261115).
+They preserve main chapters and their source instructions from #571: natal 18 / 10k,
+compatibility 25 / 10k, karma 27 / 8k, year 29 / 12k,
+month 23 / 5k, solar 21 / 12k, lunar 14 / 5k.
+The methodology/ethical/format constraints are retained as separate service-level rules,
+with an overriding system instruction prohibiting invented astronomy.
+Calendar report plans require all 28–31 date-specific or 12 month-specific evidence rows;
+missing/duplicate/out-of-order data fail closed. A checkpoint fingerprint changes
+whenever section texts/minimums/policies change even if version was not bumped.
+
+**Still not complete:** this module is deliberately NOT connected to live API, provider
+or billing. Longer word count alone does not demonstrate coverage of all per-house,
+per-aspect and lunar guidance: real facts, consent, admin editing, concurrency lease,
+provider retries, section-level factual verification and full end-to-end acceptance remain
+blockers under #544/#568/#569. Do not enable public or paid report generation.
