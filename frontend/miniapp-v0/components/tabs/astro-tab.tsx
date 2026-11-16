@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft, CalendarDays, ChevronDown, ChevronRight, Clock3,
   MapPin, Search, Sparkles, Star,
@@ -9,6 +9,17 @@ import { getInitData } from '../../lib/api'
 import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
+
+interface AstroPlace {
+  place_id: number
+  name: string
+  country_code: string
+  timezone: string
+  latitude: number
+  longitude: number
+  display_name: string
+  source: string
+}
 
 interface CompatibilityReport {
   schema_version: string
@@ -202,8 +213,123 @@ function dateFromPicker(value: string) {
   return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : ''
 }
 
-function BirthFields({ prefix, heading, requireTimezone = false }: { prefix: string; heading?: string; requireTimezone?: boolean }) {
+function PlacePicker({
+  prefix,
+  onSelect,
+}: {
+  prefix: string
+  onSelect?: (place: AstroPlace | null) => void
+}) {
+  const [city, setCity] = useState('')
+  const [selected, setSelected] = useState<AstroPlace | null>(null)
+  const [options, setOptions] = useState<AstroPlace[]>([])
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const searchVersion = useRef(0)
+
+  async function findPlaces() {
+    const query = city.trim()
+    if (query.length < 2) {
+      setMessage('Введите хотя бы две буквы названия города.')
+      return
+    }
+    const version = ++searchVersion.current
+    setOptions([])
+    setMessage('')
+    setBusy(true)
+    try {
+      const response = await fetch('/mini-app/api/astro/places', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ init_data: getInitData(), query }),
+      })
+      if (version !== searchVersion.current) return
+      if (response.status === 401 || response.status === 403) {
+        setMessage('Нет доступа к справочнику городов. Откройте приложение в Telegram.')
+        return
+      }
+      const body = await response.json()
+      if (!response.ok || !body.ok || !Array.isArray(body.results)) {
+        setMessage('Справочник городов недоступен. Можно указать часовой пояс вручную.')
+        return
+      }
+      const places = (body.results as AstroPlace[]).filter((item) =>
+        typeof item.place_id === 'number' && Number.isInteger(item.place_id)
+        && typeof item.name === 'string' && typeof item.timezone === 'string'
+        && typeof item.country_code === 'string'
+        && typeof item.latitude === 'number' && typeof item.longitude === 'number'
+      )
+      setOptions(places)
+      if (!places.length) setMessage('Город не найден. Попробуйте другое название.')
+    } catch {
+      if (version === searchVersion.current) {
+        setMessage('Поиск временно недоступен. Введите часовой пояс вручную.')
+      }
+    } finally {
+      if (version === searchVersion.current) setBusy(false)
+    }
+  }
+
+  function choosePlace(place: AstroPlace) {
+    searchVersion.current += 1
+    setSelected(place)
+    setCity(place.name + ', ' + place.country_code)
+    setOptions([])
+    setMessage('Выбрано из GeoNames: ' + place.name + ', ' + place.country_code)
+    onSelect?.(place)
+  }
+
+  return (
+    <div className="astro-place-picker">
+      <label className="astro-field">
+        <MapPin className="astro-field-icon" aria-hidden="true" />
+        <span className="astro-field-body">
+          <span className="astro-field-label">Место рождения</span>
+          <input aria-label={prefix + ': место рождения'} name={prefix + '-place'}
+            value={city} autoComplete="off" placeholder="Город, страна" maxLength={160}
+            onChange={(event) => {
+              searchVersion.current += 1
+              setCity(event.target.value)
+              setSelected(null)
+              setOptions([])
+              setMessage('')
+              setBusy(false)
+              onSelect?.(null)
+            }} />
+        </span>
+        <Search className="astro-field-trailing" aria-hidden="true" />
+      </label>
+      <input type="hidden" name={prefix + '-place-id'} value={selected?.place_id ?? ''} />
+      <button type="button" className="astro-city-search" disabled={busy}
+        aria-label={prefix + ': найти город'} onClick={findPlaces}>
+        {busy ? 'Ищем город…' : 'Найти город в справочнике'}
+      </button>
+      {options.length > 0 && (
+        <div className="astro-city-results" role="group"
+          aria-label={prefix + ': результаты поиска городов'}>
+          {options.map((place) => (
+            <button key={place.place_id} type="button"
+              aria-label={'Выбрать ' + place.name + ', ' + place.country_code}
+              className="astro-city-option" onClick={() => choosePlace(place)}>
+              {place.name}, {place.country_code} · {place.timezone}
+            </button>
+          ))}
+        </div>
+      )}
+      {message && <p className="astro-form-message" role="status">{message}</p>}
+      <p className="astro-city-credit">Города: © GeoNames (CC BY 4.0)</p>
+    </div>
+  )
+}
+
+function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }: {
+  prefix: string
+  heading?: string
+  requireTimezone?: boolean
+  onPlaceSelect?: (place: AstroPlace | null) => void
+}) {
   const [date, setDate] = useState('')
+  const [birthZone, setBirthZone] = useState('')
   return (
     <div className="astro-birth-fields">
       {heading && <h3 className="astro-form-heading">{heading}</h3>}
@@ -229,15 +355,10 @@ function BirthFields({ prefix, heading, requireTimezone = false }: { prefix: str
         </span>
         <ChevronDown className="astro-field-trailing" aria-hidden="true" />
       </label>
-      <label className="astro-field">
-        <MapPin className="astro-field-icon" aria-hidden="true" />
-        <span className="astro-field-body">
-          <span className="astro-field-label">Место рождения</span>
-          <input aria-label={prefix + ': место рождения'} name={prefix + '-place'}
-            autoComplete="off" placeholder="Город, страна" maxLength={160} />
-        </span>
-        <Search className="astro-field-trailing" aria-hidden="true" />
-      </label>
+      <PlacePicker prefix={prefix} onSelect={(place) => {
+        setBirthZone(place?.timezone || '')
+        onPlaceSelect?.(place)
+      }} />
       {requireTimezone && (
         <>
           <label className="astro-field">
@@ -245,7 +366,8 @@ function BirthFields({ prefix, heading, requireTimezone = false }: { prefix: str
             <span className="astro-field-body">
               <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
               <input aria-label={prefix + ': часовой пояс'} name={prefix + '-timezone'}
-                placeholder="Europe/Moscow" autoComplete="off" />
+                placeholder="Europe/Moscow" autoComplete="off" value={birthZone}
+                onChange={(event) => setBirthZone(event.target.value)} />
             </span>
           </label>
           <label className="astro-field">
@@ -448,7 +570,12 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           </>
         ) : (
           <>
-            <BirthFields key={service.id + '-person'} prefix="person" heading={service.id === 'compatibility' ? 'Первый человек' : undefined} requireTimezone={service.id === 'compatibility'} />
+            <BirthFields key={service.id + '-person'} prefix="person"
+              heading={service.id === 'compatibility' ? 'Первый человек' : undefined}
+              requireTimezone={service.id === 'compatibility'}
+              onPlaceSelect={(place) => {
+                if (service.id === 'natal') setBirthTimezone(place?.timezone || '')
+              }} />
             {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" requireTimezone />}
             {service.id === 'natal' && (
               <>

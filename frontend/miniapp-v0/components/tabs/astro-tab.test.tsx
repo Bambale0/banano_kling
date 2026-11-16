@@ -241,4 +241,64 @@ describe('Astro concept screens', () => {
     expect(screen.getByLabelText('Период прогноза')).toHaveAttribute('type', 'number')
   })
 
+
+  it('searches a real GeoNames city and fills natal timezone only after explicit selection', async () => {
+    const fetchMock = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true, attribution: '© GeoNames (CC BY 4.0)',
+        results: [
+          { place_id: 524901, name: 'Москва', country_code: 'RU',
+            timezone: 'Europe/Moscow', latitude: 55.75, longitude: 37.62,
+            display_name: 'Москва, RU', source: 'GeoNames' },
+          { place_id: 6167865, name: 'Moscow', country_code: 'US',
+            timezone: 'America/Los_Angeles', latitude: 46.73, longitude: -117,
+            display_name: 'Moscow, US', source: 'GeoNames' },
+        ],
+      }),
+    })
+    const original = global.fetch
+    Object.defineProperty(global, 'fetch', { configurable: true, value: fetchMock })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
+      fireEvent.click(screen.getByRole('button', { name: 'person: найти город' }))
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Выбрать Москва, RU' })).toBeInTheDocument())
+      fireEvent.click(screen.getByRole('button', { name: 'Выбрать Москва, RU' }))
+      expect(screen.getByLabelText('Часовой пояс рождения')).toHaveValue('Europe/Moscow')
+      expect(screen.getByLabelText('person: место рождения')).toHaveValue('Москва, RU')
+      const placeId = document.querySelector('input[name="person-place-id"]') as HTMLInputElement
+      expect(placeId.value).toBe('524901')
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe('/mini-app/api/astro/places')
+      expect(JSON.parse(init.body)).toMatchObject({ query: 'Москва' })
+      expect(init.method).toBe('POST')
+
+      // Editing a selected place invalidates its canonical id and derived timezone.
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Другой' } })
+      expect(placeId.value).toBe('')
+      expect(screen.getByLabelText('Часовой пояс рождения')).toHaveValue('')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: original })
+    }
+  })
+
+  it('denied GeoNames search shows safe error without fake locations', async () => {
+    const original = global.fetch
+    Object.defineProperty(global, 'fetch', {
+      configurable: true, value: jest.fn().mockResolvedValue({ ok: false, status: 403 }),
+    })
+    try {
+      render(<AstroTab />)
+      fireEvent.click(screen.getByText('Совместимость'))
+      fireEvent.change(screen.getByLabelText('person: место рождения'), { target: { value: 'Москва' } })
+      fireEvent.click(screen.getByRole('button', { name: 'person: найти город' }))
+      await waitFor(() => expect(screen.getByText(/Нет доступа к справочнику городов/)).toBeInTheDocument())
+      expect(screen.queryByRole('button', { name: /Выбрать Москва/ })).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: original })
+    }
+  })
+
 })

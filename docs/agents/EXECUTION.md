@@ -1,3 +1,10 @@
+## 2026-11-16 — Astro #560: explicit GeoNames city picker in admin Mini App
+
+- BirthFields now provides a server-backed city lookup with explicit canonical place ID, country and timezone; IANA timezone auto-fills natal/compatibility forms only after deliberate selection.
+- Stale search responses ignored through request versioning, input edits clear selected ID and derived zone. Free-text fallback remains usable while offline DB is unprovisioned; no claim of precise chart houses until API verified.
+- React unit regression: 13 tests passed, TypeScript typecheck + ESLint passed on isolated worktree. Existing signed admin-only places API has 30 backend/domain tests passed.
+- GeoNames attribution shown beside search, no VK, prices, S3 or production config changes.
+
 ## 2026-11-16 — Astro #560: authenticated city-search API (dependent slice)
 
 - Branch feature/astro-places-api-current-20261116 based on feature/astro-geonames-offline-20261116.
