@@ -1,3 +1,11 @@
+## 2026-11-16 — Astro #562: compatibility admin-only real cross-chart facts (rebased)
+
+- Baseline: current `origin/tanyapi` b1ba64a245262529a163e132fbf671d6f57c6e22. Source changes from PR #553, reconciled against the post-#570 lunar ingress release and #572 Telegram webhook fix.
+- Goal: signed Telegram admin-only `POST /mini-app/api/astro/compatibility`, two distinct birth profiles, real cross-planet major aspects; keep original natal and lunar APIs, dynamic orbs, admin revocation check before responding.
+- No birth data persistence, no free-text prompt, no billing, no VK; no geocoding or composite claim, accurate warnings for unknown birth times.
+- Test plan: cross-chart real ephemerides, DST fold/gap, invalid request, non-admin/VK authorization, permission revocation during async compute, Mini App two-profile flow, all required CI; exact-SHA production smoke after guarded merge.
+- Blocking follow-ups: location resolver #560; house overlay and composite #562; long reports #568, full 7-service acceptance #544.
+
 ## 2026-11-16 — Telegram domain recovery
 
 Live differential TLS diagnosis, reversible runtime URL recovery, media-origin regression and protected release evidence: [execution record](EXECUTION/telegram-domain-recovery-20261116.md).
