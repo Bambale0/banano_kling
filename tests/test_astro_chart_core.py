@@ -134,3 +134,89 @@ def test_real_mit_engine_placidus_houses_offline():
     assert all(0 <= longitude < 360 for longitude in h.cusps)
     assert abs((h.cusps[0] - h.asc + 180) % 360 - 180) < 0.01
     assert abs((h.cusps[9] - h.mc + 180) % 360 - 180) < 0.01
+
+
+def test_karma_indicators_are_positions_not_invented_past_life_claims():
+    from bot.services.astro_chart_core import build_karma_indicators
+
+    result = build_karma_indicators(PROFILE, engine=FakeEngine(), kernel="de440.bsp")
+    assert result["schema_version"] == "astro.karma-indicators.v1"
+    assert set(result["indicators"]) == {"TrueNode", "MeanLilith", "Saturn", "Pluto"}
+    assert result["interpretation"] is None
+
+
+class FakePlanetEngine:
+    def ecliptic_longitude(self, jd, name):
+        return list(BODIES).index(name) * 23.0 + jd % 29.0
+
+
+def test_yearly_and_monthly_snapshots_have_real_sample_timestamps():
+    from datetime import UTC, datetime
+
+    from bot.services.astro_chart_core import build_transit_snapshots
+
+    engine = FakeEngine()
+    engine.returns = SimpleNamespace(
+        jd_from_datetime=lambda dt: (dt - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds() / 86400.0 + 2440587.5,
+    )
+    planet = FakePlanetEngine()
+    monthly = build_transit_snapshots(
+        PROFILE, year=2024, month=2, engine=engine,
+        kernel="de440.bsp", planetary_engine=planet,
+    )
+    annual = build_transit_snapshots(
+        PROFILE, year=2024, engine=engine,
+        kernel="de440.bsp", planetary_engine=planet,
+    )
+    assert monthly["scope"] == "month"
+    assert len(monthly["samples"]) == 29
+    assert monthly["samples"][-1]["date"] == "2024-02-29"
+    assert annual["scope"] == "year"
+    assert len(annual["samples"]) == 12
+    assert annual["samples"][-1]["date"] == "2024-12-01"
+    assert monthly["interpretation"] is None
+    assert monthly["samples"][0]["at_local"].endswith("+03:00")
+
+
+def test_solar_return_uses_true_sun_crossing_and_separate_location():
+    from datetime import UTC, datetime
+
+    from bot.services.astro_chart_core import build_solar_return_facts
+
+    engine = FakeEngine()
+    used = {}
+
+    def search_solar(lon, near, *, engine):
+        used["sun"] = lon
+        return near + 0.1234
+
+    engine.returns = SimpleNamespace(
+        jd=lambda *args: 2460000.0,
+        solar_return=search_solar,
+        datetime_from_jd=lambda jd: datetime(2024, 2, 28, 19, 30, tzinfo=UTC),
+    )
+    result = build_solar_return_facts(
+        PROFILE, target_year=2024,
+        return_location={
+            "latitude": 40.7128, "longitude": -74.006,
+            "timezone": "America/New_York",
+        },
+        engine=engine, kernel="de440.bsp", planetary_engine=FakePlanetEngine(),
+    )
+    assert result["schema_version"] == "astro.solar-facts.v1"
+    assert result["target_year"] == 2024
+    assert result["solar_return_at_local"].endswith("-05:00")
+    assert result["return_location"]["timezone"] == "America/New_York"
+    assert used["sun"] == 0.0
+    assert result["interpretation"] is None
+
+
+def test_solar_return_rejects_incomplete_planetary_facts():
+    from bot.services.astro_chart_core import AstroChartInputError, build_solar_return_facts
+
+    with pytest.raises(AstroChartInputError):
+        build_solar_return_facts(
+            PROFILE, target_year=2024,
+            return_location={"latitude": float("nan"), "longitude": 0, "timezone": "UTC"},
+            engine=FakeEngine(), kernel="de440.bsp",
+        )
