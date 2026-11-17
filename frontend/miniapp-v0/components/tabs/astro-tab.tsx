@@ -977,7 +977,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       {extendedReport?.schema_version === 'astro.solar-facts.v1' && (
         <div className="astro-lunar-result" aria-label="Рассчитанная карта соляра">
           <h2>Солнечное возвращение</h2>
-          <AstroChartWheel chart={extendedReport.solar_chart} label="Рассчитанная карта соляра" />
+          <AstroChartWheel chart={extendedReport.solar_chart} label="Графическое колесо соляра" />
           <p>Момент возвращения: {extendedReport.solar_return_at_local}
             {' '}({extendedReport.return_location.timezone}).</p>
           {extendedReport.solar_chart.angles && (
