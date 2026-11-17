@@ -96,7 +96,7 @@ async def cached_thumbnails(source_urls: list[str]) -> dict[str, str]:
         return {str(row[0]): str(row[1]) for row in rows
                 if source_key(str(row[1]))
                 and str(row[1]).split("/uploads/", 1)[-1].startswith("trend-previews/catalog/")}
-    except Exception:
+    except Exception:  # noqa: BLE001 -- optional read-side cache must fail open
         # Before the first explicit backfill the table need not exist.
         # A read-only storefront must never fail just because previews are absent.
         logger.debug("Trend preview manifest unavailable; originals remain accessible")
