@@ -115,6 +115,7 @@ describe('Astro concept screens', () => {
       expect(screen.getByLabelText('Часовой пояс рождения')).toHaveAttribute('readOnly')
       fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Дома Плацидуса' })).toBeInTheDocument())
+      expect(screen.getByRole('img', { name: 'Рассчитанное натальное колесо' })).toBeInTheDocument()
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('ASC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('MC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Дом 12')
@@ -272,6 +273,9 @@ describe('Astro concept screens', () => {
       return Promise.resolve({ ok: true, status: 200, json: async () => url.endsWith('/places')
         ? { ok: true, results: [{ ...city, latitude: 55, longitude: 37 }] }
         : { ok: true, result: { schema_version: 'astro.synastry-facts.v1',
+          first: { bodies: { Sun: { lon: 18, retro: false } }, angles: { asc: 90, mc: 180 },
+            cusps: Array.from({ length: 12 }, (_, index) => index * 30), aspects: [] },
+          second: { bodies: { Sun: { lon: 33, retro: false } }, angles: null, cusps: null, aspects: [] },
           first_accuracy: { birth_time_known: true }, second_accuracy: { birth_time_known: false },
           aspects: [{ a: 'Sun', b: 'Moon', aspect: 'trine', orb: 1.1 }],
           house_overlays: { first_in_second: null, second_in_first: { Sun: 3 } },
@@ -296,6 +300,8 @@ describe('Astro concept screens', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Получить разбор' }))
       const result = await screen.findByLabelText('Рассчитанные межкартные аспекты')
       expect(result).toHaveTextContent('Солнце — дом 3')
+      expect(screen.getByRole('img', { name: 'Натальная карта первого человека' })).toBeInTheDocument()
+      expect(screen.getByRole('img', { name: 'Натальная карта второго человека' })).toBeInTheDocument()
       expect(result).toHaveTextContent('Дома не определены')
       const post = mock.mock.calls.find(([url]) => url.endsWith('/compatibility/full'))
       expect(JSON.parse(post[1].body)).toMatchObject({
