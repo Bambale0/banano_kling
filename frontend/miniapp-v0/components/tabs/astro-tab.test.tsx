@@ -17,6 +17,43 @@ describe('Astro concept screens', () => {
     expect(screen.getByText('Лунный календарь')).toBeInTheDocument()
   })
 
+  it('adds date separators automatically while typing and normalizes pasted dates', () => {
+    render(<AstroTab />)
+    fireEvent.click(screen.getByText('Натальная карта'))
+    const birthDate = screen.getByLabelText('person: дата рождения')
+    for (const [typed, expected] of [
+      ['1', '1'],
+      ['12', '12'],
+      ['120', '12.0'],
+      ['1203', '12.03'],
+      ['12032', '12.03.2'],
+      ['12032000', '12.03.2000'],
+      ['12/03/2000', '12.03.2000'],
+      ['12-03-2000', '12.03.2000'],
+      ['1203200000', '12.03.2000'],
+      ['12.03.200', '12.03.200'],
+      ['12.03', '12.03'],
+      ['12', '12'],
+      ['', ''],
+    ] as const) {
+      fireEvent.change(birthDate, { target: { value: typed } })
+      expect(birthDate).toHaveValue(expected)
+    }
+    expect(screen.queryByText('Астрологические интерпретации носят развлекательный характер.'))
+      .not.toBeInTheDocument()
+  })
+
+  it('masks both birth dates independently on compatibility', () => {
+    render(<AstroTab />)
+    fireEvent.click(screen.getByText('Совместимость'))
+    const first = screen.getByLabelText('person: дата рождения')
+    const second = screen.getByLabelText('partner: дата рождения')
+    fireEvent.change(first, { target: { value: '01021999' } })
+    fireEvent.change(second, { target: { value: '29022000' } })
+    expect(first).toHaveValue('01.02.1999')
+    expect(second).toHaveValue('29.02.2000')
+  })
+
   it('validates birth date instead of submitting fictional astro results', () => {
     render(<AstroTab />)
     fireEvent.click(screen.getByText('Натальная карта'))
