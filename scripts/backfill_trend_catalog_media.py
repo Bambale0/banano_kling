@@ -14,7 +14,11 @@ from pathlib import Path
 
 from bot import trend_catalog
 from bot.services.media_input_utils import resolve_local_upload_path
-from bot.services.media_storage import is_s3_enabled, persist_upload_file, remote_upload_size
+from bot.services.media_storage import (
+    is_s3_enabled,
+    persist_upload_file,
+    remote_upload_size,
+)
 from bot.services.trend_catalog_media_cache import (
     cached_thumbnails,
     record_thumbnail,
