@@ -162,6 +162,34 @@ describe('Astro long-report Mini App integration', () => {
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
   })
 
+  it('restarts a terminally failed owned report only after fresh consent', async () => {
+    const identifier = 'd'.repeat(32)
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: url.endsWith('/retry') ? 202 : 200,
+      json: async () => url.endsWith('/history')
+        ? { ok: true, jobs: [{ job_id: identifier, service_id: 'natal',
+          status: 'failed', attempts: 4, created_at: 1794931200 }] }
+        : url.endsWith('/retry')
+          ? { ok: true, job_id: identifier, status: 'queued' }
+          : { ok: true, status: 'failed', error_code: 'temporary_provider_failure' },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Открыть' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Повторить отчёт/ })).toBeInTheDocument())
+    const retry = screen.getByRole('button', { name: /Повторить отчёт/ })
+    expect(retry).toBeDisabled()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(retry).not.toBeDisabled()
+    fireEvent.click(retry)
+    await waitFor(() => expect(mock.mock.calls.filter(([url]) => url.endsWith('/retry'))).toHaveLength(1))
+    const body = JSON.parse(mock.mock.calls.find(([url]) => url.endsWith('/retry'))![1].body)
+    expect(body).toEqual({ init_data: 'synthetic-telegram-signed', job_id: identifier, consent: true })
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
+  })
+
   it('keeps paid generation disabled when server has no stable secret configuration', async () => {
     const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
