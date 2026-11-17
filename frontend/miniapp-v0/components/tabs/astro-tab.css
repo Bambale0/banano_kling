@@ -351,3 +351,27 @@
 .astro-city-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .astro-city-option small { font-size: 11px; color: #c3b8ce; }
 .astro-city-option[aria-selected="true"] { border-color: #ffd487; background: #332340; }
+
+
+/* Genuine ephemeris-backed chart: keep the SVG legible inside Telegram WebView. */
+.astro-calculated-chart {
+  margin: 14px auto 24px;
+  width: min(100%, 440px);
+  color: #d6c3a3;
+}
+.astro-calculated-wheel {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  overflow: visible;
+}
+.astro-calculated-wheel text {
+  font-family: 'DejaVu Sans', 'Noto Sans Symbols 2', 'Segoe UI Symbol', Arial, sans-serif;
+}
+.astro-calculated-chart figcaption {
+  padding: 4px 10px;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.45;
+}
