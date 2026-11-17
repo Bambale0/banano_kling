@@ -169,3 +169,58 @@ def test_report_history_is_owner_scoped_sorted_and_excludes_private_facts(tmp_pa
         assert (await jobs.list_owner(owner_id=22, now=105))[0]["job_id"] == other
         assert await jobs.list_owner(owner_id=33, now=105) == []
     asyncio.run(check())
+
+def test_manual_retry_is_explicit_owner_scoped_bounded_and_preserves_identity(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        job_id = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
+        assert await jobs.claim(worker_id="w", now=101)
+        assert await jobs.reschedule(job_id=job_id, worker_id="w", retry=False,
+                                     error_code="permanent_provider_failure", now=102)
+        assert (await jobs.status(owner_id=1, job_id=job_id, now=103))["status"] == "failed"
+        # Retrying the original start is always idempotent and does not bill again.
+        assert await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
+                                  consent=True, now=103) == job_id
+        assert not await jobs.retry_failed(owner_id=2, job_id=job_id, consent=True,
+                                           now=103, cooldown_seconds=0)
+        try:
+            await jobs.retry_failed(owner_id=1, job_id=job_id, consent=False,
+                                    now=103, cooldown_seconds=0)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("Manual retry without renewed consent was accepted")
+        assert await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True,
+                                       now=103, cooldown_seconds=0)
+        state = await jobs.status(owner_id=1, job_id=job_id, now=104)
+        assert state["status"] == "queued" and state["attempts"] == 0
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True,
+                                           now=104, cooldown_seconds=0)
+        renewed = await jobs.claim(worker_id="w2", now=104)
+        assert renewed.job_id == job_id and renewed.attempt == 1
+        assert await jobs.reschedule(job_id=job_id, worker_id="w2", retry=False,
+                                     error_code="permanent_provider_failure", now=105)
+        # A second manual retry must never bypass per-job usage limits.
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True,
+                                           now=106, cooldown_seconds=0)
+    asyncio.run(check())
+
+
+def test_manual_retry_concurrent_requests_accept_only_one(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        job_id = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                    facts=facts(), consent=True, now=100)
+        assert await jobs.claim(worker_id="w", now=101)
+        assert await jobs.reschedule(job_id=job_id, worker_id="w", retry=False,
+                                     error_code="terminal", now=102)
+        retries = await asyncio.gather(*(
+            jobs.retry_failed(owner_id=1, job_id=job_id, consent=True,
+                              now=103, cooldown_seconds=0)
+            for _ in range(8)
+        ))
+        assert retries.count(True) == 1
+        assert retries.count(False) == 7
+        assert (await jobs.status(owner_id=1, job_id=job_id, now=104))["status"] == "queued"
+    asyncio.run(check())
