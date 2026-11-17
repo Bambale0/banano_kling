@@ -14,7 +14,7 @@ from pathlib import Path
 
 from bot import trend_catalog
 from bot.services.media_input_utils import resolve_local_upload_path
-from bot.services.media_storage import persist_upload_file
+from bot.services.media_storage import is_s3_enabled, persist_upload_file, remote_upload_size
 from bot.services.trend_catalog_media_cache import (
     cached_thumbnails,
     record_thumbnail,
@@ -54,6 +54,12 @@ async def generate_thumbnail(preview_url: str) -> str | None:
         return None
     digest = hashlib.sha256((THUMBNAIL_VERSION + "|" + key).encode()).hexdigest()[:32]
     destination = THUMBNAIL_DIR / f"{digest}.jpg"
+    # A remote HEAD prevents downloading huge MP4 originals merely to reject
+    # them after transfer. It runs off-loop and only during operator backfill.
+    if is_s3_enabled():
+        size = await asyncio.to_thread(remote_upload_size, key.split('/uploads/', 1)[1])
+        if size is None or not 0 < size <= MAX_SOURCE_BYTES:
+            return None
     source_name = await asyncio.to_thread(resolve_local_upload_path, preview_url)
     if not source_name:
         return None
@@ -80,7 +86,8 @@ async def run(*, limit: int = 20, execute: bool = False) -> dict[str, int]:
     categories = await trend_catalog.list_catalog(is_admin=False, per_category=6)
     urls = list(dict.fromkeys(
         url for cat in categories for item in cat.get("items", [])
-        if (url := str(item.get("preview_url") or "")) and source_key(url)
+        if not item.get("preview_poster_url")
+        and (url := str(item.get("preview_url") or "")) and source_key(url)
     ))
     outcome = {"total_visible": len(urls), "checked": 0,
                "cached": 0, "created": 0, "failed": 0, "skipped": 0}
