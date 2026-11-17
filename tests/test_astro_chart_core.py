@@ -276,6 +276,10 @@ def test_solar_return_uses_true_sun_crossing_and_separate_location():
     assert result["target_year"] == 2024
     assert result["solar_return_at_local"].endswith("-05:00")
     assert result["return_location"]["timezone"] == "America/New_York"
+    assert len(result["solar_chart"]["houses"]) == 12
+    assert len(result["solar_chart"]["body_houses"]) == 12
+    assert result["house_overlays"]["natal_in_solar"]["Sun"] == 1
+    assert result["house_overlays"]["solar_in_natal"]["Sun"] == 1
     assert used["sun"] == 0.0
     assert result["interpretation"] is None
 
