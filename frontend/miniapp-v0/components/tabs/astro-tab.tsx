@@ -6,6 +6,7 @@ import {
   MapPin, Search, Sparkles, Star,
 } from 'lucide-react'
 import { getInitData } from '../../lib/api'
+import { AstroChartWheel } from './astro-chart-wheel'
 import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
@@ -23,6 +24,8 @@ interface AstroPlace {
 
 interface CompatibilityReport {
   schema_version: 'astro.synastry-facts.v1'
+  first?: FullNatalReport['chart']
+  second?: FullNatalReport['chart']
   first_accuracy: { birth_time_known: boolean }
   second_accuracy: { birth_time_known: boolean }
   aspects: Array<{ a: string; b: string; aspect: string; orb: number }>
@@ -877,6 +880,10 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       {compatibilityReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанные межкартные аспекты">
           <h2>Межкартные аспекты</h2>
+          {compatibilityReport.first && <AstroChartWheel chart={compatibilityReport.first}
+            label="Натальная карта первого человека" />}
+          {compatibilityReport.second && <AstroChartWheel chart={compatibilityReport.second}
+            label="Натальная карта второго человека" />}
           <p>Первый человек — {compatibilityReport.first_accuracy.birth_time_known ? 'время известно' : 'время неизвестно'};
             второй человек — {compatibilityReport.second_accuracy.birth_time_known ? 'время известно' : 'время неизвестно'}.
           </p>
@@ -950,6 +957,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       {extendedReport?.schema_version === 'astro.solar-facts.v1' && (
         <div className="astro-lunar-result" aria-label="Рассчитанная карта соляра">
           <h2>Солнечное возвращение</h2>
+          <AstroChartWheel chart={extendedReport.solar_chart}
+            label="Рассчитанная карта соляра" />
           <p>Момент возвращения: {extendedReport.solar_return_at_local}
             {' '}({extendedReport.return_location.timezone}).</p>
           {extendedReport.solar_chart.angles && (
@@ -980,6 +989,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       {fullNatalReport && (
         <div className="astro-lunar-result" aria-label="Полная рассчитанная натальная карта">
           <h2>Натальная карта</h2>
+          <AstroChartWheel chart={fullNatalReport.chart}
+            label="Рассчитанное натальное колесо" />
           <p>Расчёт на {fullNatalReport.chart.utc} UTC, часовой пояс: {fullNatalReport.chart.tz}.</p>
           {fullNatalReport.accuracy.houses_available &&
            fullNatalReport.chart.angles && fullNatalReport.chart.cusps ? (
