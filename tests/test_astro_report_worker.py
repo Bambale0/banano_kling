@@ -27,7 +27,7 @@ class Provider:
                            "text": "символический анализ " * (section["minimum_words"] + 10)})
 
 
-def test_job_recovers_full_natal_after_provider_error_and_reuses_checkpoint(tmp_path):
+def test_job_recovers_full_natal_after_provider_error_and_reuses_checkpoint(tmp_path, caplog):
     async def check():
         db_path = str(tmp_path / "reports.db")
         jobs = AstroReportJobs(
@@ -55,7 +55,13 @@ def test_job_recovers_full_natal_after_provider_error_and_reuses_checkpoint(tmp_
         assert provider.requests.count(provider.requests[0]) == 1
         assert len(response["report"]["sections"]) == len(load_report_plan("natal").sections)
         assert await worker.run_once() is False
-    asyncio.run(check())
+    with caplog.at_level('INFO', logger='bot.services.astro_report_worker'):
+        asyncio.run(check())
+    events = [record.getMessage() for record in caplog.records]
+    assert any('astro_provider_call_started' in event for event in events)
+    assert any('astro_provider_call_succeeded' in event for event in events)
+    assert any('astro_provider_call_retryable' in event for event in events)
+    assert all('fake 429' not in event and 'символический анализ' not in event for event in events)
 
 
 def test_revoked_admin_blocks_provider_without_starting_generation(tmp_path):

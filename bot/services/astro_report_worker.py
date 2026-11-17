@@ -57,13 +57,34 @@ class AstroReportWorker:
         started = time.monotonic()
         heartbeat = asyncio.create_task(self._heartbeat(job), name="astro-report-lease")
 
+        provider_call_count = 0
+
         class AuthorizedProvider:
             async def analyze_text(_, **kwargs):
+                nonlocal provider_call_count
                 if not self.is_admin(job.owner_id):
                     raise PermissionError("Astro owner role revoked")
                 if not await self.jobs.heartbeat(job_id=job.job_id, worker_id=self.worker_id):
                     raise PermissionError("Astro job lease unavailable")
-                response = await self.provider.analyze_text(**kwargs)
+                provider_call_count += 1
+                call_no = provider_call_count
+                call_started = time.monotonic()
+                # Correlate KIE requests with durable jobs, not sensitive birth facts.
+                logger.info("astro_provider_call_started job_id=%s service=%s attempt=%s call_no=%s",
+                            job.job_id, job.service_id, job.attempt, call_no)
+                try:
+                    response = await self.provider.analyze_text(**kwargs)
+                except KieRetryableError:
+                    logger.warning("astro_provider_call_retryable job_id=%s service=%s call_no=%s",
+                                   job.job_id, job.service_id, call_no)
+                    raise
+                except KiePermanentError:
+                    logger.warning("astro_provider_call_permanent job_id=%s service=%s call_no=%s",
+                                   job.job_id, job.service_id, call_no)
+                    raise
+                logger.info("astro_provider_call_succeeded job_id=%s service=%s call_no=%s latency_ms=%d",
+                            job.job_id, job.service_id, call_no,
+                            round((time.monotonic() - call_started) * 1000))
                 if not self.is_admin(job.owner_id):
                     raise PermissionError("Astro owner role revoked")
                 if not await self.jobs.heartbeat(job_id=job.job_id, worker_id=self.worker_id):
