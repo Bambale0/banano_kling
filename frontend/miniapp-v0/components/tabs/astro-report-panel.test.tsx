@@ -190,6 +190,81 @@ describe('Astro long-report Mini App integration', () => {
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
   })
 
+  it('can retry report creation after a temporary 503 without navigating away', async () => {
+    const identifier = 'e'.repeat(32)
+    let startCalls = 0
+    const mock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/start')) {
+        startCalls += 1
+        return Promise.resolve(startCalls === 1
+          ? { ok: false, status: 503 }
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        ok: true, status: 'completed', report: {
+          schema_version: 'astro.report.v1', service_id: 'natal', word_count: 100,
+          sections: [{ id: 'intro', title: 'Восстановленный разбор', text: 'Сервер снова доступен.' }],
+          disclaimer: 'Тестовая интерпретация.',
+        },
+      }) })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+    await waitFor(() => expect(screen.getByText(/ещё не включены на сервере/)).toBeInTheDocument())
+    // A previously unavailable server can be enabled without remounting the Mini App.
+    const retry = screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })
+    expect(retry).toBeEnabled()
+    fireEvent.click(retry)
+    expect(await screen.findByLabelText('Готовый полный ИИ-разбор')).toHaveTextContent('Сервер снова доступен.')
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(2)
+  })
+
+  it('does not hide report creation when report history temporarily returns 503', async () => {
+    const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByText(/Длинные ИИ-разборы пока не включены/)).toBeInTheDocument())
+    // Reading history is optional; a transient error must not lock report creation.
+    expect(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })).toBeInTheDocument()
+  })
+
+  it('can explicitly retry a failed report after a temporary 503', async () => {
+    const identifier = 'f'.repeat(32)
+    let retryCalls = 0
+    const mock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/history')) return Promise.resolve({
+        ok: true, status: 200, json: async () => ({ ok: true, jobs: [
+          { job_id: identifier, service_id: 'natal', status: 'failed',
+            attempts: 2, created_at: 1794931200 },
+        ] }),
+      })
+      if (url.endsWith('/retry')) {
+        retryCalls += 1
+        return Promise.resolve(retryCalls === 1
+          ? { ok: false, status: 503 }
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        ok: true, status: 'failed', error_code: 'temporary_provider_failure',
+      }) })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Открыть' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть' }))
+    const retry = await screen.findByRole('button', { name: 'Повторить отчёт' })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(retry)
+    await waitFor(() => expect(screen.getByText(/Создание отчётов временно отключено/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Повторить отчёт' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить отчёт' }))
+    await waitFor(() => expect(retryCalls).toBe(2))
+  })
+
   it('keeps paid generation disabled when server has no stable secret configuration', async () => {
     const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })

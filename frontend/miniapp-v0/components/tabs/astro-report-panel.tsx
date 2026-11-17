@@ -149,7 +149,8 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       })
       if (controller.signal.aborted || epoch !== requestEpoch.current) return
       if (response.status === 503 || response.status === 401 || response.status === 403) {
-        setAvailability('disabled')
+        // Only an auth/role rejection blocks access; a 503 is recoverable.
+        setAvailability(response.status === 503 ? 'ready' : 'disabled')
         setMessage(response.status === 503
           ? 'Длинные ИИ-разборы пока не включены. Астрономический расчёт доступен выше.'
           : 'Откройте раздел в Telegram с правами администратора.')
@@ -263,7 +264,9 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         return
       }
       if (response.status === 503) {
-        setAvailability('disabled')
+        // A disabled backend may be enabled while this Mini App remains mounted.
+        // Keep the explicit-submit path available for a later intentional retry.
+        setAvailability('ready')
         setMessage('Длинные ИИ-разборы ещё не включены на сервере. Баланс не списан.')
         return
       }
@@ -310,7 +313,8 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         return
       }
       if (response.status === 503) {
-        setAvailability('disabled')
+        // Keep explicit manual retry available when the queue comes back.
+        setAvailability('ready')
         setMessage('Создание отчётов временно отключено. Данные сохранены.')
         return
       }
