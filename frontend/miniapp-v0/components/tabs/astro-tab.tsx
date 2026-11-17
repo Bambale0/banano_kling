@@ -487,7 +487,7 @@ function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }
           <label className="astro-field">
             <MapPin className="astro-field-icon" aria-hidden="true" />
             <span className="astro-field-body">
-              <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
+              <span className="astro-field-label">Часовой пояс при рождении</span>
               <input aria-label={prefix + ': часовой пояс'} name={prefix + '-timezone'}
                 placeholder="Выберите город из списка" autoComplete="off"
                 readOnly value={birthZone} />
