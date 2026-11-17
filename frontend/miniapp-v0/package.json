@@ -8,7 +8,8 @@
     "build:vk": "NEXT_PUBLIC_MINIAPP_BASE_PATH=/ NEXT_PUBLIC_MINIAPP_PLATFORM=vk NEXT_PUBLIC_MINIAPP_API_BASE=/mini-app/api npm run build",
     "start": "next start",
     "lint": "eslint .",
-    "test": "jest --config jest.config.ts --passWithNoTests"
+    "test": "jest --config jest.config.ts --passWithNoTests",
+    "security:picomatch": "node scripts/check-picomatch-security.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",
@@ -86,12 +87,14 @@
     "ts-jest": "^29.4.12",
     "tw-animate-css": "1.3.3",
     "typescript": "5.7.3",
-    "typescript-eslint": "^8.65.0"
+    "typescript-eslint": "^8.65.0",
+    "picomatch": "file:vendor/picomatch"
   },
   "overrides": {
     "nanoid": "5.1.16",
     "postcss": "^8.5.25",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "picomatch": "$picomatch"
   },
   "browserslist": [
     "chrome >= 90",

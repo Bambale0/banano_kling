@@ -1,0 +1,46 @@
+{
+  "upstream": {
+    "name": "picomatch",
+    "version": "4.0.7",
+    "tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+    "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="
+  },
+  "fixedAdvisory": "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
+  "files": {
+    "index.js": {
+      "upstreamSha256": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a",
+      "patchedSha256": "02ae26406508e28f9ba0865be16cf77f0b33de6c4d4d49c212c4176df1d5625a"
+    },
+    "posix.js": {
+      "upstreamSha256": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480",
+      "patchedSha256": "5695ff5dfcd5a338a40630bd506056f2950bcb08fe1cc068519cbbfe60add480"
+    },
+    "LICENSE": {
+      "upstreamSha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+      "patchedSha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9"
+    },
+    "lib/constants.js": {
+      "upstreamSha256": "c28f952d2758261fe5428a121add485cc25b03e0193633f649de903dc0e5e222",
+      "patchedSha256": "38352a1ed94e7be0da08e1c45613e8bbf1041de5237d20fdd4303045d8b0c5e3"
+    },
+    "lib/parse.js": {
+      "upstreamSha256": "4e1e05447668aa1e94366c5516a2bcd8f5fff800cc92b1d0cd7d77703b8618c4",
+      "patchedSha256": "681b1263271fa7be23b10df432432cfae3a83e597fa6a35eb978136749118080"
+    },
+    "lib/picomatch.js": {
+      "upstreamSha256": "fdd249d7ffff853f3bb1c77eafc8baa1a437bea85a94c35877b83c6a40d9ca94",
+      "patchedSha256": "b2b9aadd9cd40a727f1b53926acf5c6270c583b5a95595a130da601d63d9a75b"
+    },
+    "lib/scan.js": {
+      "upstreamSha256": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae",
+      "patchedSha256": "6457a1764e5c2e543cc3a0c00ce12ebb3764097628868198370b64d4e642aaae"
+    },
+    "lib/utils.js": {
+      "upstreamSha256": "f04604f70cd1a3f6ace80b84766468674ff38b4bb83818d2ef1d81fc6355f935",
+      "patchedSha256": "c9809355c48e9a3b2793a092e0b5c808413e704d93f03571708415e02b437779"
+    },
+    "package.json": {
+      "patchedSha256": "007f61afcac675004a4dd01b25ec835f8e2264d50ecf1c56c2d60f495630cc74"
+    }
+  }
+}
