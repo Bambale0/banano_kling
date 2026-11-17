@@ -379,8 +379,9 @@ async def compose_report(
     """Resume independent sections from durable store; never return partial as done.
 
     Requires caller to enforce admin rights before every invocation, and the
-    store to atomically bind owner+HMAC+section. No retry loops here: the
-    existing configured LLM adapter handles retries. A failure can be resumed
+    store to atomically bind owner+HMAC+section. Section validation permits
+    bounded rewrites; the configured adapter handles transport retries.
+    A failure can be resumed
     without regenerating committed sections or double billing.
     """
     fingerprint = report_fingerprint(owner_id=owner_id, plan=plan, facts=facts, secret=secret)
