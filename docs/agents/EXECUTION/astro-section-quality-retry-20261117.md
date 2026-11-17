@@ -17,6 +17,6 @@
 
 ## Verification and rollout
 
-- Focused pipeline/fact-guard/worker/revocation tests: 40 passed. Ruff and diff checks clear. Remaining release gates: Linux Astro suite, review, protected CI, native squash auto-merge into `tanyapi`, exact-SHA autodeploy and smoke.
+- Focused pipeline/fact-guard/worker/revocation tests: 40 passed. Ruff and diff checks clear. Linux Astro suite: 283 passed. Standards/spec review found no blocking issue; corrected the stale no-retries docstring. Remaining release gates: protected CI, native squash auto-merge into `tanyapi`, exact-SHA autodeploy and smoke.
 - No live provider calls, charges or user messages in these synthetic tests. No failed historical job is silently retried. User initiates retry from existing owner-scoped Mini App flow.
 - Rollback: revert this isolated code change or set validation rewrites to 0; accepted encrypted checkpoints and original report identity remain compatible. Never disable the fact gate to make a report finish.
