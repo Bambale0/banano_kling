@@ -38,6 +38,7 @@ psycopg[binary,pool]>=3.2.0
 
 # Bounded PDF page validation for Wan document inputs
 pypdf>=6.20,<7
+reportlab>=4.4.9,<5
 
 # MIT-licensed deterministic astronomical ephemerides for admin Astro calendar
 astronomy-engine==2.1.19
