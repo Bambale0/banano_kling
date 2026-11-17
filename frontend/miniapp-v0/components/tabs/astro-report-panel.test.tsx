@@ -171,4 +171,45 @@ describe('Astro long-report Mini App integration', () => {
     await waitFor(() => expect(screen.getByText(/ещё не включены на сервере/)).toBeInTheDocument())
     expect(screen.queryByLabelText('Готовый полный ИИ-разбор')).not.toBeInTheDocument()
   })
+
+  it('offers one explicit consent-gated retry only after terminal failure', async () => {
+    const identifier = 'd'.repeat(32)
+    let statusPoll = 0
+    const mock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/start')) return Promise.resolve({
+        ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }),
+      })
+      if (url.endsWith('/retry')) return Promise.resolve({
+        ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }),
+      })
+      statusPoll += 1
+      return Promise.resolve({ ok: true, status: 200, json: async () => statusPoll === 1
+        ? { ok: true, job_id: identifier, status: 'failed' }
+        : { ok: true, job_id: identifier, status: 'completed', report: {
+          schema_version: 'astro.report.v1', service_id: 'natal', word_count: 10000,
+          sections: [{ id: 'x', title: 'Восстановленный отчёт', text: 'Полный результат' }],
+          disclaimer: 'Символическая интерпретация.',
+        } },
+      })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+    const retry = await screen.findByRole('button', { name: 'Повторить неудавшийся разбор' })
+    expect(retry).toBeDisabled()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/retry'))).toHaveLength(0)
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(retry).not.toBeDisabled()
+    fireEvent.click(retry)
+    expect(await screen.findByLabelText('Готовый полный ИИ-разбор'))
+      .toHaveTextContent('Полный результат')
+    const posts = mock.mock.calls.filter(([url]) => url.endsWith('/retry'))
+    expect(posts).toHaveLength(1)
+    expect(JSON.parse(posts[0][1].body)).toEqual({
+      init_data: 'synthetic-telegram-signed', job_id: identifier, consent: true,
+    })
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1)
+  })
+
 })
