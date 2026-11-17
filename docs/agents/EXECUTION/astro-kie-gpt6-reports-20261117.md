@@ -34,6 +34,7 @@ wallets, expose this API to ordinary users or enable retired VK features.
 | `ASTRO_REPORT_KIE_MAX_OUTPUT_TOKENS` | `8192` | Per-section token cap |
 | `ASTRO_REPORT_KIE_REASONING` | `low` | Configured reasoning effort |
 | `ASTRO_REPORT_MAX_ATTEMPTS` | `4` | Includes worker crash reclaim attempts |
+| `ASTRO_REPORT_SECTION_VALIDATION_RETRIES` | `1` | 0–2 bounded rewrites for rejected section content; fact/length checks unchanged |
 | `ASTRO_REPORT_RETRY_BASE_SECONDS` | `5` | Exponential retries with max 300s |
 | `ASTRO_REPORT_RETRY_MAX_SECONDS` | `300` | Retry ceiling |
 | `ASTRO_REPORT_LEASE_SECONDS` | `180` | Lease heartbeat duration |
