@@ -151,15 +151,21 @@
 .astro-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  position: absolute;
+  gap: 8px;
+  position: fixed;
+  z-index: 55;
   left: 16px;
-  top: 12px;
-  color: #bfb9ba;
-  font-size: 11px;
-  border-radius: 12px;
-  padding: 6px;
-  opacity: .85;
+  top: auto;
+  bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  min-height: 44px;
+  padding: 10px 14px;
+  color: #ffe2a1;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid rgba(242, 183, 95, .8);
+  border-radius: 16px;
+  background: rgba(20, 20, 34, .96);
+  box-shadow: 0 5px 28px rgba(0, 0, 0, .6);
 }
 .astro-back:hover, .astro-back:focus-visible { color: #ffd184; outline-color: #ffd184; }
 .astro-detail-title {
