@@ -70,3 +70,65 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                 })
                 assert denied_history.status == 401
     asyncio.run(run())
+
+def test_terminal_retry_api_requires_fresh_consent_owner_and_is_idempotent(tmp_path):
+    async def run():
+        async def actor(_app, token):
+            if token == "owner-one":
+                return 101, {"platform": "telegram"}
+            if token == "owner-two":
+                return 202, {"platform": "telegram"}
+            raise ValueError("Unverified Telegram initData")
+
+        async def verified(_kind, _inputs):
+            return {"schema_version": "astro.natal-facts.v1",
+                    "chart": {"bodies": {"Sun": {"lon": 13.75}}}}
+
+        app = web.Application()
+        astro_report_api.setup_astro_report_routes(app, "/mini-app", initialize_worker=False)
+        jobs = AstroReportJobs(db_path=str(tmp_path / "retry.db"),
+                               fingerprint_secret="synthetic-queue-secret",
+                               data_key=Fernet.generate_key())
+        app[astro_report_api.ASTRO_REPORT_JOBS] = jobs
+        allowed = {101, 202}
+        with (patch.object(miniapp, "_get_user_context", actor),
+              patch.object(config, "is_admin", lambda who: who in allowed),
+              patch.object(astro_report_api, "calculate_verified_facts", verified),
+              patch.dict("os.environ", {"ASTRO_REPORT_MANUAL_RETRY_COOLDOWN_SECONDS": "0"})):
+            async with TestClient(TestServer(app)) as client:
+                start = "/mini-app/api/astro/reports/start"
+                request = {"init_data": "owner-one", "service_id": "natal",
+                           "input": {"date": "10.10.2000", "place_id": 1},
+                           "consent": True}
+                first = await client.post(start, json=request)
+                assert first.status == 202
+                job_id = (await first.json())["job_id"]
+                claimed = await jobs.claim(worker_id="test")
+                assert claimed is not None and claimed.job_id == job_id
+                assert await jobs.reschedule(job_id=job_id, worker_id="test",
+                                             retry=False, error_code="terminal")
+                assert (await jobs.status(owner_id=101, job_id=job_id))["status"] == "failed"
+                ordinary_repeat = await client.post(start, json=request)
+                assert (await ordinary_repeat.json())["job_id"] == job_id
+                assert (await jobs.status(owner_id=101, job_id=job_id))["status"] == "failed"
+                retry = "/mini-app/api/astro/reports/retry"
+                denied_consent = await client.post(retry, json={
+                    "init_data": "owner-one", "job_id": job_id, "consent": False})
+                assert denied_consent.status == 400
+                cross_owner = await client.post(retry, json={
+                    "init_data": "owner-two", "job_id": job_id, "consent": True})
+                assert cross_owner.status == 409
+                accepted = await client.post(retry, json={
+                    "init_data": "owner-one", "job_id": job_id, "consent": True})
+                assert accepted.status == 202, await accepted.text()
+                assert (await accepted.json())["job_id"] == job_id
+                repeat = await client.post(retry, json={
+                    "init_data": "owner-one", "job_id": job_id, "consent": True})
+                assert repeat.status == 409
+                assert (await jobs.status(owner_id=101, job_id=job_id))["status"] == "queued"
+                assert len(await jobs.list_owner(owner_id=101)) == 1
+                allowed.remove(101)
+                revoked = await client.post(retry, json={
+                    "init_data": "owner-one", "job_id": job_id, "consent": True})
+                assert revoked.status == 403
+    asyncio.run(run())
