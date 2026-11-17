@@ -163,6 +163,19 @@ class AstroReportJobs:
                         retried_at BIGINT NOT NULL
                     )
                 """)
+                await _create_astro_table(conn, """
+                    CREATE TABLE IF NOT EXISTS astro_report_deliveries (
+                        job_id TEXT NOT NULL, event_kind TEXT NOT NULL,
+                        owner_id BIGINT NOT NULL, status TEXT NOT NULL,
+                        worker_id TEXT, lease_until BIGINT NOT NULL DEFAULT 0,
+                        next_run_at BIGINT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                        delivered_at BIGINT, message_id BIGINT, error_code TEXT,
+                        updated_at BIGINT NOT NULL,
+                        PRIMARY KEY (job_id, event_kind)
+                    )
+                """)
+                await _create_astro_table(conn, "CREATE INDEX IF NOT EXISTS idx_astro_deliveries_due "
+                                   "ON astro_report_deliveries (status, next_run_at, lease_until)")
                 await conn.commit()
             self._initialized = True
 
@@ -240,6 +253,10 @@ class AstroReportJobs:
                     INSERT INTO astro_report_manual_retry (job_id, retried_at)
                     VALUES (?, ?)
                 """, (job_id, now))
+                await conn.execute("""
+                    UPDATE astro_report_deliveries SET status='cancelled', updated_at=?
+                    WHERE job_id=? AND event_kind='failed' AND status='pending'
+                """, (now, job_id))
             await conn.commit()
         return accepted
 
@@ -261,6 +278,15 @@ class AstroReportJobs:
                   "attempts": row[2], "error_code": row[3]}
         if row[1] == "completed":
             output["report"] = self._unseal(row[4])
+        if row[1] in ("completed", "failed"):
+            async with self._connect() as conn:
+                cursor = await conn.execute("""
+                    SELECT status FROM astro_report_deliveries
+                    WHERE job_id=? AND owner_id=? AND event_kind=?
+                """, (job_id, owner_id, row[1]))
+                delivery = await cursor.fetchone()
+            if delivery:
+                output["telegram_delivery"] = str(delivery[0])
         return output
 
     async def claim(self, *, worker_id: str, now: int | None = None) -> ClaimedAstroJob | None:
@@ -337,8 +363,18 @@ class AstroReportJobs:
                 WHERE job_id=? AND worker_id=? AND status='running'
                   AND lease_until > ? AND expires_at > ?
             """, (sealed, now, job_id, worker_id, now, now))
+            completed = cursor.rowcount == 1
+            if completed:
+                # Same transaction as report completion; no lost notification on crash.
+                await conn.execute("""
+                    INSERT INTO astro_report_deliveries (
+                        job_id, event_kind, owner_id, status, next_run_at, updated_at
+                    ) SELECT job_id, 'completed', owner_id, 'pending', ?, ?
+                      FROM astro_report_jobs WHERE job_id=?
+                    ON CONFLICT (job_id, event_kind) DO NOTHING
+                """, (now, now, job_id))
             await conn.commit()
-            return cursor.rowcount == 1
+            return completed
 
     async def reschedule(
         self, *, job_id: str, worker_id: str, retry: bool,
@@ -368,8 +404,17 @@ class AstroReportJobs:
                     AND lease_until > ?
             """, ("queued" if resume else "failed", error_code, now + delay,
                   now, job_id, worker_id, now))
+            changed = cursor.rowcount == 1
+            if changed and not resume:
+                await conn.execute("""
+                    INSERT INTO astro_report_deliveries (
+                        job_id, event_kind, owner_id, status, next_run_at, updated_at
+                    ) SELECT job_id, 'failed', owner_id, 'pending', ?, ?
+                      FROM astro_report_jobs WHERE job_id=?
+                    ON CONFLICT (job_id, event_kind) DO NOTHING
+                """, (now, now, job_id))
             await conn.commit()
-            return cursor.rowcount == 1
+            return changed
 
     async def circuit_allows(self, *, now: int | None = None) -> bool:
         await self.initialize()
@@ -438,6 +483,7 @@ class AstroReportJobs:
             raise ValueError("Invalid owner")
         await self.initialize()
         async with self._connect() as conn:
+            await conn.execute("DELETE FROM astro_report_deliveries WHERE owner_id=?", (owner_id,))
             await conn.execute("""
                 DELETE FROM astro_report_manual_retry WHERE job_id IN (
                     SELECT job_id FROM astro_report_jobs WHERE owner_id=?
@@ -460,6 +506,12 @@ class AstroReportJobs:
                 DELETE FROM astro_report_manual_retry WHERE NOT EXISTS (
                     SELECT 1 FROM astro_report_jobs
                     WHERE astro_report_jobs.job_id=astro_report_manual_retry.job_id
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM astro_report_deliveries WHERE NOT EXISTS (
+                    SELECT 1 FROM astro_report_jobs
+                    WHERE astro_report_jobs.job_id=astro_report_deliveries.job_id
                 )
             """)
             await conn.commit()

@@ -251,6 +251,7 @@ async def _astro_report_runtime(app: web.Application):
         logger.error("astro_reports_disabled configuration_missing_or_invalid")
         yield
         return
+    from bot.services.astro_report_delivery import AstroTelegramDelivery
     from bot.services.astro_report_worker import AstroReportWorker
 
     stop = asyncio.Event()
@@ -269,6 +270,11 @@ async def _astro_report_runtime(app: web.Application):
         _astro_report_retention_loop(jobs, checkpoints, stop),
         name="astro-report-retention-cleanup",
     ))
+    if app.get("bot") is not None:
+        delivery = AstroTelegramDelivery(jobs=jobs, telegram_bot=app["bot"],
+                                         is_admin=config.is_admin)
+        tasks.append(asyncio.create_task(delivery.run_forever(stop),
+                                         name="astro-telegram-delivery"))
     logger.info("astro_report_queue_started workers=%s", count)
     try:
         yield
