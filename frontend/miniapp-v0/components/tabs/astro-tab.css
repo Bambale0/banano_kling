@@ -374,3 +374,10 @@
 .astro-ai-report-section { padding: 12px 0; border-top: 1px solid rgba(226,162,67,.3); }
 .astro-ai-report-section h3 { margin: 4px 0 12px; font-size: 1rem; color: #f4c77b; }
 .astro-ai-section-text { font-size: .91rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+
+
+/* Ephemeris-backed natal wheel within Telegram Mini App. */
+.astro-calculated-chart { margin: 14px auto 24px; width: min(100%, 440px); color: #d6c3a3; }
+.astro-calculated-wheel { display: block; width: 100%; height: auto; aspect-ratio: 1; overflow: visible; }
+.astro-calculated-wheel text { font-family: 'DejaVu Sans', 'Noto Sans Symbols 2', 'Segoe UI Symbol', Arial, sans-serif; }
+.astro-calculated-chart figcaption { padding: 4px 10px; font-size: 12px; text-align: center; line-height: 1.45; }
