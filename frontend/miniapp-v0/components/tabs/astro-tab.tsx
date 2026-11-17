@@ -1141,7 +1141,14 @@ export function AstroTab() {
 
   useEffect(() => {
     if (!service || typeof window === 'undefined') return
-    const nativeBack = window.Telegram?.WebApp?.BackButton
+    const nativeBack = (window.Telegram?.WebApp as unknown as {
+      BackButton?: {
+        onClick?: (handler: () => void) => void
+        offClick?: (handler: () => void) => void
+        show?: () => void
+        hide?: () => void
+      }
+    } | undefined)?.BackButton
     nativeBack?.onClick?.(handleBack)
     nativeBack?.show?.()
     return () => {
