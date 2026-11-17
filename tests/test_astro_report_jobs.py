@@ -114,6 +114,48 @@ def test_crashed_worker_never_exceeds_max_lease_attempts(tmp_path):
     asyncio.run(check())
 
 
+
+def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_once_only(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        job_id = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
+                                    consent=True, now=100)
+        assert await jobs.claim(worker_id="a", now=101)
+        assert await jobs.reschedule(job_id=job_id, worker_id="a", retry=False,
+                                     error_code="temporary_provider_failure", now=102)
+        assert (await jobs.status(owner_id=1, job_id=job_id, now=104))["status"] == "failed"
+        assert await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
+                                  consent=True, now=105) == job_id
+        assert not await jobs.retry_failed(owner_id=2, job_id=job_id, consent=True, now=106)
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=False, now=106)
+        outcomes = await asyncio.gather(*[
+            jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=107)
+            for _ in range(2)
+        ])
+        assert sorted(outcomes) == [False, True]
+        assert (await jobs.status(owner_id=1, job_id=job_id, now=107))["status"] == "queued"
+        claim = await jobs.claim(worker_id="b", now=108)
+        assert claim is not None and claim.job_id == job_id and claim.attempt == 1
+        assert await jobs.reschedule(job_id=job_id, worker_id="b", retry=False,
+                                     error_code="temporary_provider_failure", now=109)
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=110)
+    asyncio.run(check())
+
+
+def test_manual_retry_never_restarts_permanently_rejected_job(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        job_id = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                    facts=facts(), consent=True, now=100)
+        assert await jobs.claim(worker_id="a", now=101)
+        assert await jobs.reschedule(job_id=job_id, worker_id="a", retry=False,
+                                     error_code="report_not_allowed", now=102)
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=103)
+        assert (await jobs.status(owner_id=1, job_id=job_id, now=103))["status"] == "failed"
+    asyncio.run(check())
+
+
 def test_two_concurrent_workers_cannot_claim_same_report(tmp_path):
     async def check():
         jobs = store(tmp_path)
