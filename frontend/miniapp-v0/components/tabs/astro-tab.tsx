@@ -151,8 +151,8 @@ interface AstroService {
 }
 
 export const ASTRO_SERVICES: readonly AstroService[] = [
-  { id: 'natal', title: 'Натальная карта', description: 'Фактические положения планет и аспекты. Развёрнутый разбор готовится' },
-  { id: 'compatibility', title: 'Совместимость', description: 'Реальные межкартные аспекты двух людей. Развёрнутый разбор отношений готовится' },
+  { id: 'natal', title: 'Натальная карта', description: 'Личные особенности, сильные стороны и жизненные темы' },
+  { id: 'compatibility', title: 'Совместимость', description: 'Динамика отношений, точки притяжения и возможные сложности' },
   { id: 'karma', title: 'Кармический разбор', description: 'Лунные узлы, жизненные темы и символические уроки' },
   { id: 'year', title: 'Годовой прогноз', description: 'Астрологические транзиты и тенденции на выбранный год' },
   { id: 'month', title: 'Гороскоп на месяц', description: 'Персональные астрологические тенденции месяца' },
@@ -557,7 +557,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setLunarReport(data.result as LunarReport)
         setMessage('Лунный календарь рассчитан. Оплата не требуется.')
       } catch {
-        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
       } finally {
         setCalculating(false)
       }
@@ -617,7 +617,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setMessage('Две натальные карты, межкартные аспекты и доступные дома рассчитаны. Оплата не требуется.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
@@ -668,7 +668,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           : 'Планеты рассчитаны. Для ASC и домов необходимо точное время рождения.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
@@ -730,7 +730,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setMessage('Астрономические показатели рассчитаны. Оплата не требуется.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
