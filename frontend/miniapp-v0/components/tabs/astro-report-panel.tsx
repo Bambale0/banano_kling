@@ -294,11 +294,57 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     }
   }
 
+  async function retryReport() {
+    if (busy || !jobId || jobStatus !== 'failed' || !consent || availability !== 'ready') return
+    const epoch = requestEpoch.current
+    setBusy(true)
+    setMessage('Проверяем право на повтор и состояние задания…')
+    try {
+      const response = await fetch(REPORTS_ROOT + '/retry', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ init_data: getInitData(), job_id: jobId, consent: true }),
+      })
+      if (epoch !== requestEpoch.current) return
+      if (response.status === 401 || response.status === 403) {
+        setMessage('Повторить отчёт можно только из Telegram с правами администратора.')
+        return
+      }
+      if (response.status === 503) {
+        setAvailability('disabled')
+        setMessage('Создание отчётов временно отключено. Данные сохранены.')
+        return
+      }
+      if (response.status === 409) {
+        setMessage('Повтор недоступен: лимит исчерпан либо ошибка требует исправления.')
+        return
+      }
+      const data = await response.json()
+      if (epoch !== requestEpoch.current) return
+      if (response.status !== 202 || !data.ok || data.job_id !== jobId) {
+        setMessage('Не удалось безопасно возобновить отчёт.')
+        return
+      }
+      setJobStatus('queued')
+      setReport(null)
+      setConsent(false)
+      setHistory((previous) => previous.map((item) =>
+        item.job_id === jobId ? { ...item, status: 'queued', attempts: 0 } : item))
+      setPollEpoch((value) => value + 1)
+      setMessage('Отчёт повторно поставлен в очередь, готовые разделы сохранены.')
+    } catch {
+      if (epoch === requestEpoch.current) {
+        setMessage('Не удалось проверить повтор. Откройте историю и сверьте статус.')
+      }
+    } finally {
+      if (epoch === requestEpoch.current) setBusy(false)
+    }
+  }
+
   return (
     <section className="astro-ai-panel" aria-label="Полный персональный ИИ-разбор">
       <h2>Подробный персональный разбор</h2>
-      <p>Астрономические факты рассчитываются отдельно. GPT-6 создаёт символическую
-        интерпретацию по проверенным данным; это не научный прогноз событий.</p>
+      <p>Сначала Astro рассчитывает астрономические данные, затем GPT-6 формирует
+        подробную интерпретацию прямо здесь. Готовый разбор сохраняется в истории.</p>
       <button type="button" className="astro-ai-history-action"
         disabled={historyLoading} onClick={() => { void loadHistory() }}>
         {historyLoading ? 'Загружаем историю…' : 'Мои предыдущие отчёты'}
@@ -341,6 +387,12 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
             ))}
           </ul>
         </div>
+      )}
+      {jobId && jobStatus === 'failed' && availability === 'ready' && (
+        <button type="button" className="astro-ai-action"
+          disabled={busy || !consent} onClick={() => { void retryReport() }}>
+          {busy ? 'Возобновляем отчёт…' : 'Повторить отчёт'}
+        </button>
       )}
       {jobId && !report && jobStatus && jobStatus !== 'failed' && (
         <p className="astro-ai-state" role="status">
