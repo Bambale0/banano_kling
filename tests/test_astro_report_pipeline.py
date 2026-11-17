@@ -131,6 +131,45 @@ def test_owner_and_source_data_are_part_of_scoped_identity():
     assert len({a, b, c, d}) == 4
 
 
+def test_one_bounded_rewrite_on_short_section_preserves_checkpoint(monkeypatch):
+    monkeypatch.setenv('ASTRO_REPORT_SECTION_VALIDATION_RETRIES', '1')
+    class ShortOnce(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            payload = json.loads(user_instruction)
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                return json.dumps({'section_id': payload['section_id'], 'text': 'коротко'})
+            return json.dumps({'section_id': payload['section_id'],
+                               'text': 'Символическая трактовка вычисленных данных и обстоятельств. ' * 8})
+
+    provider, checkpoints = ShortOnce(), Checkpoints()
+    report = compose(store=checkpoints, provider=provider)
+    assert report['status'] == 'completed'
+    assert len(provider.calls) == 3
+    assert provider.calls[1]['validation_feedback']['reason'] == 'too_short'
+    assert len(checkpoints.saved) == 2
+    compose(store=checkpoints, provider=ShortOnce())
+    assert len(checkpoints.saved) == 2
+
+
+def test_invalid_unverified_degree_requests_rewrite_without_weakening_fact_gate(monkeypatch):
+    monkeypatch.setenv('ASTRO_REPORT_SECTION_VALIDATION_RETRIES', '1')
+    class UnverifiedClaimOnce(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            payload = json.loads(user_instruction)
+            self.calls.append(payload)
+            if len(self.calls) == 1:
+                return json.dumps({'section_id': payload['section_id'],
+                                   'text': 'Недостоверная точная позиция 12°. ' * 10})
+            return json.dumps({'section_id': payload['section_id'],
+                               'text': 'Осторожная символическая интерпретация проверенных положений. ' * 10})
+    provider, checkpoint = UnverifiedClaimOnce(), Checkpoints()
+    report = compose(store=checkpoint, provider=provider)
+    assert report['status'] == 'completed'
+    assert provider.calls[1]['validation_feedback']['reason'] == 'unsupported_claim'
+    assert all('12°' not in text for text in checkpoint.saved.values())
+
+
 def test_short_response_does_not_commit_or_fake_completion():
     store = Checkpoints()
     with pytest.raises(AstroReportError, match="недостаточно"):
@@ -139,6 +178,34 @@ def test_short_response_does_not_commit_or_fake_completion():
             min_total_words=45,
         ))
     assert not store.saved
+
+
+@pytest.mark.parametrize('retries', [0, 1, 2])
+def test_validation_rewrite_budget_is_finite_and_never_checkpoints_invalid_text(monkeypatch, retries, caplog):
+    monkeypatch.setenv('ASTRO_REPORT_SECTION_VALIDATION_RETRIES', str(retries))
+
+    class InvalidEveryTime(Provider):
+        async def analyze_text(self, **kwargs):
+            self.calls.append(json.loads(kwargs['user_instruction']))
+            return json.dumps({'section_id':'one','text':'сыройсекрет'})
+
+    provider, store = InvalidEveryTime(), Checkpoints()
+    with pytest.raises(AstroReportError):
+        compose(provider=provider, store=store)
+    assert len(provider.calls) == retries + 1
+    assert not store.saved
+    assert 'reason=too_short' in caplog.text
+    assert 'сыройсекрет' not in caplog.text
+    assert all('сыройсекрет' not in json.dumps(call, ensure_ascii=False) for call in provider.calls)
+
+
+@pytest.mark.parametrize('policy', ['-1', '3', 'invalid'])
+def test_invalid_rewrite_policy_fails_before_any_external_request(monkeypatch, policy):
+    monkeypatch.setenv('ASTRO_REPORT_SECTION_VALIDATION_RETRIES', policy)
+    provider = Provider()
+    with pytest.raises(ValueError, match='retry configuration'):
+        compose(provider=provider)
+    assert not provider.calls
 
 
 def test_corrupt_existing_checkpoint_fails_closed():

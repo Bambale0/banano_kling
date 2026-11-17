@@ -11,11 +11,15 @@ import calendar
 import hashlib
 import hmac
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Protocol
+
+logger = logging.getLogger(__name__)
 
 _PLAN_PATH = Path(__file__).resolve().parents[1] / "astro_report_plans.json"
 _WORD_RE = re.compile(r"\b[\wА-Яа-яЁё]+(?:[-’][\wА-Яа-яЁё]+)*\b", re.UNICODE)
@@ -23,6 +27,14 @@ _WORD_RE = re.compile(r"\b[\wА-Яа-яЁё]+(?:[-’][\wА-Яа-яЁё]+)*\b", 
 
 class AstroReportError(RuntimeError):
     """Failed or incomplete report. Never return partial text as complete."""
+
+
+class AstroSectionValidationError(AstroReportError):
+    """A generated section failed validation; safe reason contains no report text."""
+
+    def __init__(self, message: str, *, reason: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,12 +277,12 @@ def _validate_written_facts(text: str, facts: dict) -> None:
     for match in re.finditer(r"(?<![\w.])(\d{1,3}(?:[.,]\d{1,6})?)\s*°", text):
         claimed = float(match.group(1).replace(",", "."))
         if not any(abs(claimed - actual) <= 0.11 for actual in values):
-            raise AstroReportError("В тексте найден неподтверждённый градус.")
+            raise AstroSectionValidationError("В тексте найден неподтверждённый градус.", reason="unsupported_claim")
     source_json = json.dumps(facts, ensure_ascii=False, allow_nan=False)
     allowed_dates = set(re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", source_json))
     for date_str in re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", text):
         if date_str not in allowed_dates:
-            raise AstroReportError("В тексте найдена неподтверждённая дата.")
+            raise AstroSectionValidationError("В тексте найдена неподтверждённая дата.", reason="unsupported_claim")
 
 
 def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> str:
@@ -278,14 +290,14 @@ def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> st
     try:
         doc = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as exc:
-        raise AstroReportError("Неверный формат текстового раздела.") from exc
+        raise AstroSectionValidationError("Неверный формат текстового раздела.", reason="invalid_format") from exc
     if not isinstance(doc, dict) or doc.get("section_id") != spec.id:
-        raise AstroReportError("Ответ модели относится к другому разделу.")
+        raise AstroSectionValidationError("Ответ модели относится к другому разделу.", reason="wrong_section")
     text = doc.get("text")
     if not isinstance(text, str) or _word_count(text) < spec.min_words:
-        raise AstroReportError("Раздел недостаточно подробный; не отмечаем готовым.")
+        raise AstroSectionValidationError("Раздел недостаточно подробный; не отмечаем готовым.", reason="too_short")
     if len(text) > 180_000 or "\x00" in text:
-        raise AstroReportError("Повреждённый раздел отчёта.")
+        raise AstroSectionValidationError("Повреждённый раздел отчёта.", reason="invalid_text")
     if facts is not None:
         _validate_written_facts(text, facts)
     return text.strip()
@@ -378,6 +390,12 @@ async def compose_report(
     )
     if len(fact_json.encode("utf-8")) > 150_000:
         raise AstroReportError("Слишком большой объём исходных фактов.")
+    try:
+        validation_retries = int(os.getenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1"))
+    except ValueError as exc:
+        raise ValueError("Invalid Astro section validation retry configuration") from exc
+    if not 0 <= validation_retries <= 2:
+        raise ValueError("Invalid Astro section validation retry configuration")
     sections: list[dict] = []
     for section in _expand_period_sections(plan, available):
         prior = await store.read(owner_id=owner_id, fingerprint=fingerprint, section_id=section.id)
@@ -397,12 +415,29 @@ async def compose_report(
                 "astronomical_facts": available,
                 "response_schema": {"section_id": section.id, "text": "<русский текст раздела>"},
             }
-            response = await provider.analyze_text(
-                user_instruction=json.dumps(request, ensure_ascii=False),
-                system_prompt=plan.system_prompt,
-                json_response=True,
-            )
-            candidate = _parse_section(response, section, available)
+            for attempt in range(validation_retries + 1):
+                response = await provider.analyze_text(
+                    user_instruction=json.dumps(request, ensure_ascii=False),
+                    system_prompt=plan.system_prompt,
+                    json_response=True,
+                )
+                try:
+                    candidate = _parse_section(response, section, available)
+                    break
+                except AstroSectionValidationError as exc:
+                    logger.warning(
+                        "astro_section_validation_failed service=%s section=%s reason=%s retry=%s",
+                        plan.service_id, section.id, exc.reason, attempt,
+                    )
+                    if attempt >= validation_retries:
+                        raise
+                    # Preserve all original astronomical facts and the proof gate.
+                    # The next response must satisfy the exact same contract.
+                    request["validation_feedback"] = {
+                        "reason": exc.reason,
+                        "minimum_words": section.min_words,
+                        "retry_number": attempt + 1,
+                    }
             text = await store.save_if_absent(
                 owner_id=owner_id, fingerprint=fingerprint,
                 section_id=section.id, text=candidate,
