@@ -15,6 +15,7 @@ from bot import database
 from bot import db as db_backend
 from bot import trend_catalog_audit as audit
 from bot.trend_visibility import sanitize_prompt_for_public
+from bot.services.trend_catalog_media_cache import enrich_cards
 
 
 class CatalogValidationError(ValueError):
@@ -191,7 +192,11 @@ async def public_trend_by_id(trend_id: int, *, tariff: str = "standard") -> dict
             (trend_id,),
         )
         row = await cursor.fetchone()
-    return _card(row, tariff=tariff) if row is not None else None
+    if row is None:
+        return None
+    result = _card(row, tariff=tariff)
+    await enrich_cards([result])
+    return result
 
 
 async def _attach_successful_repeat_counts(items: list[dict[str, Any]]) -> None:
@@ -301,10 +306,10 @@ async def list_catalog(
                     "items": items,
                 }
             )
+    all_cards = [item for category in result for item in category["items"]]
     if is_admin:
-        await _attach_successful_repeat_counts([
-            item for category in result for item in category["items"]
-        ])
+        await _attach_successful_repeat_counts(all_cards)
+    await enrich_cards(all_cards)
     return result
 
 
@@ -345,6 +350,7 @@ async def category_page(
         )
     if is_admin:
         await _attach_successful_repeat_counts(items)
+    await enrich_cards(items)
     return {
         "category": meta,
         "items": items,
