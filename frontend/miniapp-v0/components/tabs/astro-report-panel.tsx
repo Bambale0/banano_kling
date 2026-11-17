@@ -193,12 +193,17 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         if (response.status === 401 || response.status === 403) {
           setMessage('Доступ к отчёту отозван. Откройте приложение заново.')
           setReport(null)
+          setJobStatus('')
+          setJobId('')
+          setAvailability('disabled')
           finished = true
         } else if (response.status === 503) {
           setMessage('Подготовка временно приостановлена. Ваш разбор сохранён.')
         } else if (response.status === 404) {
           setMessage('Отчёт не найден или срок его хранения истёк.')
           setReport(null)
+          setJobStatus('')
+          setJobId('')
           finished = true
         } else {
           const data = await response.json()

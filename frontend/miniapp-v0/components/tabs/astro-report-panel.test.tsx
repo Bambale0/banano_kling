@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { useRef } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AstroReportPanel, buildAstroReportInput } from './astro-report-panel'
 
 jest.mock('../../lib/api', () => ({ getInitData: () => 'synthetic-telegram-signed' }))
@@ -293,5 +293,39 @@ describe('Astro long-report Mini App integration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
     await waitFor(() => expect(screen.getByText(/Сейчас не удаётся создать разбор/)).toBeInTheDocument())
     expect(screen.queryByLabelText('Готовый полный ИИ-разбор')).not.toBeInTheDocument()
+  })
+
+  it.each([401, 403, 404])('stops running progress and polling after terminal status %s', async (status) => {
+    jest.useFakeTimers()
+    try {
+      let polls = 0
+      const mock = jest.fn().mockImplementation((url: string) => {
+        if (url.endsWith('/start')) return Promise.resolve({ ok: true, status: 202,
+          json: async () => ({ ok: true, job_id: 'b'.repeat(32) }) })
+        polls++
+        return Promise.resolve(polls === 1
+          ? { ok: true, status: 200, json: async () => ({ ok: true, status: 'running' }) }
+          : { ok: false, status })
+      })
+      Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+      render(<MountedReport />)
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+      await waitFor(() => expect(screen.getByTestId('astro-live-processing'))
+        .toHaveTextContent('Готовим ваш персональный разбор'))
+      await act(async () => { await jest.advanceTimersByTimeAsync(6000) })
+      expect(screen.queryByTestId('astro-live-processing')).not.toBeInTheDocument()
+      expect(screen.getByText(status === 404
+        ? 'Отчёт не найден или срок его хранения истёк.'
+        : 'Доступ к отчёту отозван. Откройте приложение заново.')).toBeInTheDocument()
+      if (status !== 404) {
+        expect(screen.queryByRole('button', { name: 'Создать полный ИИ-разбор' })).not.toBeInTheDocument()
+      }
+      const stopped = polls
+      await act(async () => { await jest.advanceTimersByTimeAsync(12000) })
+      expect(polls).toBe(stopped)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })
