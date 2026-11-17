@@ -42,3 +42,14 @@ Astro access. Those remain separate acceptance gates under issue #544.
 
 Skills applied: Bambale0/.agents systematic-debugging, test-driven-development,
 verification-before-completion, frontend-ux-audit. Project AGENTS.md prevails.
+
+## Protected `tanyapi` release baseline (17 November)
+
+The verified ancestor #579 was merged as 14b27719, followed by the
+unrelated retired-VK smoke fix af96e57e. This PR was rebased onto the
+actual `tanyapi` SHA af96e57e, eliminating the already-merged ancestor
+commits from its diff. The resulting isolated change passed 161 Astro
+backend tests, 18 Astro React tests, TypeScript, ESLint, Ruff, Next.js
+static export build and GeoNames/JPL-DE440 offline smoke. A new protected
+CI run and exact-SHA rollout check are still required; local tests alone
+do not authorize a direct protected-branch push.
