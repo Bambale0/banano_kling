@@ -14,5 +14,6 @@ No queue, outbox, encrypted payload, owner authorization, delivery filename, Tel
 
 - Public export tests instrument the actual library build entry while still producing real parsed PDFs. RED observed: peak concurrent builds2, and both canceled/deadline waiters entered and returned rather than timing out. No corruption claim is inferred from this observation.
 - Verify peak1 and distinct real Unicode documents, promptly canceled/expired waiters without build entry, successful subsequent rendering, and lock release after a synthetic build exception. Existing full PDF/delivery/owner/retry suites remain required.
+- Local GREEN: 38 PDF/delivery tests pass, Ruff and diff check pass. The waiting-deadline regression uses an Event-controlled module-local clock advanced only after preparation, avoiding a CI scheduling race identified by spec review.
 - Both standards/spec reviewers independently recommended this bounded separate-lock approach. Final implementation review, Linux Astro regression, protected CI, native squash merge to `tanyapi`, exact-SHA production CI/autodeploy and smoke remain required.
 - Keep separate from report UI #599, quality #601, lazy-preview test follow-up #602 and build dependency #603. Rollback is reverting this isolated renderer/test change; do not alter queues or data to roll back.
