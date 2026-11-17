@@ -37,12 +37,22 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   const [visible, setVisible] = useState(false)
   const [failed, setFailed] = useState(false)
   const [documentVisible, setDocumentVisible] = useState(true)
+  const [posterFailed, setPosterFailed] = useState(false)
+  const [originalFailed, setOriginalFailed] = useState(false)
   const video = isVideoPreview(trend)
   const poster = trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : ''
   const preview = trend.preview_url ? normalizeMiniAppMediaUrl(trend.preview_url) : ''
+  // Only compact, pre-encoded preview MP4s may autoplay in a scrolling grid.
+  // A large original video is fetched only when the user explicitly opens it.
+  const canAutoPlay = video && Boolean(poster) && /\/uploads\/trend-previews\//.test(preview)
 
   useEffect(() => {
-    if (!video || !ref.current) return
+    setPosterFailed(false)
+    setOriginalFailed(false)
+  }, [poster, preview])
+
+  useEffect(() => {
+    if (!canAutoPlay || !ref.current) return
     const element = ref.current
     if (typeof IntersectionObserver === 'undefined') {
       setVisible(true)
@@ -56,18 +66,18 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
       observer.disconnect()
       stopVideo(element)
     }
-  }, [video, trend.id])
+  }, [canAutoPlay, trend.id])
 
   useEffect(() => {
-    if (!video) return
+    if (!canAutoPlay) return
     const onVisibility = () => setDocumentVisible(document.visibilityState === 'visible')
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [video])
+  }, [canAutoPlay])
 
   useEffect(() => {
     const element = ref.current
-    if (!video || !element) return
+    if (!canAutoPlay || !element) return
     const reducedMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const saveData = Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData)
@@ -86,22 +96,37 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
       stopVideo(element)
     }
     return () => stopVideo(element)
-  }, [video, visible, documentVisible, failed])
+  }, [canAutoPlay, visible, documentVisible, failed])
 
   if (!video) {
-    return preview
-      ? <img src={preview} alt="" loading="lazy" className="h-full w-full object-cover" />
-      : <div className="flex h-full items-center justify-center bg-secondary/70"><Sparkles className="h-9 w-9 text-gold/70" /></div>
+    const image = poster && !posterFailed ? poster : preview
+    return image && !originalFailed
+      ? <img src={image} alt="" loading="lazy" decoding="async"
+          onError={() => image === poster ? setPosterFailed(true) : setOriginalFailed(true)}
+          className="h-full w-full object-cover" />
+      : <div className="flex h-full items-center justify-center bg-secondary/70">
+          <Sparkles className="h-9 w-9 text-gold/70" />
+        </div>
   }
 
+  // No video file download until click unless it has a known small H.264
+  // derivative. A missing poster has an immediate, visible fallback.
   return (
     <>
-      {poster ? <img src={poster} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" /> : null}
-      {!failed ? (
+      {poster && !posterFailed ? (
+        <img src={poster} alt="" loading="lazy" decoding="async"
+          onError={() => setPosterFailed(true)}
+          className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-secondary/70">
+          <Film className="h-9 w-9 text-muted-foreground" />
+        </div>
+      )}
+      {canAutoPlay && !failed ? (
         <video
           ref={ref}
           src={visible ? videoPreviewFrameUrl(preview) : undefined}
-          poster={poster || undefined}
+          poster={posterFailed ? undefined : poster}
           muted
           loop
           playsInline
@@ -110,10 +135,6 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
           className="relative h-full w-full object-cover"
           aria-hidden="true"
         />
-      ) : !poster ? (
-        <div className="flex h-full items-center justify-center bg-secondary/70">
-          <Film className="h-9 w-9 text-muted-foreground" />
-        </div>
       ) : null}
     </>
   )
