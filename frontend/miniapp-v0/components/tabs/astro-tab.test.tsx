@@ -17,6 +17,35 @@ describe('Astro concept screens', () => {
     expect(screen.getByText('Лунный календарь')).toBeInTheDocument()
   })
 
+  it('registers the native Telegram BackButton and returns to the Astro service menu', () => {
+    const webApp = window.Telegram!.WebApp as typeof window.Telegram.WebApp & {
+      BackButton?: { show: jest.Mock; hide: jest.Mock; onClick: jest.Mock; offClick: jest.Mock }
+    }
+    const previous = webApp.BackButton
+    const show = jest.fn()
+    const hide = jest.fn()
+    const onClick = jest.fn()
+    const offClick = jest.fn()
+    webApp.BackButton = { show, hide, onClick, offClick }
+    try {
+      const { unmount } = render(<AstroTab />)
+      fireEvent.click(screen.getByText('Натальная карта'))
+      expect(show).toHaveBeenCalledTimes(1)
+      expect(onClick).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('button', { name: /Назад.*Все разделы/ })).toBeInTheDocument()
+      act(() => {
+        const back = onClick.mock.calls[0][0] as () => void
+        back()
+      })
+      expect(screen.getByText('Лунный календарь')).toBeInTheDocument()
+      expect(offClick).toHaveBeenCalledTimes(1)
+      expect(hide).toHaveBeenCalledTimes(1)
+      unmount()
+    } finally {
+      webApp.BackButton = previous
+    }
+  })
+
   it('adds date separators automatically while typing and normalizes pasted dates', () => {
     render(<AstroTab />)
     fireEvent.click(screen.getByText('Натальная карта'))
@@ -116,6 +145,8 @@ describe('Astro concept screens', () => {
       fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Дома Плацидуса' })).toBeInTheDocument())
       expect(screen.getByRole('img', { name: 'Рассчитанное натальное колесо' })).toBeInTheDocument()
+      expect(screen.getByText(/создаётся прямо здесь, в разделе Astro/)).toBeInTheDocument()
+      expect(screen.queryByText(/формируется отдельным сервисом/)).not.toBeInTheDocument()
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('ASC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('MC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('Дом 12')
