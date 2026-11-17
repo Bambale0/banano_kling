@@ -274,6 +274,19 @@ function isDateValid(value: string): boolean {
     && date.getTime() <= Date.now()
 }
 
+function formatBirthDateInput(value: string): string {
+  // Keep the input editable: separators appear as the next segment starts,
+  // so Backspace can remove a digit without a stuck trailing dot.
+  const digits = value.replace(/\D/g, '').slice(0, 8)
+  if (digits.length > 4) {
+    return digits.slice(0, 2) + '.' + digits.slice(2, 4) + '.' + digits.slice(4)
+  }
+  if (digits.length > 2) {
+    return digits.slice(0, 2) + '.' + digits.slice(2)
+  }
+  return digits
+}
+
 function dateFromPicker(value: string) {
   const parts = value.split('-')
   return parts.length === 3 ? parts[2] + '.' + parts[1] + '.' + parts[0] : ''
@@ -446,7 +459,7 @@ function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }
           <span className="astro-field-label">Дата рождения</span>
           <input aria-label={prefix + ': дата рождения'} name={prefix + '-date'} autoComplete="bday"
             placeholder="ДД.ММ.ГГГГ" inputMode="numeric" maxLength={10} value={date}
-            onChange={(event) => setDate(event.target.value)} />
+            onChange={(event) => setDate(formatBirthDateInput(event.target.value))} />
         </span>
         <span className="astro-field-trailing astro-picker-wrap" aria-hidden="true">
           <CalendarDays />
@@ -1100,7 +1113,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <p>Аспекты, холостая Луна, затмения и традиционные советы по уходу пока не вычисляются.</p>
         </div>
       )}
-      <p className="astro-disclaimer">Астрологические интерпретации носят развлекательный характер.</p>
+      
     </div>
   )
 }
