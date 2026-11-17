@@ -6,6 +6,7 @@ import {
   MapPin, Search, Sparkles, Star,
 } from 'lucide-react'
 import { getInitData } from '../../lib/api'
+import { AstroReportPanel } from './astro-report-panel'
 import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
@@ -22,17 +23,14 @@ interface AstroPlace {
 }
 
 interface CompatibilityReport {
-  schema_version: string
-  person_a: NatalReport
-  person_b: NatalReport
-  cross_aspects: Array<{
-    person_a_body: string
-    person_b_body: string
-    kind: string
-    orb_deg: number
-    approximate: boolean
-  }>
-  warnings: string[]
+  schema_version: 'astro.synastry-facts.v1'
+  first_accuracy: { birth_time_known: boolean }
+  second_accuracy: { birth_time_known: boolean }
+  aspects: Array<{ a: string; b: string; aspect: string; orb: number }>
+  house_overlays: {
+    first_in_second: Record<string, number> | null
+    second_in_first: Record<string, number> | null
+  }
 }
 
 const PLANET_RU: Record<string, string> = {
@@ -292,9 +290,11 @@ function countryLabel(code: string): string {
 function PlacePicker({
   prefix,
   onSelect,
+  label = 'Место рождения',
 }: {
   prefix: string
   onSelect?: (place: AstroPlace | null) => void
+  label?: string
 }) {
   const [city, setCity] = useState('')
   const [selected, setSelected] = useState<AstroPlace | null>(null)
@@ -330,7 +330,7 @@ function PlacePicker({
         const body = await response.json()
         if (controller.signal.aborted || version !== searchVersion.current) return
         if (!response.ok || !body.ok || !Array.isArray(body.results)) {
-          setMessage('Справочник городов недоступен. Можно указать часовой пояс вручную.')
+          setMessage('Справочник городов недоступен. Повторите поиск позже.')
           return
         }
         const places = (body.results as AstroPlace[]).filter((item) =>
@@ -344,7 +344,7 @@ function PlacePicker({
         if (!places.length) setMessage('Город не найден. Уточните название или страну.')
       } catch {
         if (!controller.signal.aborted && version === searchVersion.current) {
-          setMessage('Поиск временно недоступен. Укажите часовой пояс вручную.')
+          setMessage('Поиск городов временно недоступен. Проверьте соединение и повторите поиск.')
         }
       } finally {
         if (!controller.signal.aborted && version === searchVersion.current) setBusy(false)
@@ -372,7 +372,7 @@ function PlacePicker({
       <label className="astro-field">
         <MapPin className="astro-field-icon" aria-hidden="true" />
         <span className="astro-field-body">
-          <span className="astro-field-label">Место рождения</span>
+          <span className="astro-field-label">{label}</span>
           <input aria-label={prefix + ': место рождения'} name={prefix + '-place'}
             role="combobox" aria-autocomplete="list" aria-expanded={options.length > 0}
             aria-controls={listId}
@@ -473,8 +473,8 @@ function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }
             <span className="astro-field-body">
               <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
               <input aria-label={prefix + ': часовой пояс'} name={prefix + '-timezone'}
-                placeholder="Europe/Moscow" autoComplete="off" value={birthZone}
-                onChange={(event) => setBirthZone(event.target.value)} />
+                placeholder="Выберите город из списка" autoComplete="off"
+                readOnly value={birthZone} />
             </span>
           </label>
           <label className="astro-field">
@@ -507,6 +507,9 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   const [extendedReport, setExtendedReport] = useState<ExtendedReport | null>(null)
   const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
+  const reportFormRef = useRef<HTMLFormElement>(null)
+  const [lunarCitySelected, setLunarCitySelected] = useState(false)
+  const [reportFormRevision, setReportFormRevision] = useState(0)
   const calculationEpoch = useRef(0)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -557,44 +560,51 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
     }
     if (service.id === 'compatibility') {
       const profiles = (['person', 'partner'] as const).map((prefix) => {
-        const foldRaw = String(form.get(prefix + '-fold') || '')
+        const fold = String(form.get(prefix + '-fold') || '')
         return {
           date: String(form.get(prefix + '-date') || ''),
           time: String(form.get(prefix + '-time') || ''),
-          timezone: String(form.get(prefix + '-timezone') || '').trim(),
-          ...(foldRaw === '0' || foldRaw === '1' ? { fold: Number(foldRaw) } : {}),
+          place_id: Number(form.get(prefix + '-place-id')),
+          ...(fold === '0' || fold === '1' ? { fold: Number(fold) } : {}),
         }
       })
-      if (profiles.some((item) => !item.timezone)) {
-        setMessage('Укажите часовой пояс рождения каждого человека.')
+      if (profiles.some((profile) => !Number.isInteger(profile.place_id) || profile.place_id <= 0)) {
+        setMessage('Выберите города рождения обоих людей из предложенного списка.')
         return
       }
+      const epoch = ++calculationEpoch.current
       setCompatibilityReport(null)
       setCalculating(true)
-      setMessage('Рассчитываем межкартные аспекты…')
+      setMessage('Рассчитываем две натальные карты, аспекты и наложения домов…')
       try {
-        const response = await fetch('/mini-app/api/astro/compatibility', {
+        const response = await fetch('/mini-app/api/astro/compatibility/full', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             init_data: getInitData(), person_a: profiles[0], person_b: profiles[1],
           }),
         })
+        if (epoch !== calculationEpoch.current) return
         if (response.status === 401 || response.status === 403) {
           setMessage('Нет доступа к расчёту. Повторно откройте приложение Telegram.')
           return
         }
         const data = await response.json()
-        if (!response.ok || !data.ok || data.result?.schema_version !== 'astro.synastry.facts.v1') {
+        if (epoch !== calculationEpoch.current) return
+        const result = data.result as CompatibilityReport | undefined
+        if (!response.ok || !data.ok || result?.schema_version !== 'astro.synastry-facts.v1'
+          || !Array.isArray(result.aspects) || !result.house_overlays) {
           setMessage(data.message || 'Расчёт сейчас недоступен. Баланс не списан.')
           return
         }
-        setCompatibilityReport(data.result as CompatibilityReport)
-        setMessage('Межкартные аспекты рассчитаны. Оплата не требуется.')
+        setCompatibilityReport(result)
+        setMessage('Две натальные карты, межкартные аспекты и доступные дома рассчитаны. Оплата не требуется.')
       } catch {
-        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        if (epoch === calculationEpoch.current) {
+          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        }
       } finally {
-        setCalculating(false)
+        if (epoch === calculationEpoch.current) setCalculating(false)
       }
       return
     }
@@ -728,8 +738,9 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         <ZodiacWheel />
         <div className="astro-orbit astro-orbit-right">♄</div>
       </div>
-      <form className="astro-form-panel" noValidate onSubmit={submit}
+      <form ref={reportFormRef} className="astro-form-panel" noValidate onSubmit={submit}
         onChange={() => {
+          setReportFormRevision((previous) => previous + 1)
           calculationEpoch.current += 1
           setFullNatalReport(null)
           setNatalReport(null)
@@ -753,9 +764,17 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             <span className="astro-field-body">
               <span className="astro-field-label">Часовой пояс (IANA)</span>
               <input aria-label="Часовой пояс" name="timezone" value={timezoneName}
+                readOnly={lunarCitySelected}
                 onChange={(event) => setTimezoneName(event.target.value)} placeholder="Europe/Moscow" />
             </span>
           </label>
+          <PlacePicker prefix="lunar" label="Город для лунного календаря"
+            onSelect={(place) => {
+              setReportFormRevision((previous) => previous + 1)
+              setLunarCitySelected(Boolean(place))
+              if (place) setTimezoneName(place.timezone)
+              setLunarReport(null)
+            }} />
           </>
         ) : (
           <>
@@ -763,8 +782,10 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               heading={service.id === 'compatibility' ? 'Первый человек' : undefined}
               requireTimezone={service.id === 'compatibility'}
               onPlaceSelect={(place) => {
+                setReportFormRevision((previous) => previous + 1)
                 calculationEpoch.current += 1
                 setExtendedReport(null)
+                setCompatibilityReport(null)
                 if (service.id === 'natal') {
                   setBirthTimezone(place?.timezone || '')
                   setFullNatalReport(null)
@@ -772,7 +793,14 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                 setCalculating(false)
                 setMessage('')
               }} />
-            {service.id === 'compatibility' && <BirthFields prefix="partner" heading="Второй человек" requireTimezone />}
+            {service.id === 'compatibility' && <BirthFields prefix="partner"
+              heading="Второй человек" requireTimezone onPlaceSelect={() => {
+                setReportFormRevision((previous) => previous + 1)
+                calculationEpoch.current += 1
+                setCompatibilityReport(null)
+                setCalculating(false)
+                setMessage('')
+              }} />}
             {['karma', 'year', 'month', 'solar'].includes(service.id) && (
               <label className="astro-field">
                 <Clock3 className="astro-field-icon" aria-hidden="true" />
@@ -818,6 +846,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               <div className="astro-solar-return-place">
                 <h3 className="astro-form-heading">Где встретите день рождения?</h3>
                 <PlacePicker prefix="solar" onSelect={() => {
+                  setReportFormRevision((previous) => previous + 1)
                   calculationEpoch.current += 1
                   setExtendedReport(null)
                   setCalculating(false)
@@ -850,26 +879,43 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         </button>
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
+      <AstroReportPanel service={service.id} formRef={reportFormRef}
+        period={period} formRevision={reportFormRevision} />
       {compatibilityReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанные межкартные аспекты">
           <h2>Межкартные аспекты</h2>
-          <p>Первый человек — {compatibilityReport.person_a.birth_time_known ? 'время рождения известно' : 'время рождения неизвестно'};
-            второй человек — {compatibilityReport.person_b.birth_time_known ? 'время рождения известно' : 'время рождения неизвестно'}.
+          <p>Первый человек — {compatibilityReport.first_accuracy.birth_time_known ? 'время известно' : 'время неизвестно'};
+            второй человек — {compatibilityReport.second_accuracy.birth_time_known ? 'время известно' : 'время неизвестно'}.
           </p>
-          {compatibilityReport.cross_aspects.length ? (
+          {compatibilityReport.aspects.length ? (
             <ul className="astro-lunar-days">
-              {compatibilityReport.cross_aspects.map((item) => (
-                <li key={item.person_a_body + '-' + item.person_b_body}>
-                  {PLANET_RU[item.person_a_body] || item.person_a_body} (1) —
-                  {' '}{PLANET_RU[item.person_b_body] || item.person_b_body} (2):
-                  {' '}{ASPECT_RU[item.kind] || item.kind},
-                  орбис {item.orb_deg.toFixed(2)}°
-                  {item.approximate ? ' · приблизительно' : ''}
+              {compatibilityReport.aspects.map((item, index) => (
+                <li key={item.a + '-' + item.b + '-' + index}>
+                  {PLANET_RU[item.a] || item.a} (1) — {PLANET_RU[item.b] || item.b} (2):
+                  {' '}{ASPECT_RU[item.aspect] || item.aspect}, орбис {Math.abs(item.orb).toFixed(2)}°
                 </li>
               ))}
             </ul>
-          ) : <p>Значимые межкартные аспекты в заданных орбисах не обнаружены.</p>}
-          {compatibilityReport.warnings.map((warning) => <p key={warning}>{warning}</p>)}
+          ) : <p>Межкартные аспекты в заданных орбисах не обнаружены.</p>}
+          {(['first_in_second', 'second_in_first'] as const).map((direction) => {
+            const overlay = compatibilityReport.house_overlays[direction]
+            return (
+              <div key={direction}>
+                <h3>{direction === 'first_in_second'
+                  ? 'Планеты первого в домах второго'
+                  : 'Планеты второго в домах первого'}</h3>
+                {overlay ? (
+                  <ul className="astro-lunar-days">
+                    {Object.entries(overlay).map(([name, house]) => (
+                      <li key={name}>{PLANET_RU[name] || name} — дом {house}</li>
+                    ))}
+                  </ul>
+                ) : <p>Дома не определены: отсутствует точное время рождения владельца карты.</p>}
+              </div>
+            )
+          })}
+          <p>Расчёты основаны на эфемеридах. Трактовка совместимости символична,
+            а не научный прогноз отношений.</p>
         </div>
       )}
       {extendedReport?.schema_version === 'astro.karma-indicators.v1' && (
