@@ -155,6 +155,14 @@ class AstroReportJobs:
                 await conn.execute("INSERT INTO astro_report_circuit "
                                    "(provider, failures, opened_until) VALUES ('kie', 0, 0) "
                                    "ON CONFLICT (provider) DO NOTHING")
+                await _create_astro_table(conn, """
+                    CREATE TABLE IF NOT EXISTS astro_report_manual_retries (
+                        job_id TEXT PRIMARY KEY,
+                        retry_count INTEGER NOT NULL DEFAULT 0,
+                        last_error_code TEXT,
+                        last_retried_at BIGINT NOT NULL DEFAULT 0
+                    )
+                """)
                 await conn.commit()
             self._initialized = True
 
@@ -286,7 +294,7 @@ class AstroReportJobs:
             cursor = await conn.execute("""
                 UPDATE astro_report_jobs SET status='completed',
                     report_sealed=?, facts_sealed='', worker_id=NULL,
-                    lease_until=0, updated_at=?
+                    error_code=NULL, lease_until=0, updated_at=?
                 WHERE job_id=? AND worker_id=? AND status='running'
                   AND lease_until > ? AND expires_at > ?
             """, (sealed, now, job_id, worker_id, now, now))
@@ -386,6 +394,57 @@ class AstroReportJobs:
             "error_code": row[6],
         } for row in rows]
 
+    async def retry_failed(
+        self, *, owner_id: int, job_id: str, consent: bool,
+        now: int | None = None, cooldown_seconds: int | None = None,
+    ) -> bool:
+        """Explicit, owner-scoped single-flight retry of terminal failures.
+
+        Ordinary repeated /start remains idempotent. Manual retries keep the
+        same job/fingerprint/checkpoints, and a durable limit prevents an
+        operator from accidentally triggering unbounded KIE requests.
+        """
+        if type(owner_id) is not int or owner_id <= 0:
+            raise ValueError("Invalid Astro owner")
+        if not isinstance(job_id, str) or len(job_id) != 32:
+            raise ValueError("Invalid Astro job ID")
+        if consent is not True:
+            raise ValueError("Renewed processing consent required")
+        retry_limit = int(os.getenv("ASTRO_REPORT_MANUAL_RETRY_LIMIT", "1"))
+        if cooldown_seconds is None:
+            cooldown_seconds = int(os.getenv("ASTRO_REPORT_MANUAL_RETRY_COOLDOWN_SECONDS", "60"))
+        if not 1 <= retry_limit <= 3 or not 0 <= cooldown_seconds <= 86400:
+            raise ValueError("Invalid Astro manual retry policy")
+        now = int(time.time()) if now is None else now
+        await self.initialize()
+        async with self._connect() as conn:
+            cursor = await conn.execute("""
+                UPDATE astro_report_jobs SET
+                    status='queued', attempts=0, next_run_at=?,
+                    lease_until=0, worker_id=NULL, updated_at=?
+                WHERE job_id=? AND owner_id=? AND status='failed'
+                    AND expires_at > ? AND updated_at <= ?
+                    AND facts_sealed <> ''
+                    AND COALESCE((
+                        SELECT retry_count FROM astro_report_manual_retries
+                        WHERE job_id=astro_report_jobs.job_id
+                    ), 0) < ?
+                RETURNING job_id, error_code
+            """, (now, now, job_id, owner_id, now, now - cooldown_seconds, retry_limit))
+            row = await cursor.fetchone()
+            if row:
+                await conn.execute("""
+                    INSERT INTO astro_report_manual_retries
+                        (job_id, retry_count, last_error_code, last_retried_at)
+                    VALUES (?, 1, ?, ?)
+                    ON CONFLICT (job_id) DO UPDATE SET
+                        retry_count=astro_report_manual_retries.retry_count+1,
+                        last_error_code=excluded.last_error_code,
+                        last_retried_at=excluded.last_retried_at
+                """, (job_id, row[1], now))
+            await conn.commit()
+        return row is not None
+
     async def delete_owner(self, *, owner_id: int) -> int:
         if type(owner_id) is not int or owner_id <= 0:
             raise ValueError("Invalid owner")
@@ -394,6 +453,8 @@ class AstroReportJobs:
             cursor = await conn.execute(
                 "DELETE FROM astro_report_jobs WHERE owner_id=?", (owner_id,)
             )
+            await conn.execute("DELETE FROM astro_report_manual_retries WHERE job_id NOT IN "
+                               "(SELECT job_id FROM astro_report_jobs)")
             await conn.commit()
             return max(0, int(cursor.rowcount or 0))
 
@@ -404,5 +465,7 @@ class AstroReportJobs:
             cursor = await conn.execute(
                 "DELETE FROM astro_report_jobs WHERE expires_at <= ?", (now,)
             )
+            await conn.execute("DELETE FROM astro_report_manual_retries WHERE job_id NOT IN "
+                               "(SELECT job_id FROM astro_report_jobs)")
             await conn.commit()
             return max(0, int(cursor.rowcount or 0))
