@@ -155,6 +155,14 @@ class AstroReportJobs:
                 await conn.execute("INSERT INTO astro_report_circuit "
                                    "(provider, failures, opened_until) VALUES ('kie', 0, 0) "
                                    "ON CONFLICT (provider) DO NOTHING")
+                # Separate table avoids an unsafe ALTER of an existing encrypted jobs schema.
+                # At most one explicit paid requeue is permitted for any job ID.
+                await _create_astro_table(conn, """
+                    CREATE TABLE IF NOT EXISTS astro_report_manual_retry (
+                        job_id TEXT PRIMARY KEY,
+                        retried_at BIGINT NOT NULL
+                    )
+                """)
                 await conn.commit()
             self._initialized = True
 
@@ -195,6 +203,45 @@ class AstroReportJobs:
         if not row:
             raise RuntimeError("Astro enqueue did not persist")
         return str(row[0])
+
+    async def retry_failed(
+        self, *, owner_id: int, job_id: str, consent: bool,
+        now: int | None = None,
+    ) -> bool:
+        """One owner-authorized restart of recoverable failures; retain checkpoints.
+
+        The conditional UPDATE is the admission lock: duplicate concurrent taps
+        never queue a second charged worker. Permanently rejected jobs remain failed.
+        """
+        if type(owner_id) is not int or owner_id <= 0 or not isinstance(job_id, str):
+            return False
+        if len(job_id) != 32 or consent is not True:
+            return False
+        await self.initialize()
+        now = int(time.time()) if now is None else now
+        async with self._connect() as conn:
+            cursor = await conn.execute("""
+                UPDATE astro_report_jobs
+                SET status='queued', attempts=0, next_run_at=?, updated_at=?,
+                    lease_until=0, worker_id=NULL, error_code=NULL
+                WHERE job_id=? AND owner_id=? AND status='failed'
+                    AND expires_at > ?
+                    AND error_code IN (
+                        'temporary_provider_failure', 'internal_retry', 'lease_exhausted'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1 FROM astro_report_manual_retry
+                        WHERE astro_report_manual_retry.job_id=astro_report_jobs.job_id
+                    )
+            """, (now, now, job_id, owner_id, now))
+            accepted = cursor.rowcount == 1
+            if accepted:
+                await conn.execute("""
+                    INSERT INTO astro_report_manual_retry (job_id, retried_at)
+                    VALUES (?, ?)
+                """, (job_id, now))
+            await conn.commit()
+        return accepted
 
     async def status(self, *, owner_id: int, job_id: str, now: int | None = None) -> dict | None:
         if type(owner_id) is not int or owner_id <= 0 or not isinstance(job_id, str):
@@ -391,6 +438,11 @@ class AstroReportJobs:
             raise ValueError("Invalid owner")
         await self.initialize()
         async with self._connect() as conn:
+            await conn.execute("""
+                DELETE FROM astro_report_manual_retry WHERE job_id IN (
+                    SELECT job_id FROM astro_report_jobs WHERE owner_id=?
+                )
+            """, (owner_id,))
             cursor = await conn.execute(
                 "DELETE FROM astro_report_jobs WHERE owner_id=?", (owner_id,)
             )
@@ -404,5 +456,11 @@ class AstroReportJobs:
             cursor = await conn.execute(
                 "DELETE FROM astro_report_jobs WHERE expires_at <= ?", (now,)
             )
+            await conn.execute("""
+                DELETE FROM astro_report_manual_retry WHERE NOT EXISTS (
+                    SELECT 1 FROM astro_report_jobs
+                    WHERE astro_report_jobs.job_id=astro_report_manual_retry.job_id
+                )
+            """)
             await conn.commit()
             return max(0, int(cursor.rowcount or 0))
