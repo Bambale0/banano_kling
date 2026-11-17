@@ -35,6 +35,14 @@ def _validate_key(owner_id: int, fingerprint: str, section_id: str) -> None:
         raise ValueError("Invalid Astro checkpoint owner, fingerprint or section id")
 
 
+async def _create_astro_table(conn, sql: str) -> None:
+    """PostgreSQL adapter skips generic SQLite CREATE; use native DDL."""
+    if db.is_postgres():
+        await conn.execute_native_ddl(sql)
+    else:
+        await conn.execute(sql)
+
+
 class AstroReportSqlStore:
     """Durable INSERT-ON-CONFLICT idempotency scoped by owner, report and section."""
 
@@ -53,7 +61,7 @@ class AstroReportSqlStore:
             if self._initialized:
                 return
             async with self._connect() as conn:
-                await conn.execute(
+                await _create_astro_table(conn,
                     """
                     CREATE TABLE IF NOT EXISTS astro_report_sections (
                         owner_id BIGINT NOT NULL,
@@ -66,7 +74,7 @@ class AstroReportSqlStore:
                     )
                     """
                 )
-                await conn.execute(
+                await _create_astro_table(conn,
                     "CREATE INDEX IF NOT EXISTS idx_astro_sections_expiry "
                     "ON astro_report_sections (expires_at)"
                 )

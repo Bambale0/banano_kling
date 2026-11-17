@@ -67,6 +67,14 @@ class ClaimedAstroJob:
     worker_id: str
 
 
+async def _create_astro_table(conn, sql: str) -> None:
+    """PostgreSQL adapter skips generic SQLite CREATE; use native DDL."""
+    if db.is_postgres():
+        await conn.execute_native_ddl(sql)
+    else:
+        await conn.execute(sql)
+
+
 class AstroReportJobs:
     def __init__(
         self, *, db_path: str | None = None, fingerprint_secret: str,
@@ -113,7 +121,7 @@ class AstroReportJobs:
             if self._initialized:
                 return
             async with self._connect() as conn:
-                await conn.execute("""
+                await _create_astro_table(conn, """
                     CREATE TABLE IF NOT EXISTS astro_report_jobs (
                         job_id TEXT PRIMARY KEY,
                         owner_id BIGINT NOT NULL,
@@ -134,11 +142,11 @@ class AstroReportJobs:
                         UNIQUE (owner_id, fingerprint)
                     )
                 """)
-                await conn.execute("CREATE INDEX IF NOT EXISTS idx_astro_jobs_due "
+                await _create_astro_table(conn, "CREATE INDEX IF NOT EXISTS idx_astro_jobs_due "
                                    "ON astro_report_jobs (status, next_run_at, lease_until)")
-                await conn.execute("CREATE INDEX IF NOT EXISTS idx_astro_jobs_owner "
+                await _create_astro_table(conn, "CREATE INDEX IF NOT EXISTS idx_astro_jobs_owner "
                                    "ON astro_report_jobs (owner_id, created_at)")
-                await conn.execute("""
+                await _create_astro_table(conn, """
                     CREATE TABLE IF NOT EXISTS astro_report_circuit (
                         provider TEXT PRIMARY KEY, failures INTEGER NOT NULL,
                         opened_until BIGINT NOT NULL
