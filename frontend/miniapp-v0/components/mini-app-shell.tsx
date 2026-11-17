@@ -102,6 +102,15 @@ export function MiniAppShell({ children }: MiniAppShellProps) {
     const webApp = window.Telegram?.WebApp
     webApp?.ready?.()
     webApp?.expand?.()
+    const browser = window as typeof window & { __BANANO_FULLSCREEN_REQUESTED__?: boolean }
+    const fullscreen = webApp as (typeof webApp & {
+      requestFullscreen?: () => void; isFullscreen?: boolean
+    }) | undefined
+    if (!browser.__BANANO_FULLSCREEN_REQUESTED__ && fullscreen
+        && !fullscreen.isFullscreen && typeof fullscreen.requestFullscreen === 'function') {
+      browser.__BANANO_FULLSCREEN_REQUESTED__ = true
+      try { fullscreen.requestFullscreen() } catch { /* older Telegram still expands */ }
+    }
   }, [])
 
   return (
