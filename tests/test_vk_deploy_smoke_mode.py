@@ -68,5 +68,7 @@ def test_telegram_smoke_stays_strict_and_vk_build_is_skipped_when_isolated():
     assert 'if [[ "$vk_mode" == enabled && "$VK_ISOLATED" == 0 ]]; then' in deploy
     assert 'VK_DISABLED' in deploy
     assert '[[ "$live_revision" == "$EXPECTED_SHA" ]]' in deploy
-    assert 'vk_mode="$(bash scripts/verify_vk_miniapp_mode.sh https://vk.neuromixbot.com' in workflow
+    # The VK helper is tested independently, but production must not probe retired VK DNS.
+    assert 'vk_mode="$(bash scripts/verify_vk_miniapp_mode.sh https://vk.neuromixbot.com' not in workflow
+    assert 'https://vk.neuromixbot.com' not in workflow
     assert '[ "$live_frontend_revision" = "$EXPECTED_SHA" ]' in workflow
