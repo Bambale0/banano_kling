@@ -1,11 +1,16 @@
 """User-visible Telegram delivery from durable, owner-scoped Astro outbox."""
 import asyncio
+from io import BytesIO
 from types import SimpleNamespace
+from unittest.mock import patch
 
+import pytest
 from cryptography.fernet import Fernet
+from pypdf import PdfReader
 
 from bot.services.astro_report_delivery import AstroTelegramDelivery
 from bot.services.astro_report_jobs import AstroReportJobs
+from bot.services.astro_report_pdf import render_astro_pdf
 from bot.services.astro_report_pipeline import load_report_plan
 
 
@@ -46,10 +51,16 @@ def test_complete_report_delivered_to_own_telegram_and_never_twice(tmp_path):
         delivery = AstroTelegramDelivery(jobs=jobs, telegram_bot=bot, is_admin=lambda owner: owner==99)
         assert await delivery.run_once(now=103)
         assert bot.documents and bot.documents[0][0] == 99
-        assert 'Пример полного отчёта.' in bot.documents[0][1].data.decode('utf-8')
+        document = bot.documents[0][1]
+        assert document.filename == 'astro_neuromix.pdf'
+        assert document.data.startswith(b'%PDF-')
+        reader = PdfReader(BytesIO(document.data))
+        assert 'Пример полного отчёта.' in reader.pages[0].extract_text()
         assert 'Натальная карта' in bot.documents[0][2]
         state = await jobs.status(owner_id=99,job_id=report_id,now=104)
         assert state['telegram_delivery'] == 'delivered'
+        assert state['report']['sections'][0]['text'] == 'Пример полного отчёта.'
+        assert await jobs.status(owner_id=100, job_id=report_id, now=104) is None
         assert not await delivery.run_once(now=105)
         assert len(bot.documents) == 1
     asyncio.run(run())
@@ -74,6 +85,9 @@ def test_transient_telegram_failure_retries_from_persisted_outbox(tmp_path):
         second=AstroTelegramDelivery(jobs=jobs,telegram_bot=second_bot,is_admin=lambda _:True)
         assert await second.run_once(now=200)
         assert len(second_bot.documents)==1
+        retried = second_bot.documents[0][1]
+        assert retried.filename == 'astro_neuromix.pdf'
+        assert 'Содержимое отчёта.' in PdfReader(BytesIO(retried.data)).pages[0].extract_text()
         assert (await jobs.status(owner_id=99,job_id=report_id,now=201))['telegram_delivery']=='delivered'
     asyncio.run(run())
 
@@ -137,4 +151,50 @@ def test_erasing_owner_removes_undelivered_telegram_outbox(tmp_path):
         delivery=AstroTelegramDelivery(jobs=jobs,telegram_bot=bot,is_admin=lambda _:True)
         assert not await delivery.run_once(now=103)
         assert await jobs.status(owner_id=99,job_id=job_id,now=104) is None
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("mode", ["revoke", "erase", "group", "invalid_pdf"])
+def test_private_delivery_fails_closed_at_export_boundary(tmp_path, mode):
+    async def run():
+        jobs = AstroReportJobs(db_path=str(tmp_path/'private.db'),
+                               fingerprint_secret='synthetic-secret', data_key=Fernet.generate_key())
+        owner = -99 if mode == 'group' else 99
+        if mode == 'group':
+            with pytest.raises(ValueError, match='Invalid report owner'):
+                await jobs.enqueue(owner_id=owner, plan=load_report_plan('natal'),
+                                   facts={'schema_version':'astro.natal-facts.v1','chart':{}},
+                                   consent=True, now=100)
+            return
+        job_id = await jobs.enqueue(owner_id=owner, plan=load_report_plan('natal'),
+                                    facts={'schema_version':'astro.natal-facts.v1','chart':{}},
+                                    consent=True, now=100)
+        assert await jobs.claim(worker_id='gen', now=101)
+        report = {'status':'completed','service_id':'natal',
+                  'sections':[{'title':'Тест','text':'Приватный текст.'}]}
+        assert await jobs.complete(job_id=job_id, worker_id='gen', report=report, now=102)
+        authorized = True
+
+        async def exporting(*args, **kwargs):
+            nonlocal authorized
+            if mode == 'revoke':
+                authorized = False
+            elif mode == 'erase':
+                await jobs.delete_owner(owner_id=owner)
+            elif mode == 'invalid_pdf':
+                raise ValueError('synthetic invalid report')
+            return render_astro_pdf(report)
+
+        bot = TelegramFixture()
+        delivery = AstroTelegramDelivery(jobs=jobs, telegram_bot=bot,
+                                          is_admin=lambda _: authorized)
+        with patch('bot.services.astro_report_delivery.asyncio.to_thread', exporting):
+            assert await delivery.run_once(now=103)
+        assert not bot.documents and not bot.messages
+        if mode == 'erase':
+            assert await jobs.status(owner_id=owner, job_id=job_id, now=104) is None
+        else:
+            state = await jobs.status(owner_id=owner, job_id=job_id, now=104)
+            assert state['telegram_delivery'] in ('cancelled', 'failed')
+            assert state['status'] == 'completed'  # Mini App keeps the original report.
     asyncio.run(run())

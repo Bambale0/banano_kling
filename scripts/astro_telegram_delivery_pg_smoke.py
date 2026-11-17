@@ -3,11 +3,13 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
+from io import BytesIO
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import psycopg
 from cryptography.fernet import Fernet
+from pypdf import PdfReader
 
 from bot import db
 from bot.postgres_aiosqlite import PostgresConnection
@@ -21,6 +23,10 @@ class FakeBot:
         self.sent = []
 
     async def send_document(self, *, chat_id, document, caption):
+        assert document.filename == "astro_neuromix.pdf"
+        assert document.data.startswith(b"%PDF-")
+        pdf = PdfReader(BytesIO(document.data), strict=True)
+        assert "Синтетический текст тестового отчёта." in pdf.pages[0].extract_text()
         self.sent.append(("document", chat_id, len(document.data)))
         return SimpleNamespace(message_id=1234)
 

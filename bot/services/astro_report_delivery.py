@@ -17,43 +17,9 @@ from aiogram.types import BufferedInputFile
 
 from bot import db
 from bot.services.astro_report_jobs import AstroReportJobs
+from bot.services.astro_report_pdf import PDF_FILENAME, SERVICE_NAMES, render_astro_pdf
 
 logger = logging.getLogger(__name__)
-
-_SERVICE_NAMES = {
-    "natal": "Натальная карта",
-    "compatibility": "Совместимость",
-    "karma": "Кармический разбор",
-    "year": "Прогноз на год",
-    "month": "Прогноз на месяц",
-    "solar": "Соляр",
-    "lunar": "Лунный календарь",
-}
-
-
-def _as_document(report: dict) -> bytes:
-    """Full original sections, never send birth information to group chats."""
-    service = str(report.get("service_id") or "")
-    if service not in _SERVICE_NAMES:
-        raise ValueError("Unsupported Astro report service")
-    sections = report.get("sections")
-    if not isinstance(sections, list) or not sections:
-        raise ValueError("Astro report document has no sections")
-    parts = [_SERVICE_NAMES[service], ""]
-    for section in sections:
-        if not isinstance(section, dict) or not isinstance(section.get("text"), str):
-            raise TypeError("Astro report document has invalid section")
-        title = str(section.get("title") or "Раздел").strip()
-        text = section["text"].strip()
-        if not text:
-            raise ValueError("Astro report document section is empty")
-        parts.extend((title, "", text, ""))
-    parts.append(str(report.get("disclaimer") or ""))
-    output = "\n".join(parts).encode("utf-8")
-    if len(output) > 9_000_000:
-        raise ValueError("Astro report document is too large")
-    return output
-
 
 class AstroTelegramDelivery:
     def __init__(self, *, jobs: AstroReportJobs, telegram_bot, is_admin,
@@ -122,6 +88,7 @@ class AstroTelegramDelivery:
             logger.warning("astro_telegram_delivery_lease_lost job_id=%s kind=%s", job_id, event_kind)
 
     async def run_once(self, *, now: int | None = None) -> bool:
+        started = time.monotonic()
         await self.jobs.initialize()
         now = int(time.time()) if now is None else now
         claim = await self._claim(now)
@@ -134,7 +101,7 @@ class AstroTelegramDelivery:
             await self._finish(job_id=job_id, event_kind=event_kind, now=now,
                                status="cancelled", attempts=attempts)
             return True
-        if not self.is_admin(owner_id):
+        if owner_id <= 0 or not self.is_admin(owner_id):
             await self._finish(job_id=job_id, event_kind=event_kind, now=now,
                                status="failed", attempts=attempts,
                                error_code="owner_not_authorized")
@@ -144,15 +111,27 @@ class AstroTelegramDelivery:
                 report = state.get("report")
                 if not isinstance(report, dict):
                     raise ValueError("Missing completed report")
-                data = _as_document(report)
+                data = await asyncio.wait_for(
+                    asyncio.to_thread(render_astro_pdf, report), timeout=self.timeout_seconds,
+                )
+                # Rendering yields the loop: recheck deletion, expiry and revocation.
+                current_now = now + int(time.monotonic() - started)
+                current = await self.jobs.status(owner_id=owner_id, job_id=job_id, now=current_now)
+                if current is None or current.get("status") != "completed" or not self.is_admin(owner_id):
+                    await self._finish(job_id=job_id, event_kind=event_kind, now=current_now,
+                                       status="cancelled", attempts=attempts)
+                    return True
                 service = str(state.get("service_id") or "")
-                label = _SERVICE_NAMES.get(service, "Астрологический разбор")
+                label = SERVICE_NAMES.get(service, "Астрологический разбор")
+                remaining = self.timeout_seconds - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError("Astro delivery budget exhausted")
                 message = await asyncio.wait_for(self.telegram_bot.send_document(
                     chat_id=owner_id,
-                    document=BufferedInputFile(data, filename=f"astro-{service}-{job_id[:8]}.txt"),
+                    document=BufferedInputFile(data, filename=PDF_FILENAME),
                     caption=(f"✨ {label} готов! Полный текст во вложении и в истории Mini App. "
                              f"Задание: {job_id[:8]}"),
-                ), timeout=self.timeout_seconds)
+                ), timeout=remaining)
             elif event_kind == "failed":
                 message = await asyncio.wait_for(self.telegram_bot.send_message(
                     chat_id=owner_id,
@@ -165,18 +144,21 @@ class AstroTelegramDelivery:
             message_id = getattr(message, "message_id", None)
             if type(message_id) is not int or message_id <= 0:
                 raise RuntimeError("Telegram delivery result not confirmed")
-            await self._finish(job_id=job_id, event_kind=event_kind, now=now,
+            await self._finish(job_id=job_id, event_kind=event_kind,
+                               now=now + int(time.monotonic() - started),
                                status="delivered", message_id=message_id, attempts=attempts)
             logger.info("astro_telegram_delivered job_id=%s kind=%s attempt=%s",
                         job_id, event_kind, attempts)
-        except (TelegramForbiddenError, TelegramBadRequest, ValueError):
-            await self._finish(job_id=job_id, event_kind=event_kind, now=now,
+        except (TelegramForbiddenError, TelegramBadRequest, ValueError, TypeError):
+            await self._finish(job_id=job_id, event_kind=event_kind,
+                               now=now + int(time.monotonic() - started),
                                status="failed", attempts=attempts,
                                error_code="delivery_not_permitted")
             logger.warning("astro_telegram_delivery_rejected job_id=%s kind=%s", job_id, event_kind)
         except Exception:  # noqa: BLE001 -- unknown Telegram transport result; bounded retry
             will_retry = attempts < self.max_attempts
-            await self._finish(job_id=job_id, event_kind=event_kind, now=now,
+            await self._finish(job_id=job_id, event_kind=event_kind,
+                               now=now + int(time.monotonic() - started),
                                status="pending" if will_retry else "failed",
                                attempts=attempts, error_code="telegram_delivery_uncertain")
             logger.warning("astro_telegram_delivery_uncertain job_id=%s kind=%s attempt=%s",
