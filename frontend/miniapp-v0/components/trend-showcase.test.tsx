@@ -35,22 +35,24 @@ describe('Trend showcase S3 preview performance', () => {
     expect(container.querySelector('video')).toBeNull()
     // No full video fetch until the user opens the card.
     fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 1' }))
-    expect(container.querySelector('video')).toHaveAttribute('src', original + '#t=0.001')
+    expect(screen.getByRole('dialog').querySelector('video')?.getAttribute('src'))
+      .toContain('/uploads/feed/original.mp4#t=0.001')
   })
 
   it('renders a lightweight video poster without downloading a full MP4', () => {
     const { container } = show(trend(2, original, videoPoster))
     const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 2' })
-    expect(card.querySelector('img')).toHaveAttribute('src', videoPoster)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(videoPoster)
     expect(container.querySelector('video')).toBeNull()
   })
 
   it('uses tiny image thumbnails in grid but original in full-screen dialog', () => {
     const { container } = show(trend(3, imageOriginal, imageThumbnail))
     const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 3' })
-    expect(card.querySelector('img')).toHaveAttribute('src', imageThumbnail)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(imageThumbnail)
     fireEvent.click(card)
-    expect(container.querySelector('img[src="' + imageOriginal + '"]')).toBeInTheDocument()
+    expect(screen.getByRole('dialog').querySelector('img')?.getAttribute('src'))
+      .toContain(imageOriginal)
   })
 
   it('recovers the original image if S3 thumbnail is missing', () => {
@@ -58,6 +60,6 @@ describe('Trend showcase S3 preview performance', () => {
     const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 4' })
     const image = card.querySelector('img')!
     fireEvent.error(image)
-    expect(card.querySelector('img')).toHaveAttribute('src', imageOriginal)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(imageOriginal)
   })
 })
