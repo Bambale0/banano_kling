@@ -49,6 +49,7 @@ tests/
 tests/*
 !tests/test_shared_wallet_openings.py
 !tests/test_seedance25_direct_edit.py
+!tests/test_astro_report_pdf.py
 !tests/live/
 tests/live/*
 !tests/live/test_kie_live_smoke.py
