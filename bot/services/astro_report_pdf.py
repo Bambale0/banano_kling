@@ -4,7 +4,8 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 from textwrap import wrap
-from threading import Lock
+from threading import Event, Lock
+from time import monotonic
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -18,6 +19,8 @@ PDF_FILENAME = "astro_neuromix.pdf"
 # Conservative multipart upload bound, below Telegram's 50 MB Bot API limit.
 MAX_PDF_BYTES = 49_000_000
 MAX_TEXT_BYTES = 3_000_000  # Matches the existing encrypted report envelope.
+MAX_PDF_PAGES = 2000
+MAX_LAYOUT_BLOCKS = 25_000
 SERVICE_NAMES = {
     "natal": "Натальная карта",
     "compatibility": "Совместимость",
@@ -38,13 +41,20 @@ def _register_fonts() -> None:
             pdfmetrics.registerFont(TTFont("AstroNotoBold", str(fonts / "NotoSans-Bold.ttf")))
 
 
-def render_astro_pdf(report: dict) -> bytes:
+def render_astro_pdf(report: dict, *, cancel_event: Event | None = None,
+                     deadline: float | None = None) -> bytes:
     """Render all completed sections without truncation or a text fallback.
 
     Only the decrypted owner-scoped report is supplied, never inputs or
     credentials. Escaping prevents model text from creating links, images,
     local-file reads, PDF actions or external requests.
     """
+    def check_budget() -> None:
+        if (cancel_event is not None and cancel_event.is_set()) or (
+                deadline is not None and monotonic() >= deadline):
+            raise TimeoutError("Astro PDF rendering deadline reached")
+
+    check_budget()
     if not isinstance(report, dict) or report.get("status") != "completed":
         raise ValueError("Astro PDF requires a completed report")
     service = report.get("service_id")
@@ -56,6 +66,7 @@ def render_astro_pdf(report: dict) -> bytes:
     content = []
     text_bytes = 0
     for section in sections:
+        check_budget()
         if not isinstance(section, dict):
             raise TypeError("Invalid Astro PDF section")
         title, body = section.get("title", "Раздел"), section.get("text")
@@ -71,6 +82,7 @@ def render_astro_pdf(report: dict) -> bytes:
         raise ValueError("Astro PDF input exceeds encrypted report limit")
 
     _register_fonts()
+    check_budget()
     body_style = ParagraphStyle(
         "AstroBody", fontName="AstroNoto", fontSize=10.5, leading=16,
         spaceAfter=9, splitLongWords=True, allowWidows=0, allowOrphans=0,
@@ -95,6 +107,9 @@ def render_astro_pdf(report: dict) -> bytes:
         for chunk in wrap(text, width=2000, replace_whitespace=False,
                           drop_whitespace=False, break_long_words=True,
                           break_on_hyphens=False):
+            check_budget()
+            if len(story) >= MAX_LAYOUT_BLOCKS:
+                raise ValueError("Astro PDF layout budget exceeded")
             story.append(Paragraph(escape(chunk).replace("\n", "<br/>"), style))
 
     for title, body in content:
@@ -113,6 +128,9 @@ def render_astro_pdf(report: dict) -> bytes:
     )
 
     def footer(canvas, doc):
+        check_budget()
+        if doc.page > MAX_PDF_PAGES:
+            raise ValueError("Astro PDF page budget exceeded")
         canvas.saveState()
         canvas.setFont("AstroNoto", 8)
         canvas.setFillColor(colors.HexColor("#697080"))

@@ -1,6 +1,7 @@
 """User-visible Telegram delivery from durable, owner-scoped Astro outbox."""
 import asyncio
 from io import BytesIO
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -57,6 +58,7 @@ def test_complete_report_delivered_to_own_telegram_and_never_twice(tmp_path):
         reader = PdfReader(BytesIO(document.data))
         assert 'Пример полного отчёта.' in reader.pages[0].extract_text()
         assert 'Натальная карта' in bot.documents[0][2]
+        assert 'Задание:' not in bot.documents[0][2] and report_id[:8] not in bot.documents[0][2]
         state = await jobs.status(owner_id=99,job_id=report_id,now=104)
         assert state['telegram_delivery'] == 'delivered'
         assert state['report']['sections'][0]['text'] == 'Пример полного отчёта.'
@@ -197,4 +199,76 @@ def test_private_delivery_fails_closed_at_export_boundary(tmp_path, mode):
             state = await jobs.status(owner_id=owner, job_id=job_id, now=104)
             assert state['telegram_delivery'] in ('cancelled', 'failed')
             assert state['status'] == 'completed'  # Mini App keeps the original report.
+    asyncio.run(run())
+
+
+def test_restart_settles_expired_last_attempt_without_resending(tmp_path, monkeypatch):
+    monkeypatch.setenv('ASTRO_TELEGRAM_DELIVERY_MAX_ATTEMPTS', '1')
+
+    class CrashedBot(TelegramFixture):
+        async def send_document(self, **kwargs):
+            raise asyncio.CancelledError()
+
+    async def run():
+        jobs = AstroReportJobs(db_path=str(tmp_path/'crash.db'),
+                               fingerprint_secret='synthetic-secret', data_key=Fernet.generate_key())
+        job_id = await jobs.enqueue(owner_id=99, plan=load_report_plan('natal'),
+                                    facts={'schema_version':'astro.natal-facts.v1','chart':{}},
+                                    consent=True, now=100)
+        assert await jobs.claim(worker_id='gen', now=101)
+        assert await jobs.complete(job_id=job_id, worker_id='gen', now=102,
+                                   report={'status':'completed','service_id':'natal',
+                                           'sections':[{'title':'Тест','text':'Полный текст.'}]})
+        crashed = AstroTelegramDelivery(jobs=jobs, telegram_bot=CrashedBot(), is_admin=lambda _:True)
+        with pytest.raises(asyncio.CancelledError):
+            await crashed.run_once(now=103)
+        assert (await jobs.status(owner_id=99,job_id=job_id,now=104))['telegram_delivery']=='sending'
+        bot = TelegramFixture()
+        restarted = AstroTelegramDelivery(jobs=jobs, telegram_bot=bot, is_admin=lambda _:True)
+        assert not await restarted.run_once(now=400)
+        assert (await jobs.status(owner_id=99,job_id=job_id,now=401))['telegram_delivery']=='failed'
+        assert not bot.documents
+    asyncio.run(run())
+
+
+def test_timed_out_render_stops_before_next_delivery_attempt(tmp_path):
+    async def run():
+        jobs = AstroReportJobs(db_path=str(tmp_path/'timeout.db'),
+                               fingerprint_secret='synthetic-secret', data_key=Fernet.generate_key())
+        job_id = await jobs.enqueue(owner_id=99, plan=load_report_plan('natal'),
+                                    facts={'schema_version':'astro.natal-facts.v1','chart':{}},
+                                    consent=True, now=100)
+        assert await jobs.claim(worker_id='gen', now=101)
+        assert await jobs.complete(job_id=job_id, worker_id='gen', now=102,
+                                   report={'status':'completed','service_id':'natal',
+                                           'sections':[{'title':'Тест','text':'Приватный отчёт.'}]})
+        stopped = Event()
+        active = peak = calls = 0
+
+        def renderer(report, *, cancel_event, deadline):
+            nonlocal active, peak, calls
+            active += 1
+            peak = max(peak, active)
+            calls += 1
+            try:
+                if calls == 1:
+                    assert cancel_event.wait(2)
+                    raise TimeoutError('synthetic render cancellation')
+                return render_astro_pdf(report, cancel_event=cancel_event, deadline=deadline)
+            finally:
+                active -= 1
+                stopped.set()
+
+        bot = TelegramFixture()
+        delivery = AstroTelegramDelivery(jobs=jobs, telegram_bot=bot, is_admin=lambda _:True)
+        delivery.timeout_seconds = 0.1  # Accelerated synthetic timeout, no production policy change.
+        with patch('bot.services.astro_report_delivery.render_astro_pdf', renderer):
+            assert await delivery.run_once(now=103)
+            assert await asyncio.to_thread(stopped.wait, 2)
+            assert not bot.documents and active == 0
+            assert (await jobs.status(owner_id=99,job_id=job_id,now=104))['telegram_delivery']=='pending'
+            retry = AstroTelegramDelivery(jobs=jobs, telegram_bot=bot, is_admin=lambda _:True)
+            assert await retry.run_once(now=200)
+        assert peak == 1 and calls == 2 and len(bot.documents) == 1
+        assert bot.documents[0][1].filename == 'astro_neuromix.pdf'
     asyncio.run(run())

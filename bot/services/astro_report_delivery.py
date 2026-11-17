@@ -10,6 +10,7 @@ import asyncio
 import logging
 import os
 import time
+from threading import Event
 from uuid import uuid4
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -44,6 +45,14 @@ class AstroTelegramDelivery:
         # PostgreSQL row locking and SQLite's atomic UPDATE ... RETURNING.
         pg_lock = " FOR UPDATE SKIP LOCKED" if db.is_postgres() else ""
         async with self.jobs._connect() as conn:
+            # A process may die after claiming its final attempt. Settle that
+            # uncertain outcome after lease expiry instead of leaving it sending.
+            await conn.execute("""
+                UPDATE astro_report_deliveries
+                SET status='failed', worker_id=NULL, lease_until=0,
+                    error_code='telegram_delivery_uncertain', updated_at=?
+                WHERE status='sending' AND lease_until <= ? AND attempts >= ?
+            """, (now, now, self.max_attempts))
             cursor = await conn.execute(f"""
                 WITH candidate AS (
                     SELECT job_id, event_kind FROM astro_report_deliveries
@@ -111,9 +120,17 @@ class AstroTelegramDelivery:
                 report = state.get("report")
                 if not isinstance(report, dict):
                     raise ValueError("Missing completed report")
-                data = await asyncio.wait_for(
-                    asyncio.to_thread(render_astro_pdf, report), timeout=self.timeout_seconds,
-                )
+                cancel_render = Event()
+                try:
+                    data = await asyncio.wait_for(
+                        asyncio.to_thread(render_astro_pdf, report, cancel_event=cancel_render,
+                                          deadline=started + self.timeout_seconds),
+                        timeout=self.timeout_seconds,
+                    )
+                finally:
+                    # wait_for cannot kill a thread: the renderer cooperates at
+                    # every bounded block/page, including process-task cancellation.
+                    cancel_render.set()
                 # Rendering yields the loop: recheck deletion, expiry and revocation.
                 current_now = now + int(time.monotonic() - started)
                 current = await self.jobs.status(owner_id=owner_id, job_id=job_id, now=current_now)
@@ -129,15 +146,14 @@ class AstroTelegramDelivery:
                 message = await asyncio.wait_for(self.telegram_bot.send_document(
                     chat_id=owner_id,
                     document=BufferedInputFile(data, filename=PDF_FILENAME),
-                    caption=(f"✨ {label} готов! Полный текст во вложении и в истории Mini App. "
-                             f"Задание: {job_id[:8]}"),
+                    caption=f"✨ {label} готов! Полный текст во вложении и в истории Mini App.",
                 ), timeout=remaining)
             elif event_kind == "failed":
                 message = await asyncio.wait_for(self.telegram_bot.send_message(
                     chat_id=owner_id,
                     text=("⚠️ Не удалось завершить ИИ-разбор Astro. "
                           "Проверьте статус в Mini App → Мои предыдущие отчёты. "
-                          f"Задание: {job_id[:8]}. Баланс не списан."),
+                          "Баланс не списан."),
                 ), timeout=self.timeout_seconds)
             else:
                 raise ValueError("Unknown delivery kind")

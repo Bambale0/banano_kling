@@ -1,5 +1,7 @@
 """Read real exported PDFs through an independent parser, using synthetic data."""
 from io import BytesIO
+from threading import Event
+from time import monotonic
 
 import pytest
 from pypdf import PdfReader
@@ -86,3 +88,21 @@ def test_limits_fail_closed_without_truncation(monkeypatch):
     monkeypatch.setattr(astro_report_pdf, "MAX_PDF_BYTES", 10_000)
     with pytest.raises(ValueError, match="Telegram upload limit"):
         render_astro_pdf(report())
+
+
+def test_renderer_honors_cancel_and_deadline():
+    cancelled = Event()
+    cancelled.set()
+    with pytest.raises(TimeoutError, match="deadline"):
+        render_astro_pdf(report(), cancel_event=cancelled)
+    with pytest.raises(TimeoutError, match="deadline"):
+        render_astro_pdf(report(), deadline=monotonic()-1)
+
+
+def test_pathological_layout_is_bounded_without_partial_pdf(monkeypatch):
+    monkeypatch.setattr(astro_report_pdf, "MAX_PDF_PAGES", 1)
+    with pytest.raises(ValueError, match="page budget"):
+        render_astro_pdf(report("Строка отчёта.\n" * 1000))
+    monkeypatch.setattr(astro_report_pdf, "MAX_LAYOUT_BLOCKS", 3)
+    with pytest.raises(ValueError, match="layout budget"):
+        render_astro_pdf(report("Абзац\n\n" * 1000))
