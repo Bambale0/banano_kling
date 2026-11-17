@@ -440,3 +440,6 @@ def setup_astro_routes(app: web.Application, miniapp_root: str) -> None:
 
     from bot.astro_extended_api import setup_astro_extended_routes
     setup_astro_extended_routes(app, miniapp_root)
+    from bot.astro_report_api import setup_astro_report_routes
+
+    setup_astro_report_routes(app, miniapp_root)

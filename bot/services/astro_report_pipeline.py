@@ -172,9 +172,10 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
     # invent planets or aspects by reading user-entered free text.
     fields = (
         "schema_version", "chart", "first", "second", "aspects", "indicators",
+        "house_overlays",
         "natal_chart", "solar_chart", "samples", "events", "days", "periods",
         "accuracy", "first_accuracy", "second_accuracy", "period",
-        "solar_return_at_utc", "return_location", "engine",
+        "solar_return_at_utc", "solar_return_at_local", "return_location", "engine",
         # Current MIT ephemerides output (natal #550, compatibility #553).
         # Only these deterministic result fields may reach the interpreter;
         # never forward arbitrary client form/profile text.
@@ -183,6 +184,21 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         "utc_reference", "local_reference", "timezone",
     )
     selected = {name: facts[name] for name in fields if name in facts}
+    if "house_overlays" in selected:
+        overlays = selected["house_overlays"]
+        allowed = {"first_in_second", "second_in_first", "natal_in_solar", "solar_in_natal"}
+        if not isinstance(overlays, dict) or not overlays or set(overlays) - allowed:
+            raise AstroReportError("Некорректные наложения домов.")
+        for placements in overlays.values():
+            if placements is None:
+                continue
+            if not isinstance(placements, dict) or len(placements) > 100:
+                raise AstroReportError("Некорректные наложения домов.")
+            for name, house in placements.items():
+                if (not isinstance(name, str)
+                    or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,31}", name)
+                    or type(house) is not int or not 1 <= house <= 12):
+                    raise AstroReportError("Некорректные наложения домов.")
     if len(selected) < 2:
         raise AstroReportError("Недостаточно проверенных астрономических фактов.")
     return selected
@@ -227,7 +243,37 @@ def _word_count(value: str) -> int:
     return len(_WORD_RE.findall(value))
 
 
-def _parse_section(raw: str, spec: SectionSpec) -> str:
+def _validate_written_facts(text: str, facts: dict) -> None:
+    """Conservative proof gate for numerical zodiac claims and ISO dates.
+
+    This rejects invented *explicit* degrees and ISO dates. It is not a
+    substitute for human review of all natural-language interpretations.
+    """
+    values: list[float] = []
+
+    def visit(item):
+        if type(item) in (float, int):
+            values.append(float(item))
+        elif isinstance(item, dict):
+            for value in item.values():
+                visit(value)
+        elif isinstance(item, list):
+            for value in item:
+                visit(value)
+
+    visit(facts)
+    for match in re.finditer(r"(?<![\w.])(\d{1,3}(?:[.,]\d{1,6})?)\s*°", text):
+        claimed = float(match.group(1).replace(",", "."))
+        if not any(abs(claimed - actual) <= 0.11 for actual in values):
+            raise AstroReportError("В тексте найден неподтверждённый градус.")
+    source_json = json.dumps(facts, ensure_ascii=False, allow_nan=False)
+    allowed_dates = set(re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", source_json))
+    for date_str in re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", text):
+        if date_str not in allowed_dates:
+            raise AstroReportError("В тексте найдена неподтверждённая дата.")
+
+
+def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> str:
     """Require structured section, not hallucinated external citations."""
     try:
         doc = json.loads(raw)
@@ -240,6 +286,8 @@ def _parse_section(raw: str, spec: SectionSpec) -> str:
         raise AstroReportError("Раздел недостаточно подробный; не отмечаем готовым.")
     if len(text) > 180_000 or "\x00" in text:
         raise AstroReportError("Повреждённый раздел отчёта.")
+    if facts is not None:
+        _validate_written_facts(text, facts)
     return text.strip()
 
 
@@ -255,6 +303,24 @@ def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec,
     period = facts.get("period")
     if not isinstance(period, str):
         raise AstroReportError("Нет проверенного периода календаря.")
+    if plan.service_id == "solar":
+        from bot.services.astro_report_periods import build_solar_report_periods
+
+        calculated = build_solar_report_periods(facts)
+        expected_rows = calculated["periods"]
+        if facts.get("periods") != expected_rows or calculated["period"] != period:
+            raise AstroReportError("Солярные месяцы не соответствуют точному возвращению.")
+        rows = facts["periods"]
+        return plan.sections + tuple(SectionSpec(
+            id=f"solar_month_{i + 1:02d}",
+            title=f"{dynamic.title_prefix} {row['start_at_local']} — {row['end_at_local']}",
+            instruction=(
+                dynamic.instruction + "\nИнтервал рассчитан как календарный месяц от точного "
+                "солнцевозвращения. Это условная интерпретационная разбивка, "
+                "а не прогноз точных астрономических событий."
+            ),
+            min_words=dynamic.min_words,
+        ) for i, row in enumerate(rows))
     if dynamic.kind == "day":
         match = re.fullmatch(r"([0-9]{4})-(0[1-9]|1[0-2])", period)
         if not match:
@@ -336,7 +402,7 @@ async def compose_report(
                 system_prompt=plan.system_prompt,
                 json_response=True,
             )
-            candidate = _parse_section(response, section)
+            candidate = _parse_section(response, section, available)
             text = await store.save_if_absent(
                 owner_id=owner_id, fingerprint=fingerprint,
                 section_id=section.id, text=candidate,

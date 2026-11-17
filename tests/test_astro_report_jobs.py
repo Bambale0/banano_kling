@@ -1,0 +1,149 @@
+"""Durable report queue: owner scoping, leases, retries, encryption, breaker."""
+import asyncio
+
+from cryptography.fernet import Fernet
+
+from bot.services.astro_report_jobs import AstroJobPolicy, AstroReportJobs
+from bot.services.astro_report_pipeline import load_report_plan
+
+
+def store(tmp_path):
+    return AstroReportJobs(
+        db_path=str(tmp_path / "jobs.db"), fingerprint_secret="test-only-dedup",
+        data_key=Fernet.generate_key(),
+        policy=AstroJobPolicy(max_attempts=3, retry_base_seconds=3,
+                              retry_max_seconds=60, lease_seconds=20,
+                              circuit_failures=2, circuit_cooldown_seconds=60),
+    )
+
+
+def facts():
+    return {"schema_version": "astro.natal-facts.v1", "chart": {
+        "bodies": {"Sun": {"lon": 12.5}}, "birth_city": "private city"},
+    }
+
+
+def test_enqueue_is_idempotent_encrypted_and_owner_scoped(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
+        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=101)
+        c = await jobs.enqueue(owner_id=2, plan=plan, facts=facts(), consent=True, now=102)
+        assert a == b and a != c
+        assert await jobs.status(owner_id=2, job_id=a) is None
+        assert (await jobs.status(owner_id=1, job_id=a, now=103))["status"] == "queued"
+        assert b"private city" not in (tmp_path / "jobs.db").read_bytes()
+    asyncio.run(check())
+
+
+def test_claim_single_owner_heartbeat_retry_and_lease_recovery(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        ident = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=100)
+        a = await jobs.claim(worker_id="a", now=101)
+        assert a.job_id == ident and a.attempt == 1
+        assert await jobs.claim(worker_id="b", now=102) is None
+        assert await jobs.heartbeat(job_id=ident, worker_id="a", now=110)
+        assert await jobs.claim(worker_id="b", now=122) is None
+        assert await jobs.claim(worker_id="b", now=131) is not None
+        assert not await jobs.complete(job_id=ident, worker_id="a", now=132, report={"status": "completed", "word_count": 9000})
+        assert await jobs.reschedule(job_id=ident, worker_id="b", now=132,
+                                     retry=True, error_code="rate_limited")
+        assert await jobs.claim(worker_id="c", now=133) is None
+        assert await jobs.claim(worker_id="c", now=137) is None
+        next_job = await jobs.claim(worker_id="c", now=138)
+        assert next_job.attempt == 3
+        assert await jobs.complete(job_id=ident, worker_id="c", now=139,
+                                   report={"status": "completed", "word_count": 9000})
+        status = await jobs.status(owner_id=1, job_id=ident, now=139)
+        assert status["report"]["word_count"] == 9000
+        assert await jobs.claim(worker_id="d", now=140) is None
+    asyncio.run(check())
+
+
+def test_circuit_breaker_persisted_across_restarts(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        assert await jobs.circuit_allows(now=100)
+        await jobs.circuit_failure(now=100)
+        assert await jobs.circuit_allows(now=101)
+        await jobs.circuit_failure(now=102)
+        other = AstroReportJobs(db_path=jobs.db_path,
+                                fingerprint_secret=jobs.fingerprint_secret,
+                                data_key=jobs.data_key, policy=jobs.policy)
+        assert not await other.circuit_allows(now=130)
+        assert await other.circuit_allows(now=163)
+        await other.circuit_success()
+        assert await other.circuit_allows(now=120)
+    asyncio.run(check())
+
+
+def test_no_consent_and_permanent_fail_closed(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        try:
+            await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=False, now=1)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("missing consent allowed")
+        ident = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=2)
+        assert await jobs.claim(worker_id="a", now=3)
+        assert await jobs.reschedule(job_id=ident, worker_id="a", now=4,
+                                     retry=False, error_code="invalid_provider_config")
+        assert (await jobs.status(owner_id=1, job_id=ident, now=139))["status"] == "failed"
+        assert await jobs.claim(worker_id="b", now=999) is None
+    asyncio.run(check())
+
+
+def test_crashed_worker_never_exceeds_max_lease_attempts(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        ident = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=100)
+        for attempt, now in enumerate((101, 122, 143), start=1):
+            claim = await jobs.claim(worker_id=f"worker-{attempt}", now=now)
+            assert claim.job_id == ident and claim.attempt == attempt
+        assert await jobs.claim(worker_id="worker-4", now=164) is None
+        state = await jobs.status(owner_id=1, job_id=ident, now=164)
+        assert state["status"] == "failed"
+        assert state["error_code"] == "lease_exhausted"
+    asyncio.run(check())
+
+
+def test_two_concurrent_workers_cannot_claim_same_report(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                           facts=facts(), consent=True, now=100)
+        claims = await asyncio.gather(*(
+            jobs.claim(worker_id=f"worker-{i}", now=101) for i in range(8)
+        ))
+        assert len([claim for claim in claims if claim is not None]) == 1
+    asyncio.run(check())
+
+
+def test_expired_report_can_be_recreated_without_reusing_purged_identity(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        first = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=100)
+        second = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                    facts=facts(), consent=True, now=100 + 366 * 86400)
+        assert second != first
+        assert await jobs.status(owner_id=1, job_id=first, now=100 + 366 * 86400) is None
+    asyncio.run(check())
+
+
+def test_retention_purge_removes_sensitive_encrypted_job_data(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        ident = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=100)
+        assert await jobs.purge_expired(now=101) == 0
+        assert await jobs.purge_expired(now=100 + 365 * 86400) == 1
+        assert await jobs.status(owner_id=1, job_id=ident, now=100 + 365 * 86400) is None
+    asyncio.run(check())

@@ -44,3 +44,6 @@ astronomy-engine==2.1.19
 
 # MIT chart math: external JPL ephemeris, configured operator-side
 openephem==0.5.0
+
+# Encrypted owner-scoped Astro long-report jobs and resumable checkpoints.
+cryptography>=44,<52
