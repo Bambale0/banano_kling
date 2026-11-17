@@ -1184,7 +1184,7 @@ try {
   const aiSection = page.getByLabel('Полный персональный ИИ-разбор')
   await aiSection.getByRole('checkbox').check()
   await aiSection.getByRole('button', { name: 'Создать полный ИИ-разбор' }).click()
-  await aiSection.getByRole('heading', { name: /Полный разбор —/ }).waitFor()
+  await aiSection.getByRole('heading', { name: 'Ваш персональный разбор', exact: true }).waitFor()
   await aiSection.getByText('Синтетический полный отчёт только для проверки интерфейса.').waitFor()
   await aiSection.getByRole('button', { name: 'Мои предыдущие отчёты' }).click()
   await aiSection.getByRole('button', { name: 'Открыть' }).waitFor()
