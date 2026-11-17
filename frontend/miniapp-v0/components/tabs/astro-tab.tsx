@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowLeft, CalendarDays, ChevronDown, ChevronRight, Clock3,
   MapPin, Search, Sparkles, Star,
@@ -743,7 +743,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   return (
     <div className="astro-detail">
       <button type="button" className="astro-back" onClick={onBack}>
-        <ArrowLeft size={18} /> Все разделы
+        <ArrowLeft size={18} /> Назад · Все разделы
       </button>
       <div className="astro-mark"><Sparkles size={28} /></div>
       <div className="astro-kicker"><span /> ASTRO <span /></div>
@@ -1059,8 +1059,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               ))}
             </ul>
           ) : <p>Подходящие аспекты не обнаружены.</p>}
-          <p>Планеты, дома и аспекты рассчитаны математически. Подробный персональный разбор
-            формируется отдельным сервисом; этот расчёт не является научным прогнозом.</p>
+          <p>Планеты, дома и аспекты рассчитаны математически. Подробная GPT-6-интерпретация
+            создаётся прямо здесь, в разделе Astro, по кнопке «Создать полный ИИ-разбор».</p>
         </div>
       )}
       {natalReport && (
@@ -1131,11 +1131,29 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
 export function AstroTab() {
   const [selected, setSelected] = useState<AstroKind | null>(null)
   const service = ASTRO_SERVICES.find((item) => item.id === selected)
+  const handleBack = useCallback(() => {
+    setSelected(null)
+    // Mini App content scrolls inside <main>, not necessarily window.
+    const scroller = document.querySelector('main')
+    if (scroller) scroller.scrollTop = 0
+    window.scrollTo?.(0, 0)
+  }, [])
+
+  useEffect(() => {
+    if (!service || typeof window === 'undefined') return
+    const nativeBack = window.Telegram?.WebApp?.BackButton
+    nativeBack?.onClick?.(handleBack)
+    nativeBack?.show?.()
+    return () => {
+      nativeBack?.offClick?.(handleBack)
+      nativeBack?.hide?.()
+    }
+  }, [service, handleBack])
 
   return (
     <section className="astro-shell" aria-label="Раздел Astro">
       {service ? (
-        <AstroForm key={service.id} service={service} onBack={() => setSelected(null)} />
+        <AstroForm key={service.id} service={service} onBack={handleBack} />
       ) : (
         <div className="astro-menu">
           <div className="astro-mark"><Sparkles size={28} /></div>
