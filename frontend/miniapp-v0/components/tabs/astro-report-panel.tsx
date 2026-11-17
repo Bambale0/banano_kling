@@ -152,7 +152,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         // Only an auth/role rejection blocks access; a 503 is recoverable.
         setAvailability(response.status === 503 ? 'ready' : 'disabled')
         setMessage(response.status === 503
-          ? 'Длинные ИИ-разборы пока не включены. Астрономический расчёт доступен выше.'
+          ? 'Отчёты временно недоступны. Попробуйте ещё раз чуть позже.'
           : 'Откройте раздел в Telegram с правами администратора.')
         return
       }
@@ -195,7 +195,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
           setReport(null)
           finished = true
         } else if (response.status === 503) {
-          setMessage('Генерация временно недоступна. Задание сохранено на сервере.')
+          setMessage('Подготовка временно приостановлена. Ваш разбор сохранён.')
         } else if (response.status === 404) {
           setMessage('Отчёт не найден или срок его хранения истёк.')
           setReport(null)
@@ -252,7 +252,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     }
     const epoch = requestEpoch.current
     setBusy(true)
-    setMessage('Проверяем данные и ставим полный разбор в очередь…')
+    setMessage('Проверяем данные и начинаем разбор…')
     try {
       const response = await fetch(REPORTS_ROOT + '/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -267,7 +267,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         // A disabled backend may be enabled while this Mini App remains mounted.
         // Keep the explicit-submit path available for a later intentional retry.
         setAvailability('ready')
-        setMessage('Длинные ИИ-разборы ещё не включены на сервере. Баланс не списан.')
+        setMessage('Сейчас не удаётся создать разбор. Попробуйте чуть позже. Баланс не списан.')
         return
       }
       const data = await response.json()
@@ -276,7 +276,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         || !/^[0-9a-f]{32}$/.test(data.job_id)) {
         setMessage(data.error === 'storage_consent_required'
           ? 'Необходимо согласие на хранение данных.'
-          : 'Не удалось поставить отчёт в очередь. Баланс не списан.')
+          : 'Не удалось начать разбор. Баланс не списан.')
         return
       }
       setJobId(data.job_id)
@@ -287,10 +287,10 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         ? previous : [{ job_id: data.job_id, service_id: service, status: 'queued',
                         attempts: 0, created_at: Math.floor(Date.now() / 1000) }, ...previous])
       setPollEpoch((value) => value + 1)
-      setMessage('Задание сохранено. Можно закрыть Mini App и найти его позже в истории отчётов.')
+      setMessage('Ваш разбор готовится. Можно закрыть приложение и вернуться к нему через историю.')
     } catch {
       if (epoch === requestEpoch.current) {
-        setMessage('Ошибка соединения. Повторный запрос безопасен: сервер объединяет одинаковые задания.')
+        setMessage('Связь прервалась. Попробуйте ещё раз или проверьте историю отчётов.')
       }
     } finally {
       if (epoch === requestEpoch.current) setBusy(false)
@@ -301,7 +301,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     if (busy || !jobId || jobStatus !== 'failed' || !consent || availability !== 'ready') return
     const epoch = requestEpoch.current
     setBusy(true)
-    setMessage('Проверяем право на повтор и состояние задания…')
+    setMessage('Проверяем возможность продолжить разбор…')
     try {
       const response = await fetch(REPORTS_ROOT + '/retry', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -315,11 +315,11 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       if (response.status === 503) {
         // Keep explicit manual retry available when the queue comes back.
         setAvailability('ready')
-        setMessage('Создание отчётов временно отключено. Данные сохранены.')
+        setMessage('Подготовка отчётов временно недоступна. Ваши данные сохранены.')
         return
       }
       if (response.status === 409) {
-        setMessage('Повтор недоступен: лимит исчерпан либо ошибка требует исправления.')
+        setMessage('Сейчас нельзя повторить разбор. Попробуйте позже или обратитесь в поддержку.')
         return
       }
       const data = await response.json()
@@ -334,7 +334,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       setHistory((previous) => previous.map((item) =>
         item.job_id === jobId ? { ...item, status: 'queued', attempts: 0 } : item))
       setPollEpoch((value) => value + 1)
-      setMessage('Отчёт повторно поставлен в очередь, готовые разделы сохранены.')
+      setMessage('Продолжаем разбор. Готовые разделы сохранены.')
     } catch {
       if (epoch === requestEpoch.current) {
         setMessage('Не удалось проверить повтор. Откройте историю и сверьте статус.')
@@ -347,8 +347,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
   return (
     <section className="astro-ai-panel" aria-label="Полный персональный ИИ-разбор">
       <h2>Подробный персональный разбор</h2>
-      <p>Сначала Astro рассчитывает астрономические данные, затем GPT-6 формирует
-        подробную интерпретацию прямо здесь. Готовый разбор сохраняется в истории.</p>
+      <p>Ваш персональный разбор появится здесь и сохранится в истории.</p>
       <button type="button" className="astro-ai-history-action"
         disabled={historyLoading} onClick={() => { void loadHistory() }}>
         {historyLoading ? 'Загружаем историю…' : 'Мои предыдущие отчёты'}
@@ -359,15 +358,14 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
             <input type="checkbox" checked={consent}
               onChange={(event) => setConsent(event.target.checked)} />
             <span>{service === 'compatibility'
-              ? 'Подтверждаю право передать данные рождения обоих людей для обработки через KIE и временного хранения отчёта.'
-              : 'Согласен(на) на передачу данных расчёта в KIE для ИИ-интерпретации и временное хранение отчёта.'}</span>
+              ? 'Подтверждаю согласие обоих людей на обработку данных рождения для разбора и временное хранение отчёта.'
+              : 'Согласен(на) на обработку данных для персонального разбора и временное хранение отчёта.'}</span>
           </label>
           <button type="button" className="astro-ai-action" onClick={() => { void startReport() }}
             disabled={busy || !consent}>
-            {busy ? 'Отправляем в очередь…' : 'Создать полный ИИ-разбор'}
+            {busy ? 'Начинаем разбор…' : 'Создать полный ИИ-разбор'}
           </button>
-          <p className="astro-ai-privacy">Отчёт доступен только вашему Telegram-аккаунту.
-            Срок хранения определяется настройками сервера. Списаний с баланса нет.</p>
+          <p className="astro-ai-privacy">Отчёт хранится временно и доступен только вам. Списаний с баланса нет.</p>
         </>
       )}
       {message && <p className="astro-form-message"
@@ -380,7 +378,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
               <li key={item.job_id}>
                 <span>{new Date(item.created_at * 1000).toLocaleString('ru-RU')}</span>
                 <span> · {item.status === 'completed' ? 'готов' : item.status === 'failed'
-                  ? 'ошибка' : item.status === 'running' ? 'формируется' : 'в очереди'}</span>
+                  ? 'ошибка' : item.status === 'running' ? 'готовится' : 'ожидает начала'}</span>
                 <button type="button" onClick={() => {
                   setReport(null)
                   setJobId(item.job_id)
@@ -403,15 +401,15 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
           aria-label="Астрологический разбор выполняется">
           <span className="astro-ai-progress-spinner" aria-hidden="true" />
           <div>
-            <strong>{jobStatus === 'running' ? 'GPT-6 формирует отчёт по разделам…'
-              : 'Ожидаем начала обработки в очереди…'}</strong>
-            <span>Задание сохранено. Готовый разбор откроется здесь и будет отправлен в Telegram.</span>
+            <strong>{jobStatus === 'running' ? 'Готовим ваш персональный разбор…'
+              : 'Скоро начнём готовить ваш разбор…'}</strong>
+            <span>Можно закрыть приложение. Готовый разбор появится здесь и придёт в Telegram.</span>
           </div>
         </div>
       )}
       {report && (
         <article className="astro-ai-report" aria-label="Готовый полный ИИ-разбор">
-          <h2>Полный разбор — {report.word_count.toLocaleString('ru-RU')} слов</h2>
+          <h2>Ваш персональный разбор</h2>
           {report.sections.map((section) => (
             <section key={section.id} className="astro-ai-report-section">
               <h3>{section.title}</h3>

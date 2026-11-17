@@ -15,7 +15,7 @@ and all protected CI checks are green; never bypass branch protection.
    participants, and select the requested calendar period. For lunar
    calendar, a separate optional city picker updates the IANA timezone.
 3. Under the astronomical form, they explicitly opt in to send the calculated
-   astronomical facts to KIE and store an encrypted result. The checkbox
+   astronomical facts for interpretation and store an encrypted result. The checkbox
    defaults unchecked; third-party data requires explicit consent.
 4. A separate action posts only canonical IDs, date/time, period and signed
    Telegram initData to `/mini-app/api/astro/reports/start`; untrusted client
@@ -92,3 +92,10 @@ The protected #588 PostgreSQL schema fix has merged into `tanyapi`;
 the worktree remains stacked on #583 until both #582 and #583 merge.
 Do not enable `ASTRO_REPORTS_ENABLED` without operator-managed Fernet
 secrets and KIE budget approval.
+
+## 2026-11-17 follow-up — PR #599
+
+- User requested removing technical/provider/model details from the Astro UI. Consent now describes processing for the personal report and temporary storage; compatibility still explicitly requires consent from both people. Consent remains unchecked and the server-side authorization/payload contract is unchanged.
+- Removed provider/model names, server configuration, queue implementation, and task wording from report descriptions, loading/error/success states and privacy copy. Keep useful user actions, owner privacy, storage consent and factual no-debit wording. Existing spinner and reduced-motion CSS remain; no fabricated completion percentage.
+- Existing 503 recovery/start/history/retry and running-animation tests updated to the new user-facing wording. This PR remains independent of PDF outbox #600 and section-quality retries.
+- Acceptance: all Astro UI tests, TypeScript, focused ESLint, locked production build, browser flow and protected CI; then verify exact `tanyapi` deployed revision and frontend asset content. Do not bypass audit gates.
