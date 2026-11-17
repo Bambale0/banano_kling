@@ -52,4 +52,21 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                 assert other.status == 404
                 unsigned = await client.post(path, json={**body, "init_data": ""})
                 assert unsigned.status == 401
+                history_path = "/mini-app/api/astro/reports/history"
+                history = await client.post(history_path, json={
+                    "init_data": "fixture-actor-one", "service_id": "natal",
+                })
+                assert history.status == 200
+                items = (await history.json())["jobs"]
+                assert len(items) == 1 and items[0]["job_id"] == job_id
+                assert "facts" not in items[0] and "report" not in items[0]
+                other_history = await client.post(history_path, json={
+                    "init_data": "fixture-actor-two", "service_id": "natal",
+                })
+                assert other_history.status == 200
+                assert (await other_history.json())["jobs"] == []
+                denied_history = await client.post(history_path, json={
+                    "init_data": "", "service_id": "natal",
+                })
+                assert denied_history.status == 401
     asyncio.run(run())

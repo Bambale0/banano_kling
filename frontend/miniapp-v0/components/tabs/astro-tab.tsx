@@ -6,6 +6,7 @@ import {
   MapPin, Search, Sparkles, Star,
 } from 'lucide-react'
 import { getInitData } from '../../lib/api'
+import { AstroReportPanel } from './astro-report-panel'
 import './astro-tab.css'
 
 type AstroKind = 'natal' | 'compatibility' | 'karma' | 'year' | 'month' | 'solar' | 'lunar'
@@ -289,9 +290,11 @@ function countryLabel(code: string): string {
 function PlacePicker({
   prefix,
   onSelect,
+  label = 'Место рождения',
 }: {
   prefix: string
   onSelect?: (place: AstroPlace | null) => void
+  label?: string
 }) {
   const [city, setCity] = useState('')
   const [selected, setSelected] = useState<AstroPlace | null>(null)
@@ -369,7 +372,7 @@ function PlacePicker({
       <label className="astro-field">
         <MapPin className="astro-field-icon" aria-hidden="true" />
         <span className="astro-field-body">
-          <span className="astro-field-label">Место рождения</span>
+          <span className="astro-field-label">{label}</span>
           <input aria-label={prefix + ': место рождения'} name={prefix + '-place'}
             role="combobox" aria-autocomplete="list" aria-expanded={options.length > 0}
             aria-controls={listId}
@@ -504,6 +507,9 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   const [extendedReport, setExtendedReport] = useState<ExtendedReport | null>(null)
   const [birthTimezone, setBirthTimezone] = useState('')
   const [calculating, setCalculating] = useState(false)
+  const reportFormRef = useRef<HTMLFormElement>(null)
+  const [lunarCitySelected, setLunarCitySelected] = useState(false)
+  const [reportFormRevision, setReportFormRevision] = useState(0)
   const calculationEpoch = useRef(0)
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -732,8 +738,9 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         <ZodiacWheel />
         <div className="astro-orbit astro-orbit-right">♄</div>
       </div>
-      <form className="astro-form-panel" noValidate onSubmit={submit}
+      <form ref={reportFormRef} className="astro-form-panel" noValidate onSubmit={submit}
         onChange={() => {
+          setReportFormRevision((previous) => previous + 1)
           calculationEpoch.current += 1
           setFullNatalReport(null)
           setNatalReport(null)
@@ -757,9 +764,17 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
             <span className="astro-field-body">
               <span className="astro-field-label">Часовой пояс (IANA)</span>
               <input aria-label="Часовой пояс" name="timezone" value={timezoneName}
+                readOnly={lunarCitySelected}
                 onChange={(event) => setTimezoneName(event.target.value)} placeholder="Europe/Moscow" />
             </span>
           </label>
+          <PlacePicker prefix="lunar" label="Город для лунного календаря"
+            onSelect={(place) => {
+              setReportFormRevision((previous) => previous + 1)
+              setLunarCitySelected(Boolean(place))
+              if (place) setTimezoneName(place.timezone)
+              setLunarReport(null)
+            }} />
           </>
         ) : (
           <>
@@ -767,6 +782,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               heading={service.id === 'compatibility' ? 'Первый человек' : undefined}
               requireTimezone={service.id === 'compatibility'}
               onPlaceSelect={(place) => {
+                setReportFormRevision((previous) => previous + 1)
                 calculationEpoch.current += 1
                 setExtendedReport(null)
                 setCompatibilityReport(null)
@@ -779,6 +795,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               }} />
             {service.id === 'compatibility' && <BirthFields prefix="partner"
               heading="Второй человек" requireTimezone onPlaceSelect={() => {
+                setReportFormRevision((previous) => previous + 1)
                 calculationEpoch.current += 1
                 setCompatibilityReport(null)
                 setCalculating(false)
@@ -829,6 +846,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               <div className="astro-solar-return-place">
                 <h3 className="astro-form-heading">Где встретите день рождения?</h3>
                 <PlacePicker prefix="solar" onSelect={() => {
+                  setReportFormRevision((previous) => previous + 1)
                   calculationEpoch.current += 1
                   setExtendedReport(null)
                   setCalculating(false)
@@ -861,6 +879,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         </button>
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
+      <AstroReportPanel service={service.id} formRef={reportFormRef}
+        period={period} formRevision={reportFormRevision} />
       {compatibilityReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанные межкартные аспекты">
           <h2>Межкартные аспекты</h2>

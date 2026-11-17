@@ -180,6 +180,28 @@ async def astro_report_status(request: web.Request) -> web.Response:
     return _response({"ok": True, **status})
 
 
+async def astro_report_history(request: web.Request) -> web.Response:
+    """Admin-only job metadata; never list decrypted birth facts or report text."""
+    body = await _body(request)
+    owner_id = await _admin_actor(request, body)
+    jobs = request.app.get(ASTRO_REPORT_JOBS)
+    if jobs is None:
+        return _response({"ok": False, "error": "reports_not_enabled"}, 503)
+    service_id = body.get("service_id")
+    if service_id is not None and service_id not in _VALID_SERVICES:
+        return _response({"ok": False, "error": "unknown_service"}, 400)
+    try:
+        limit = int(os.getenv("ASTRO_REPORT_HISTORY_LIMIT", "30"))
+        history = await jobs.list_owner(
+            owner_id=owner_id, service_id=service_id, limit=limit,
+        )
+    except (TypeError, ValueError):
+        return _response({"ok": False, "error": "invalid_history_config"}, 503)
+    if not config.is_admin(owner_id):
+        raise web.HTTPForbidden()
+    return _response({"ok": True, "jobs": history})
+
+
 async def _astro_report_retention_loop(jobs, checkpoints, stop: asyncio.Event):
     """Enforce configured privacy TTL even when no new jobs are submitted."""
     interval = int(os.getenv("ASTRO_REPORT_CLEANUP_INTERVAL_SECONDS", "3600"))
@@ -245,5 +267,6 @@ def setup_astro_report_routes(
 ) -> None:
     app.router.add_post(miniapp_root + "/api/astro/reports/start", astro_report_start)
     app.router.add_post(miniapp_root + "/api/astro/reports/status", astro_report_status)
+    app.router.add_post(miniapp_root + "/api/astro/reports/history", astro_report_history)
     if initialize_worker and os.getenv("ASTRO_REPORTS_ENABLED", "0") == "1":
         app.cleanup_ctx.append(_astro_report_runtime)
