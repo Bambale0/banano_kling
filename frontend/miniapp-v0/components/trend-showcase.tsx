@@ -37,12 +37,22 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   const [visible, setVisible] = useState(false)
   const [failed, setFailed] = useState(false)
   const [documentVisible, setDocumentVisible] = useState(true)
+  const [posterFailed, setPosterFailed] = useState(false)
+  const [originalFailed, setOriginalFailed] = useState(false)
   const video = isVideoPreview(trend)
   const poster = trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : ''
   const preview = trend.preview_url ? normalizeMiniAppMediaUrl(trend.preview_url) : ''
+  // Only compact, pre-encoded preview MP4s may autoplay in a scrolling grid.
+  // A large original video is fetched only when the user explicitly opens it.
+  const canAutoPlay = video && Boolean(poster) && /\/uploads\/trend-previews\//.test(preview)
 
   useEffect(() => {
-    if (!video || !ref.current) return
+    setPosterFailed(false)
+    setOriginalFailed(false)
+  }, [poster, preview])
+
+  useEffect(() => {
+    if (!canAutoPlay || !ref.current) return
     const element = ref.current
     if (typeof IntersectionObserver === 'undefined') {
       setVisible(true)
@@ -56,18 +66,18 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
       observer.disconnect()
       stopVideo(element)
     }
-  }, [video, trend.id])
+  }, [canAutoPlay, trend.id])
 
   useEffect(() => {
-    if (!video) return
+    if (!canAutoPlay) return
     const onVisibility = () => setDocumentVisible(document.visibilityState === 'visible')
     document.addEventListener('visibilitychange', onVisibility)
     return () => document.removeEventListener('visibilitychange', onVisibility)
-  }, [video])
+  }, [canAutoPlay])
 
   useEffect(() => {
     const element = ref.current
-    if (!video || !element) return
+    if (!canAutoPlay || !element) return
     const reducedMotion = typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const saveData = Boolean((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData)
@@ -86,22 +96,37 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
       stopVideo(element)
     }
     return () => stopVideo(element)
-  }, [video, visible, documentVisible, failed])
+  }, [canAutoPlay, visible, documentVisible, failed])
 
   if (!video) {
-    return preview
-      ? <img src={preview} alt="" loading="lazy" className="h-full w-full object-cover" />
-      : <div className="flex h-full items-center justify-center bg-secondary/70"><Sparkles className="h-9 w-9 text-gold/70" /></div>
+    const image = poster && !posterFailed ? poster : preview
+    return image && !originalFailed
+      ? <img src={image} alt="" loading="lazy" decoding="async"
+          onError={() => image === poster ? setPosterFailed(true) : setOriginalFailed(true)}
+          className="h-full w-full object-cover" />
+      : <div className="flex h-full items-center justify-center bg-secondary/70">
+          <Sparkles className="h-9 w-9 text-gold/70" />
+        </div>
   }
 
+  // No video file download until click unless it has a known small H.264
+  // derivative. A missing poster has an immediate, visible fallback.
   return (
     <>
-      {poster ? <img src={poster} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" /> : null}
-      {!failed ? (
+      {poster && !posterFailed ? (
+        <img src={poster} alt="" loading="lazy" decoding="async"
+          onError={() => setPosterFailed(true)}
+          className="absolute inset-0 h-full w-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-secondary/70">
+          <Film className="h-9 w-9 text-muted-foreground" />
+        </div>
+      )}
+      {canAutoPlay && !failed ? (
         <video
           ref={ref}
           src={visible ? videoPreviewFrameUrl(preview) : undefined}
-          poster={poster || undefined}
+          poster={posterFailed ? undefined : poster}
           muted
           loop
           playsInline
@@ -110,10 +135,6 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
           className="relative h-full w-full object-cover"
           aria-hidden="true"
         />
-      ) : !poster ? (
-        <div className="flex h-full items-center justify-center bg-secondary/70">
-          <Film className="h-9 w-9 text-muted-foreground" />
-        </div>
       ) : null}
     </>
   )
@@ -134,14 +155,40 @@ function LiveTile({ trend, onPreview, isAdmin, className = '' }: {
   isAdmin: boolean
   className?: string
 }) {
+  const tileRef = useRef<HTMLButtonElement | null>(null)
+  const [nearViewport, setNearViewport] = useState(false)
+
+  useEffect(() => {
+    const tile = tileRef.current
+    if (!tile) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setNearViewport(true)
+      return
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setNearViewport(true)
+        observer.disconnect()
+      }
+    }, { rootMargin: '240px 0px', threshold: 0 })
+    observer.observe(tile)
+    return () => observer.disconnect()
+  }, [trend.id])
+
   return (
     <button
+      ref={tileRef}
       type="button"
       aria-label={'Открыть тренд ' + trend.title}
       onClick={() => onPreview(trend)}
       className={'group relative block aspect-[3/4] min-w-0 shrink-0 overflow-hidden rounded-2xl border border-border/60 bg-secondary/40 text-left shadow-md transition-transform active:scale-[0.98] ' + className}
     >
-      <LivePreview trend={trend} />
+      {nearViewport ? <LivePreview trend={trend} /> : (
+        <div aria-hidden="true" className="flex h-full w-full items-center justify-center bg-secondary/60">
+          {isVideoPreview(trend) ? <Film className="h-9 w-9 text-muted-foreground/60" />
+            : <Sparkles className="h-9 w-9 text-gold/40" />}
+        </div>
+      )}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
       <div className="pointer-events-none absolute left-2 top-2 flex max-w-[calc(100%-4rem)] flex-col items-start gap-1">
         {trend.badge === 'new' ? (
