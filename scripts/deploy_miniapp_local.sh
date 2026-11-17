@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Build and publish the Tanya Mini App on the production server itself.
 # Refresh the static Mini App roots for the exact checked-out commit. The
-# existing VK vhost also receives a validated, reversible media-route include;
-# DNS, TLS and other provisioned Nginx settings remain operator-owned.
+# retired VK vhost is ignored by default. An explicit opt-in retains legacy
+# VK publication; DNS, TLS and Nginx settings remain operator-owned.
 
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -169,18 +169,28 @@ node_major="$(node -p 'process.versions.node.split(".")[0]')"
 # Increase DEPLOY_MIN_FREE_BYTES for larger builds; retained history is not pruned.
 require_disk_space "$PROJECT_DIR"
 require_disk_space "$BACKUP_ROOT"
-# VK can intentionally be shut off (HTTP 410) after the #451 rollback.
-# Do not prepare its storage/build while production is isolated.
+# Telegram-only is the production default: retired VK DNS must not be a
+# prerequisite for publishing the current Telegram Mini App. Legacy VK
+# publication is a separate explicit operator decision.
+VK_MINIAPP_DEPLOY_ENABLED="${VK_MINIAPP_DEPLOY_ENABLED:-0}"
+case "$VK_MINIAPP_DEPLOY_ENABLED" in
+  0|1) ;;
+  *) die "VK_MINIAPP_DEPLOY_ENABLED must be 0 or 1" ;;
+esac
 VK_BASE_URL="https://${VK_FRONTEND_DOMAIN}"
-# An enabled host running a *previous* release will fail exact-SHA probing;
-# the preflight therefore uses the vhost 410 check only, not release revision.
-VK_ISOLATED=0
-vk_revision_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/revision.txt")"
-vk_index_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/")"
-if [[ "$vk_revision_code" == 410 && "$vk_index_code" == 410 ]]; then
-  VK_ISOLATED=1
-elif [[ "$vk_revision_code" != 200 || "$vk_index_code" != 200 ]]; then
-  die "VK host preflight inconsistent revision=$vk_revision_code root=$vk_index_code"
+VK_ISOLATED=1
+if [[ "$VK_MINIAPP_DEPLOY_ENABLED" == "1" ]]; then
+  # Only an explicitly enabled VK rollout may access its vhost. A 410
+  # continues to mean intentional isolation, preserving old operator flow.
+  vk_revision_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/revision.txt")"
+  vk_index_code="$(curl -sS --connect-timeout 5 --max-time 20 -o /dev/null -w '%{http_code}' "${VK_BASE_URL}/")"
+  if [[ "$vk_revision_code" == 410 && "$vk_index_code" == 410 ]]; then
+    VK_ISOLATED=1
+  elif [[ "$vk_revision_code" == 200 && "$vk_index_code" == 200 ]]; then
+    VK_ISOLATED=0
+  else
+    die "VK host preflight inconsistent revision=$vk_revision_code root=$vk_index_code"
+  fi
 fi
 if [[ "$VK_ISOLATED" == 0 ]]; then
   require_disk_space "$VK_RELEASE_ROOT"
@@ -320,26 +330,30 @@ while IFS= read -r asset; do
     "https://${FRONTEND_DOMAIN}${asset}?revision=${EXPECTED_SHA}" >/dev/null
 done < "$work/assets.txt"
 
-vk_mode="$(bash "${PROJECT_DIR}/scripts/verify_vk_miniapp_mode.sh" "$VK_BASE_URL" "$EXPECTED_SHA")"
-if [[ "$vk_mode" == enabled && "$VK_ISOLATED" == 0 ]]; then
-  curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
-    -H 'Cache-Control: no-cache' \
-    "${VK_BASE_URL}/?revision=${EXPECTED_SHA}" > "$work/vk-index.html"
-  grep -q '/_next/static/' "$work/vk-index.html" || die "VK live HTML has no root static assets"
-  if grep -q '/mini-app/_next/static/\|telegram-web-app.js' "$work/vk-index.html"; then
-    die "VK live HTML contains Telegram-only assets"
+if [[ "$VK_MINIAPP_DEPLOY_ENABLED" == "1" ]]; then
+  vk_mode="$(bash "${PROJECT_DIR}/scripts/verify_vk_miniapp_mode.sh" "$VK_BASE_URL" "$EXPECTED_SHA")"
+  if [[ "$vk_mode" == enabled && "$VK_ISOLATED" == 0 ]]; then
+    curl -fsS --retry 8 --retry-delay 2 --retry-all-errors \
+      -H 'Cache-Control: no-cache' \
+      "${VK_BASE_URL}/?revision=${EXPECTED_SHA}" > "$work/vk-index.html"
+    grep -q '/_next/static/' "$work/vk-index.html" || die "VK live HTML has no root static assets"
+    if grep -q '/mini-app/_next/static/\|telegram-web-app.js' "$work/vk-index.html"; then
+      die "VK live HTML contains Telegram-only assets"
+    fi
+    grep -oE '/_next/static/[^" ]+\.js' "$work/vk-index.html" \
+      | sort -u > "$work/vk-assets.txt"
+    [[ -s "$work/vk-assets.txt" ]] || die "VK live HTML did not expose JavaScript assets"
+    while IFS= read -r asset; do
+      curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
+        "${VK_BASE_URL}${asset}?revision=${EXPECTED_SHA}" >/dev/null
+    done < "$work/vk-assets.txt"
+    log "VK_LIVE_OK ${VK_BASE_URL}/ revision=${EXPECTED_SHA}"
+  elif [[ "$vk_mode" == disabled && "$VK_ISOLATED" == 1 ]]; then
+    log "VK_DISABLED ${VK_BASE_URL}/ http=410 (intentional isolation)"
+  else
+    die "VK host state changed during deployment: preflight=${VK_ISOLATED} live=${vk_mode}"
   fi
-  grep -oE '/_next/static/[^" ]+\.js' "$work/vk-index.html" \
-    | sort -u > "$work/vk-assets.txt"
-  [[ -s "$work/vk-assets.txt" ]] || die "VK live HTML did not expose JavaScript assets"
-  while IFS= read -r asset; do
-    curl -fsSI --retry 5 --retry-delay 2 --retry-all-errors \
-      "${VK_BASE_URL}${asset}?revision=${EXPECTED_SHA}" >/dev/null
-  done < "$work/vk-assets.txt"
-  log "VK_LIVE_OK ${VK_BASE_URL}/ revision=${EXPECTED_SHA}"
-elif [[ "$vk_mode" == disabled && "$VK_ISOLATED" == 1 ]]; then
-  log "VK_DISABLED ${VK_BASE_URL}/ http=410 (intentional isolation)"
 else
-  die "VK host state changed during deployment: preflight=${VK_ISOLATED} live=${vk_mode}"
+  log "VK_DEPLOY_SKIPPED Telegram-only release (retired VK host not probed)"
 fi
 log "LIVE_OK ${BASE_URL}/ revision=${EXPECTED_SHA}"
