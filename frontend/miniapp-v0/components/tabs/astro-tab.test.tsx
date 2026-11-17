@@ -18,7 +18,7 @@ describe('Astro concept screens', () => {
   })
 
   it('registers the native Telegram BackButton and returns to the Astro service menu', () => {
-    const webApp = window.Telegram!.WebApp as typeof window.Telegram.WebApp & {
+    const webApp = window.Telegram!.WebApp as unknown as {
       BackButton?: { show: jest.Mock; hide: jest.Mock; onClick: jest.Mock; offClick: jest.Mock }
     }
     const previous = webApp.BackButton
