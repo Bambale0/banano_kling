@@ -1,6 +1,8 @@
 import type { Config } from 'jest'
 
 const config: Config = {
+  // Use finite alternation: the private glob security policy rejects +()/ *().
+  testMatch: ['**/__tests__/**/*.?([mc])[jt]s?(x)', '**/?(*.)@(spec|test).?([mc])[jt]s?(x)'],
   testEnvironment: 'jsdom',
   setupFiles: ['<rootDir>/jest.setup.ts'],
   moduleNameMapper: {

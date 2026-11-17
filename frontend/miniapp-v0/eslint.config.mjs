@@ -9,6 +9,7 @@ export default tseslint.config(
       '.next/**',
       'out/**',
       'node_modules/**',
+      'vendor/**',
       '__tests__/**',
       '__mocks__/**',
       'e2e/**',

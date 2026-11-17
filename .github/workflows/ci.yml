@@ -229,9 +229,16 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
 
+      - name: Pin npm CLI with current audit client
+        run: npm install --global npm@12.0.2
+
       - name: Install locked Mini App dependencies
         id: dependencies
         run: npm ci
+
+      - name: Verify private security fix and original upstream advisories
+        working-directory: frontend/miniapp-v0
+        run: npm run security:picomatch
 
       - name: Build production Mini App export
         id: build
