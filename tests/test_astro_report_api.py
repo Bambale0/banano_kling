@@ -69,4 +69,38 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                     "init_data": "", "service_id": "natal",
                 })
                 assert denied_history.status == 401
+                jobs = app[astro_report_api.ASTRO_REPORT_JOBS]
+                claim = await jobs.claim(worker_id="admin-worker")
+                assert claim is not None and claim.job_id == job_id
+                assert await jobs.reschedule(
+                    job_id=job_id, worker_id="admin-worker", retry=False,
+                    error_code="temporary_provider_failure",
+                )
+                retry_path = "/mini-app/api/astro/reports/retry"
+                no_consent = await client.post(retry_path, json={
+                    "init_data": "fixture-actor-one", "job_id": job_id,
+                    "consent": False,
+                })
+                assert no_consent.status == 400
+                stranger = await client.post(retry_path, json={
+                    "init_data": "fixture-actor-two", "job_id": job_id,
+                    "consent": True,
+                })
+                assert stranger.status == 409
+                retry = await client.post(retry_path, json={
+                    "init_data": "fixture-actor-one", "job_id": job_id,
+                    "consent": True,
+                })
+                assert retry.status == 202
+                assert (await retry.json())["job_id"] == job_id
+                assert (await jobs.status(owner_id=101, job_id=job_id))["status"] == "queued"
+                duplicated = await client.post(retry_path, json={
+                    "init_data": "fixture-actor-one", "job_id": job_id,
+                    "consent": True,
+                })
+                assert duplicated.status == 409
+                unsigned_retry = await client.post(retry_path, json={
+                    "init_data": "", "job_id": job_id, "consent": True,
+                })
+                assert unsigned_retry.status == 401
     asyncio.run(run())
