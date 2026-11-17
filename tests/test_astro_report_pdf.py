@@ -1,4 +1,5 @@
 """Read real exported PDFs through an independent parser, using synthetic data."""
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from threading import Event
 from time import monotonic
@@ -32,6 +33,31 @@ def test_cyrillic_and_all_sections_are_searchable_with_embedded_fonts():
     embedded = [font.get_object().get("/FontDescriptor") for font in fonts.values()]
     assert any(item and "/FontFile2" in item for item in embedded)
     assert "Страница 1" in text
+
+
+def test_astronomical_symbols_and_emoji_use_embedded_glyph_fonts():
+    reader, text = read(render_astro_pdf(report('Солнце ☉ Луна ☽ Овен ♈ Рыбы ♓ Венера ♀ Марс ♂ → ✨ ⚠ 😀')))
+    assert 'Солнце ☉ Луна ☽ Овен ♈ Рыбы ♓ Венера ♀ Марс ♂ → ✨ ⚠ 😀' in text
+    fonts = reader.pages[0]['/Resources']['/Font']
+    names = str([font.get_object().get('/BaseFont') for font in fonts.values()])
+    assert 'NotoSansSymbols-Regular' in names
+    assert 'NotoSansSymbols2-Regular' in names
+    assert 'NotoEmoji' in names
+
+
+def test_concurrent_exports_keep_unicode_maps_and_text_separate():
+    fixtures = [report('Первый ☉ ♈ 😀'), report('Второй ☽ ♓ ✨')]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        documents = list(executor.map(render_astro_pdf, fixtures))
+    _, first = read(documents[0])
+    _, second = read(documents[1])
+    assert 'Первый ☉ ♈ 😀' in first and 'Второй' not in first
+    assert 'Второй ☽ ♓ ✨' in second and 'Первый' not in second
+
+
+def test_unsupported_glyph_fails_closed_instead_of_delivering_empty_boxes():
+    with pytest.raises(ValueError, match='unsupported glyph'):
+        render_astro_pdf(report('\u9fff'))
 
 
 @pytest.mark.parametrize("word_count", [10_000, 30_000])

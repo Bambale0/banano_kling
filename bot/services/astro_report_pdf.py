@@ -1,6 +1,7 @@
 """Private, in-memory Astro PDF; no URLs, attachments or arbitrary metadata."""
 from __future__ import annotations
 
+import re
 from io import BytesIO
 from pathlib import Path
 from textwrap import wrap
@@ -31,14 +32,69 @@ SERVICE_NAMES = {
     "lunar": "Лунный календарь",
 }
 _FONT_LOCK = Lock()
+_FONT_FILES = {
+    "AstroNoto": "NotoSans-Regular.ttf",
+    "AstroNotoBold": "NotoSans-Bold.ttf",
+    "AstroSymbols": "NotoSansSymbols-Regular.ttf",
+    "AstroSymbols2": "NotoSansSymbols2-Regular.ttf",
+    "AstroEmoji": "NotoEmoji-Regular.ttf",
+}
+
+
+class _UnicodeTTFont(TTFont):
+    def addObjects(self, doc):  # ReportLab font API
+        super().addObjects(doc)
+        # ReportLab 4's ToUnicode builder emits U+10000+ as an odd-length
+        # scalar hex string. PDF CMaps require UTF-16BE surrogate pairs.
+        # Repair only this document's generated streams, never global APIs.
+        for font in doc.idToObject["BasicFonts"].dict.values():
+            reference = getattr(font, "ToUnicode", None)
+            if reference is not None:
+                stream = doc.idToObject[reference.name]
+                stream.content = re.sub(
+                    r"(?m)^(<[0-9A-F]{2}>) <([0-9A-F]{5,6})>$",
+                    lambda match: match[1] + " <" + chr(int(match[2], 16)).encode("utf-16-be").hex().upper() + ">",
+                    stream.content,
+                )
 
 
 def _register_fonts() -> None:
     with _FONT_LOCK:
-        if "AstroNoto" not in pdfmetrics.getRegisteredFontNames():
-            fonts = Path(__file__).resolve().parents[1] / "assets" / "fonts"
-            pdfmetrics.registerFont(TTFont("AstroNoto", str(fonts / "NotoSans-Regular.ttf")))
-            pdfmetrics.registerFont(TTFont("AstroNotoBold", str(fonts / "NotoSans-Bold.ttf")))
+        fonts = Path(__file__).resolve().parents[1] / "assets" / "fonts"
+        for name, filename in _FONT_FILES.items():
+            if name not in pdfmetrics.getRegisteredFontNames():
+                pdfmetrics.registerFont(_UnicodeTTFont(name, str(fonts / filename)))
+
+
+def _plain_markup(text: str, base_font: str) -> str:
+    """Escape text and select bundled glyphs; never silently emit .notdef boxes."""
+    coverage = [(name, pdfmetrics.getFont(name).face.charWidths)
+                for name in (base_font, "AstroSymbols", "AstroSymbols2", "AstroEmoji")]
+    runs: list[str] = []
+    current_font = base_font
+    current: list[str] = []
+
+    def flush() -> None:
+        safe = escape("".join(current)).replace("\n", "<br/>")
+        runs.append(safe if current_font == base_font else f'<font name="{current_font}">{safe}</font>')
+        current.clear()
+
+    for char in text:
+        code = ord(char)
+        # Invisible presentation/joining controls do not have stand-alone glyphs.
+        if 0xFE00 <= code <= 0xFE0F or code in (0x200B, 0x200C, 0x200D):
+            continue
+        name = base_font if char in "\n\r\t" else next(
+            (name for name, widths in coverage if code in widths), None,
+        )
+        if name is None:
+            raise ValueError("Astro PDF contains an unsupported glyph")
+        if name != current_font:
+            flush()
+            current_font = name
+        current.append(char)
+    flush()
+    return "".join(runs)
 
 
 def render_astro_pdf(report: dict, *, cancel_event: Event | None = None,
@@ -110,7 +166,7 @@ def render_astro_pdf(report: dict, *, cancel_event: Event | None = None,
             check_budget()
             if len(story) >= MAX_LAYOUT_BLOCKS:
                 raise ValueError("Astro PDF layout budget exceeded")
-            story.append(Paragraph(escape(chunk).replace("\n", "<br/>"), style))
+            story.append(Paragraph(_plain_markup(chunk, style.fontName), style))
 
     for title, body in content:
         add_text(title, section_style)
