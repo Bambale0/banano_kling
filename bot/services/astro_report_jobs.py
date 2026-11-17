@@ -353,6 +353,39 @@ class AstroReportJobs:
                                "WHERE provider='kie'")
             await conn.commit()
 
+    async def list_owner(
+        self, *, owner_id: int, service_id: str | None = None,
+        limit: int = 30, now: int | None = None,
+    ) -> list[dict]:
+        """Metadata only; never expose encrypted facts, sections or other owners."""
+        if type(owner_id) is not int or owner_id <= 0:
+            raise ValueError("Invalid Astro history owner")
+        if type(limit) is not int or not 1 <= limit <= 50:
+            raise ValueError("Invalid Astro history limit")
+        if service_id is not None and service_id not in (
+            "natal", "compatibility", "karma", "year", "month", "solar", "lunar",
+        ):
+            raise ValueError("Invalid Astro history service")
+        await self.initialize()
+        now = int(time.time()) if now is None else now
+        where_service = " AND service_id = ?" if service_id else ""
+        params = (owner_id, now, service_id, limit) if service_id else (owner_id, now, limit)
+        async with self._connect() as conn:
+            cursor = await conn.execute(
+                "SELECT job_id, service_id, status, attempts, created_at, "
+                "updated_at, error_code FROM astro_report_jobs "
+                "WHERE owner_id = ? AND expires_at > ?" + where_service +
+                " ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                params,
+            )
+            rows = await cursor.fetchall()
+        return [{
+            "job_id": str(row[0]), "service_id": str(row[1]),
+            "status": str(row[2]), "attempts": int(row[3]),
+            "created_at": int(row[4]), "updated_at": int(row[5]),
+            "error_code": row[6],
+        } for row in rows]
+
     async def delete_owner(self, *, owner_id: int) -> int:
         if type(owner_id) is not int or owner_id <= 0:
             raise ValueError("Invalid owner")

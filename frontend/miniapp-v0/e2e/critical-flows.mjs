@@ -326,6 +326,38 @@ try {
       }) })
       return
     }
+    if (path.endsWith('/astro/reports/start')) {
+      const body = JSON.parse(request.postData() || '{}')
+      assert.equal(body.service_id, 'natal')
+      assert.equal(body.consent, true)
+      assert.equal(body.input.place_id, 524901)
+      assert.equal(body.input.timezone, undefined)
+      assert.equal(body.input.longitude, undefined)
+      await route.fulfill({ status: 202, contentType: 'application/json', body: JSON.stringify({
+        ok: true, job_id: 'e'.repeat(32), status: 'queued',
+      }) })
+      return
+    }
+    if (path.endsWith('/astro/reports/history')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, jobs: [{ job_id: 'e'.repeat(32), service_id: 'natal',
+          status: 'completed', created_at: 1794931200, attempts: 1 }],
+      }) })
+      return
+    }
+    if (path.endsWith('/astro/reports/status')) {
+      const body = JSON.parse(request.postData() || '{}')
+      assert.equal(body.job_id, 'e'.repeat(32))
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        ok: true, status: 'completed', report: {
+          schema_version: 'astro.report.v1', service_id: 'natal', word_count: 10000,
+          sections: [{ id: 'intro', title: 'Полный натальный разбор',
+            text: 'Синтетический полный отчёт только для проверки интерфейса.' }],
+          disclaimer: 'Текст символический, не научное предсказание.',
+        },
+      }) })
+      return
+    }
     if (path.endsWith('/astro/compatibility/full')) {
       const body = JSON.parse(request.postData() || '{}')
       assert.equal(body.person_a.date, '20.03.2024')
@@ -1149,6 +1181,15 @@ try {
   await page.getByRole('heading', { name: 'Дома Плацидуса' }).waitFor()
   await page.getByLabel('Полная рассчитанная натальная карта').getByText(/Дом 12:/).waitFor()
   await page.getByText(/Натальная карта, ASC\/MC и дома рассчитаны/).waitFor()
+  const aiSection = page.getByLabel('Полный персональный ИИ-разбор')
+  await aiSection.getByRole('checkbox').check()
+  await aiSection.getByRole('button', { name: 'Создать полный ИИ-разбор' }).click()
+  await aiSection.getByRole('heading', { name: /Полный разбор —/ }).waitFor()
+  await aiSection.getByText('Синтетический полный отчёт только для проверки интерфейса.').waitFor()
+  await aiSection.getByRole('button', { name: 'Мои предыдущие отчёты' }).click()
+  await aiSection.getByRole('button', { name: 'Открыть' }).waitFor()
+  await aiSection.getByRole('button', { name: 'Открыть' }).click()
+  await aiSection.getByText('Синтетический полный отчёт только для проверки интерфейса.').waitFor()
   await page.getByRole('button', { name: /Все разделы/ }).click()
   await page.getByRole('button', { name: 'Совместимость', exact: true }).click()
   await page.getByLabel('person: дата рождения').fill('20.03.2024')

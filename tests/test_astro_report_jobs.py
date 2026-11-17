@@ -147,3 +147,25 @@ def test_retention_purge_removes_sensitive_encrypted_job_data(tmp_path):
         assert await jobs.purge_expired(now=100 + 365 * 86400) == 1
         assert await jobs.status(owner_id=1, job_id=ident, now=100 + 365 * 86400) is None
     asyncio.run(check())
+
+
+def test_report_history_is_owner_scoped_sorted_and_excludes_private_facts(tmp_path):
+    async def check():
+        jobs = store(tmp_path)
+        natal = await jobs.enqueue(owner_id=11, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=100)
+        karma = await jobs.enqueue(owner_id=11, plan=load_report_plan("karma"),
+                                   facts={**facts(), "schema_version": "astro.karma-indicators.v1"},
+                                   consent=True, now=102)
+        other = await jobs.enqueue(owner_id=22, plan=load_report_plan("natal"),
+                                   facts=facts(), consent=True, now=103)
+        history = await jobs.list_owner(owner_id=11, limit=10, now=105)
+        assert [entry["job_id"] for entry in history] == [karma, natal]
+        assert [entry["service_id"] for entry in history] == ["karma", "natal"]
+        assert all(entry["status"] == "queued" for entry in history)
+        assert all("facts" not in entry and "report" not in entry for entry in history)
+        assert all("sealed" not in key for entry in history for key in entry)
+        assert all(entry["job_id"] != other for entry in history)
+        assert (await jobs.list_owner(owner_id=22, now=105))[0]["job_id"] == other
+        assert await jobs.list_owner(owner_id=33, now=105) == []
+    asyncio.run(check())

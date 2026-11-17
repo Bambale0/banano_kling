@@ -352,26 +352,32 @@
 .astro-city-option small { font-size: 11px; color: #c3b8ce; }
 .astro-city-option[aria-selected="true"] { border-color: #ffd487; background: #332340; }
 
+/* Admin long-form AI report queue: explicit consent, recoverable history. */
+.astro-ai-panel { margin: 18px 14px; padding: 18px; border: 1px solid rgba(226,162,67,.5); border-radius: 18px; background: rgba(20,19,34,.94); color: #f1e4ce; line-height: 1.5; }
+.astro-ai-panel > h2 { color: #ffd68a; font-size: 1.15rem; margin: 0 0 9px; }
+.astro-ai-panel > p { font-size: .9rem; margin: 9px 0; }
+.astro-ai-consent { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; line-height: 1.5; padding: 12px 0; }
+.astro-ai-consent input { accent-color: #eab759; width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+.astro-ai-action { width: 100%; min-height: 48px; background: linear-gradient(180deg,#f8c56c,#e6a235); color: #191321; border: 0; border-radius: 13px; font-weight: 700; cursor: pointer; }
+.astro-ai-action:disabled { opacity: .55; cursor: not-allowed; }
+.astro-ai-history-action { margin: 14px 0 8px; width: 100%; background: transparent; border: 1px solid #c49155; color: #ffd68a; border-radius: 12px; min-height: 40px; cursor: pointer; }
+.astro-ai-history-action:disabled { opacity: .6; cursor: wait; }
+.astro-ai-privacy, .astro-ai-disclaimer { color: #cbbbac; font-size: 12px !important; }
+.astro-ai-history { margin-top: 12px; }
+.astro-ai-history h3 { color: #f6c882; font-size: 1rem; }
+.astro-ai-history ul { list-style: none; margin: 0; padding: 0; }
+.astro-ai-history li { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 9px 0; font-size: 12px; }
+.astro-ai-history li button { margin-left: auto; border: 1px solid #c49155; border-radius: 8px; background: transparent; color: #ffd68a; padding: 6px 11px; }
+.astro-ai-state { font-size: 13px; color: #ffd68a; }
+.astro-ai-report { margin-top: 18px; }
+.astro-ai-report > h2 { color: #ffd68a; font-size: 1.05rem; }
+.astro-ai-report-section { padding: 12px 0; border-top: 1px solid rgba(226,162,67,.3); }
+.astro-ai-report-section h3 { margin: 4px 0 12px; font-size: 1rem; color: #f4c77b; }
+.astro-ai-section-text { font-size: .91rem; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
 
-/* Genuine ephemeris-backed chart: keep the SVG legible inside Telegram WebView. */
-.astro-calculated-chart {
-  margin: 14px auto 24px;
-  width: min(100%, 440px);
-  color: #d6c3a3;
-}
-.astro-calculated-wheel {
-  display: block;
-  width: 100%;
-  height: auto;
-  aspect-ratio: 1;
-  overflow: visible;
-}
-.astro-calculated-wheel text {
-  font-family: 'DejaVu Sans', 'Noto Sans Symbols 2', 'Segoe UI Symbol', Arial, sans-serif;
-}
-.astro-calculated-chart figcaption {
-  padding: 4px 10px;
-  font-size: 12px;
-  text-align: center;
-  line-height: 1.45;
-}
+
+/* Ephemeris-backed natal wheel within Telegram Mini App. */
+.astro-calculated-chart { margin: 14px auto 24px; width: min(100%, 440px); color: #d6c3a3; }
+.astro-calculated-wheel { display: block; width: 100%; height: auto; aspect-ratio: 1; overflow: visible; }
+.astro-calculated-wheel text { font-family: 'DejaVu Sans', 'Noto Sans Symbols 2', 'Segoe UI Symbol', Arial, sans-serif; }
+.astro-calculated-chart figcaption { padding: 4px 10px; font-size: 12px; text-align: center; line-height: 1.45; }
