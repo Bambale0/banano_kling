@@ -42,3 +42,15 @@ are independent issue #544 acceptance items. No public Astro enablement.
 
 Skills applied from Bambale0/.agents: systematic-debugging,
 test-driven-development, verification-before-completion, frontend-ux-audit.
+
+## Long-form report handoff regression
+
+The structured `astro.report.v1` composer must receive the actual
+`house_overlays` in its curated astronomical facts, not only inter-chart
+aspects and natal bodies. The HMAC cache fingerprint now includes those
+calculated directional house mappings: a different placement cannot reuse
+an existing checkpoint report. Untrusted client note fields remain excluded.
+The new regression failed with missing `house_overlays` before the fix.
+After the addition, 32 report tests and 208 combined affected Astro tests
+passed; the real two-city JPL-DE440 signed API smoke stayed green.
+This is *not* an active LLM report delivery endpoint yet.
