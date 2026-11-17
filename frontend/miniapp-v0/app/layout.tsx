@@ -6,6 +6,7 @@ import './globals.css'
 const telegramBootstrapScript = `
 (function () {
   var attempts = 0;
+  var fullscreenRequested = false;
   var vkLaunch = ${JSON.stringify(process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk')} || new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
   var containsAccountLink = ${containsAccountLink.toString()};
 
@@ -127,6 +128,14 @@ const telegramBootstrapScript = `
     if (webApp) {
       try { if (webApp.ready) webApp.ready(); } catch (e) {}
       try { if (webApp.expand) webApp.expand(); } catch (e) {}
+      // Telegram 8.0+: request real fullscreen once, before React hydration.
+      // expand() remains the fallback for older clients and desktop.
+      if (!fullscreenRequested && !webApp.isFullscreen &&
+          typeof webApp.requestFullscreen === 'function') {
+        fullscreenRequested = true;
+        window.__BANANO_FULLSCREEN_REQUESTED__ = true;
+        try { webApp.requestFullscreen(); } catch (e) {}
+      }
     }
 
     postTelegramEvent('web_app_ready');
