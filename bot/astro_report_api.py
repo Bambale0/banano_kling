@@ -180,6 +180,27 @@ async def astro_report_status(request: web.Request) -> web.Response:
     return _response({"ok": True, **status})
 
 
+async def astro_report_retry(request: web.Request) -> web.Response:
+    """Explicit owner-authorized retry; never re-run permanently rejected jobs."""
+    body = await _body(request)
+    owner_id = await _admin_actor(request, body)
+    jobs = request.app.get(ASTRO_REPORT_JOBS)
+    if jobs is None:
+        return _response({"ok": False, "error": "reports_not_enabled"}, 503)
+    job_id = body.get("job_id")
+    if not isinstance(job_id, str) or len(job_id) != 32:
+        return _response({"ok": False, "error": "invalid_job_id"}, 400)
+    if body.get("consent") is not True:
+        return _response({"ok": False, "error": "storage_consent_required"}, 400)
+    if not config.is_admin(owner_id):
+        raise web.HTTPForbidden()
+    accepted = await jobs.retry_failed(owner_id=owner_id, job_id=job_id, consent=True)
+    if not accepted:
+        return _response({"ok": False, "error": "retry_unavailable"}, 409)
+    logger.info("astro_report_manual_retry job_id=%s owner_id=%s", job_id, owner_id)
+    return _response({"ok": True, "job_id": job_id, "status": "queued"}, 202)
+
+
 async def astro_report_history(request: web.Request) -> web.Response:
     """Admin-only job metadata; never list decrypted birth facts or report text."""
     body = await _body(request)
@@ -268,5 +289,6 @@ def setup_astro_report_routes(
     app.router.add_post(miniapp_root + "/api/astro/reports/start", astro_report_start)
     app.router.add_post(miniapp_root + "/api/astro/reports/status", astro_report_status)
     app.router.add_post(miniapp_root + "/api/astro/reports/history", astro_report_history)
+    app.router.add_post(miniapp_root + "/api/astro/reports/retry", astro_report_retry)
     if initialize_worker and os.getenv("ASTRO_REPORTS_ENABLED", "0") == "1":
         app.cleanup_ctx.append(_astro_report_runtime)
