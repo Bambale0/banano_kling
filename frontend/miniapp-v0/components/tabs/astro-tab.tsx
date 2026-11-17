@@ -778,7 +778,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <label className="astro-field">
             <MapPin className="astro-field-icon" aria-hidden="true" />
             <span className="astro-field-body">
-              <span className="astro-field-label">Часовой пояс (IANA)</span>
+              <span className="astro-field-label">Часовой пояс</span>
               <input aria-label="Часовой пояс" name="timezone" value={timezoneName}
                 readOnly={lunarCitySelected}
                 onChange={(event) => setTimezoneName(event.target.value)} placeholder="Europe/Moscow" />
@@ -835,7 +835,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                 <label className="astro-field">
                   <MapPin className="astro-field-icon" aria-hidden="true" />
                   <span className="astro-field-body">
-                    <span className="astro-field-label">Часовой пояс определён по месту рождения (IANA)</span>
+                    <span className="astro-field-label">Часовой пояс определён по месту рождения</span>
                     <input aria-label="Часовой пояс рождения" name="birth-timezone"
                       value={birthTimezone} readOnly placeholder="Выберите город из списка" />
                   </span>
