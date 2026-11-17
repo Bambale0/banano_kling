@@ -14,8 +14,8 @@ from typing import Any
 from bot import database
 from bot import db as db_backend
 from bot import trend_catalog_audit as audit
-from bot.trend_visibility import sanitize_prompt_for_public
 from bot.services.trend_catalog_media_cache import enrich_cards
+from bot.trend_visibility import sanitize_prompt_for_public
 
 
 class CatalogValidationError(ValueError):
