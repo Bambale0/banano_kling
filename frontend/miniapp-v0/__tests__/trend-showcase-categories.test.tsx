@@ -146,7 +146,7 @@ test('changing to an unavailable folder never exposes stale items for destructiv
 })
 
 
-test('legacy video preview without a file extension uses catalog kind rather than an image tag', () => {
+test('legacy signed video loads only after opening and keeps catalog media kind', () => {
   const signedVideo = {
     ...makeCard(55, 'Подписанное видео', 'video'),
     preview_url: 'https://cdn.example/preview/55?signature=valid',
@@ -155,11 +155,14 @@ test('legacy video preview without a file extension uses catalog kind rather tha
   const folder = { ...catalog[0], items: [signedVideo], total: 1 }
   render(<TrendShowcase categories={[folder]} onRepeat={jest.fn()} onShare={jest.fn()} />)
   const tile = screen.getByRole('button', { name: 'Открыть тренд Подписанное видео' })
-  expect(tile.querySelector('video')).toBeInTheDocument()
+  expect(tile.querySelector('video')).not.toBeInTheDocument()
   expect(tile.querySelector('img')).not.toBeInTheDocument()
   fireEvent.click(tile)
   expect(within(screen.getByRole('dialog')).getByText('Подписанное видео')).toBeInTheDocument()
-  expect(screen.getByRole('dialog').querySelector('video')).toBeInTheDocument()
+  const openedVideo = screen.getByRole('dialog').querySelector('video')
+  expect(openedVideo).toBeInTheDocument()
+  expect(openedVideo).toHaveAttribute('src', expect.stringContaining('/preview/55?signature=valid'))
+  expect(openedVideo).toHaveAttribute('controls')
 })
 
 test('category-specific draft dates and move targets do not bleed between shared trend placements', async () => {
