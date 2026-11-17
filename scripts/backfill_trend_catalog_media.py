@@ -16,10 +16,13 @@ from bot import trend_catalog
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.media_storage import persist_upload_file
 from bot.services.trend_catalog_media_cache import (
-    cached_thumbnails, record_thumbnail, source_key,
+    cached_thumbnails,
+    record_thumbnail,
+    source_key,
 )
 from bot.services.trend_preview_service import (
-    VIDEO_PREVIEW_EXTENSIONS, _run_ffmpeg_poster,
+    VIDEO_PREVIEW_EXTENSIONS,
+    _run_ffmpeg_poster,
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +99,7 @@ async def run(*, limit: int = 20, execute: bool = False) -> dict[str, int]:
                 outcome["created"] += 1
             else:
                 outcome["skipped"] += 1
-        except Exception:
+        except Exception:  # noqa: BLE001 -- bounded maintenance isolates per-item errors
             # Avoid printing birth data, URLs or private provider references.
             logger.warning("Trend thumbnail backfill failed for item index=%s", outcome["checked"])
             outcome["failed"] += 1
