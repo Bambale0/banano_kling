@@ -379,7 +379,7 @@ function PlacePicker({
     setCity(place.name + ', ' + countryLabel(place.country_code))
     setOptions([])
     setBusy(false)
-    setMessage('Выбран часовой пояс: ' + place.timezone)
+    setMessage('Город выбран.')
     onSelect?.(place)
   }
 
@@ -664,8 +664,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         }
         setFullNatalReport(data.result as FullNatalReport)
         setMessage(data.result.accuracy.houses_available
-          ? 'Натальная карта, ASC/MC и дома рассчитаны. Оплата не требуется.'
-          : 'Планеты рассчитаны. Для ASC и домов необходимо точное время рождения.')
+          ? 'Натальная карта готова. Оплата не требуется.'
+          : 'Карта готова. Для некоторых деталей нужно точное время рождения.')
       } catch {
         if (epoch === calculationEpoch.current) {
           setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
@@ -678,7 +678,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
     if (['karma', 'year', 'month', 'solar'].includes(service.id)) {
       const placeId = Number(form.get('person-place-id'))
       if (!Number.isInteger(placeId) || placeId <= 0) {
-        setMessage('Выберите город рождения из списка, чтобы определить координаты и часовой пояс.')
+        setMessage('Выберите город рождения из списка.')
         return
       }
       const returnPlaceId = Number(form.get('solar-place-id'))
@@ -852,9 +852,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                   </span>
                 </label>
                 <p className="astro-form-message">
-                  Выберите город из подсказок: координаты и исторический часовой пояс определятся автоматически.
-                  ASC, MC и 12 домов рассчитываются по Плацидусу при известном времени рождения.
-                  Если время неизвестно, неопределённые показатели не показываются.
+                  Выберите город из списка. Если время рождения неизвестно,
+                  некоторые подробности карты будут недоступны.
                 </p>
               </>
             )}
@@ -869,8 +868,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                   setMessage('')
                 }} />
                 <p className="astro-form-message">
-                  Место соляра выбирается отдельно от места рождения: координаты и часовой пояс
-                  возвращения Солнца будут взяты из справочника.
+                  Укажите город, в котором будете в день рождения.
+                  Он может отличаться от города рождения.
                 </p>
               </div>
             )}
