@@ -44,7 +44,7 @@ describe('AstroChartWheel: verified positions, not a decorative horoscope', () =
   it('rejects invalid numerical positions instead of drawing invented objects', () => {
     render(<AstroChartWheel chart={{
       bodies: { Sun: { lon: Number.NaN }, Mercury: { lon: 120 } },
-      angles: null, cusps: [10, 20] }, label="Неполные данные" />)
+      angles: null, cusps: [10, 20] }} label="Неполные данные" />)
     const wheel = screen.getByRole('img', { name: 'Неполные данные' })
     expect(wheel.querySelectorAll('[data-astro-body]')).toHaveLength(1)
     expect(wheel.querySelector('[data-astro-body="Sun"]')).not.toBeInTheDocument()
