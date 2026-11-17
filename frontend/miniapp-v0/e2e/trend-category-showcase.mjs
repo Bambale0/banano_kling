@@ -133,11 +133,13 @@ try {
   // Deliberately keep admin metrics in the fixture to exercise stale-response defence.
   assert.doesNotMatch(await live.innerText(),/328 повторов/, 'Viewer tiles must hide private repeat counts')
   assert.equal(await page.getByLabel(/Успешных повторов/).count(),0)
-  const videoTag=live.locator('video')
-  await videoTag.waitFor()
-  assert.equal(await videoTag.evaluate(video => video.muted), true)
+  // Grid never fetches full original videos, including extensionless media.
+  assert.equal(await live.locator('video').count(),0)
   const noExtension=page.getByRole('button',{name:'Открыть тренд Видео без расширения'}).first()
-  await noExtension.locator('video').waitFor()
+  assert.equal(await noExtension.locator('video').count(),0)
+  await live.click()
+  assert.match(await page.getByRole('dialog').locator('video').getAttribute('src'),/motion\.mp4/)
+  await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).click()
   await page.getByRole('button',{name:'Показать ещё'}).click()
   await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).waitFor()
