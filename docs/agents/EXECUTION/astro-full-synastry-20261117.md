@@ -54,3 +54,14 @@ The new regression failed with missing `house_overlays` before the fix.
 After the addition, 32 report tests and 208 combined affected Astro tests
 passed; the real two-city JPL-DE440 signed API smoke stayed green.
 This is *not* an active LLM report delivery endpoint yet.
+
+## Strict validation before interpretation (17 November)
+
+Six new regression cases proved that numeric house overlays were previously
+passed to the report text provider without checking their structure.
+Now only the declared directional keys and finite integer house IDs 1..12,
+with bounded planet-name identifiers, reach the report composer. Unknown
+birth-time directions remain `null`; strings, injected instructions, bool,
+zero, 13 or unknown direction keys fail closed before calling an LLM.
+TDD RED 6/6, GREEN 38 report tests and 214 affected Astro tests, plus real
+GeoNames/JPL HTTP smoke. This does not enable paid generation or storage.
