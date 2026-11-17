@@ -265,6 +265,26 @@ describe('Astro long-report Mini App integration', () => {
     await waitFor(() => expect(retryCalls).toBe(2))
   })
 
+  it('shows live animated processing while server confirms a running Astro report', async () => {
+    const identifier = 'e'.repeat(32)
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: url.endsWith('/start') ? 202 : 200,
+      json: async () => url.endsWith('/start')
+        ? { ok: true, job_id: identifier, status: 'queued' }
+        : { ok: true, job_id: identifier, status: 'running' },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+    const progress = await screen.findByTestId('astro-live-processing')
+    expect(progress).toHaveTextContent('Задание сохранено')
+    await waitFor(() => expect(progress).toHaveTextContent('GPT-6'))
+    expect(progress.querySelector('[aria-hidden="true"]')).not.toBeNull()
+    expect(progress).not.toHaveTextContent('%')  // No invented progress percentage.
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1)
+  })
+
   it('keeps paid generation disabled when server has no stable secret configuration', async () => {
     const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })

@@ -398,11 +398,16 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
           {busy ? 'Возобновляем отчёт…' : 'Повторить отчёт'}
         </button>
       )}
-      {jobId && !report && jobStatus && jobStatus !== 'failed' && (
-        <p className="astro-ai-state" role="status">
-          {jobStatus === 'running' ? 'Полный разбор формируется по разделам…'
-            : 'Задание находится в очереди. Данные сохранены на сервере.'}
-        </p>
+      {jobId && !report && (jobStatus === 'queued' || jobStatus === 'running') && (
+        <div className="astro-ai-progress" role="status" data-testid="astro-live-processing"
+          aria-label="Астрологический разбор выполняется">
+          <span className="astro-ai-progress-spinner" aria-hidden="true" />
+          <div>
+            <strong>{jobStatus === 'running' ? 'GPT-6 формирует отчёт по разделам…'
+              : 'Ожидаем начала обработки в очереди…'}</strong>
+            <span>Задание сохранено. Готовый разбор откроется здесь и будет отправлен в Telegram.</span>
+          </div>
+        </div>
       )}
       {report && (
         <article className="astro-ai-report" aria-label="Готовый полный ИИ-разбор">
