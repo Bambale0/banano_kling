@@ -1,6 +1,7 @@
 """Durable report queue: owner scoping, leases, retries, encryption, breaker."""
 import asyncio
 
+import pytest
 from cryptography.fernet import Fernet
 
 from bot.services.astro_report_jobs import AstroJobPolicy, AstroReportJobs
@@ -23,17 +24,33 @@ def facts():
     }
 
 
-def test_enqueue_is_idempotent_encrypted_and_owner_scoped(tmp_path):
+def test_enqueue_is_idempotent_per_request_not_per_birth_facts(tmp_path):
     async def check():
         jobs = store(tmp_path)
         plan = load_report_plan("natal")
-        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
-        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=101)
-        c = await jobs.enqueue(owner_id=2, plan=plan, facts=facts(), consent=True, now=102)
-        assert a == b and a != c
+        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=100, request_id="a" * 32)
+        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=101, request_id="a" * 32)
+        c = await jobs.enqueue(owner_id=2, plan=plan, facts=facts(), consent=True,
+                               now=102, request_id="a" * 32)
+        d = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=103, request_id="b" * 32)
+        e = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=104)
+        f = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=105)
+        assert a == b  # HTTP replay of one click is not double-charged.
+        assert len({a, c, d, e, f}) == 5  # Same birth facts: unlimited fresh reports.
         assert await jobs.status(owner_id=2, job_id=a) is None
-        assert (await jobs.status(owner_id=1, job_id=a, now=103))["status"] == "queued"
+        assert (await jobs.status(owner_id=1, job_id=a, now=106))["status"] == "queued"
         assert b"private city" not in (tmp_path / "jobs.db").read_bytes()
+
+        changed = {**facts(), "chart": {"bodies": {"Sun": {"lon": 44}}}}
+        with pytest.raises(ValueError, match="request"):
+            await jobs.enqueue(owner_id=1, plan=plan, facts=changed, consent=True,
+                               now=107, request_id="a" * 32)
+        with pytest.raises(ValueError):
+            await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=108, request_id="not-a-valid-key")
     asyncio.run(check())
 
 
