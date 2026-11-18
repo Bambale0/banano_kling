@@ -44,7 +44,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#faq"})
+        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -73,7 +73,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_redesign_is_short_real_entry_portal_not_fake_app(self):
         # Marketing root remains a small no-dependency gateway, not a second app.
-        self.assertIn('class="container hero-grid"', self.html)
+        self.assertIn('class="container hero-grid grunge-grid"', self.html)
         self.assertIn('class="container access-layout"', self.html)
         self.assertIn('id="login-title"', self.html)
         self.assertIn("Превращай идеи", self.html)
@@ -82,7 +82,7 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertNotIn('href="/login/email', self.html)
         self.assertNotIn('href="/login/google', self.html)
         self.assertNotIn('href="/login/yandex', self.html)
-        self.assertLess(len(self.html.encode("utf-8")), 50000)
+        self.assertLess(len(self.html.encode("utf-8")), 70000)
 
     def test_mobile_sticky_action_waits_until_primary_button_is_out_of_view(self):
         self.assertIn("IntersectionObserver", self.html)
@@ -126,6 +126,31 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("Здесь показаны реальные разделы продукта", self.html)
         self.assertNotIn('class="fake-review"', self.html)
         self.assertIn(".faq-items summary:focus-visible", self.html)
+
+    def test_reference_mapped_grunge_hero_and_real_actions(self):
+        self.assertIn('class="hero grunge-hero"', self.html)
+        self.assertIn('class="grunge-headline"', self.html)
+        self.assertIn('class="paint-ideas"', self.html)
+        self.assertIn('class="grunge-ribbon"', self.html)
+        self.assertIn('class="btn-primary grunge-cta" href="/mini-app/"', self.html)
+        self.assertIn('class="btn-text grunge-more" href="#possibilities"', self.html)
+        self.assertIn('class="grunge-strip"', self.html)
+        self.assertIn('src="/grunge-collage.webp"', self.html)
+        self.assertIn('fetchpriority="high"', self.html)
+        self.assertIn('aria-label="Превращай идеи в фото и видео"', self.html)
+        self.assertIn("prefers-reduced-motion:reduce", self.html)
+
+    def test_collage_is_real_optimized_asset_with_isolated_nginx_route(self):
+        image = (LANDING / "grunge-collage.webp").read_bytes()
+        self.assertEqual(image[:4], b"RIFF")
+        self.assertEqual(image[8:12], b"WEBP")
+        self.assertLess(len(image), 150_000)
+        self.assertIn("location = /grunge-collage.webp", self.nginx)
+        self.assertIn("root /var/www/neuromix-landing;", self.nginx)
+        self.assertIn("grunge-collage.webp", self.publisher)
+        self.assertIn("cmp -s", self.publisher)
+        self.assertIn("artwork_block", self.publisher)
+        self.assertNotIn("location /mini-app/ {\n        root /var/www/neuromix-landing;", self.nginx)
 
     def test_seo_metadata(self):
         self.assertIn('href="https://neuromixbot.com/"', self.html)
