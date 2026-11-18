@@ -737,7 +737,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       }
       return
     }
-    setMessage('Интерфейс подготовлен. Для расчёта требуется подключение астрономического API — данные не отправлены, баланс не списан.')
+    setMessage('Этот расчёт пока недоступен. Данные не отправлены, баланс не списан.')
   }
 
   return (
