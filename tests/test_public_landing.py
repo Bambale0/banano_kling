@@ -140,6 +140,14 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('aria-label="Превращай идеи в фото и видео"', self.html)
         self.assertIn("prefers-reduced-motion:reduce", self.html)
 
+    def test_stencil_colors_override_legacy_generic_headline_styles(self):
+        # Previously .intro h1 span made every line gold and moved the
+        # handwritten connector below its painted word on real Chromium.
+        self.assertIn(".grunge-intro h1 .headline-white", self.html)
+        self.assertIn(".grunge-intro h1 .headline-ideas {display:flex", self.html)
+        self.assertIn(".grunge-intro h1 .paint-ideas {display:inline-block;color:#10100e}", self.html)
+        self.assertIn(".grunge-intro h1 .scribble-v {display:inline-block", self.html)
+
     def test_collage_is_real_optimized_asset_with_isolated_nginx_route(self):
         image = (LANDING / "grunge-collage.webp").read_bytes()
         self.assertEqual(image[:4], b"RIFF")
