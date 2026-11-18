@@ -118,3 +118,41 @@ async def test_non_admin_cannot_edit_astro_price(tmp_path, monkeypatch):
     state.set_state.assert_not_awaited()
     callback.answer.assert_awaited_once()
     assert "astro" not in json.loads(path.read_text())["service_prices"]
+
+
+
+def test_signed_admin_tariff_publish_rejects_invalid_astro_prices(tmp_path, monkeypatch):
+    from bot import internal_admin_tariffs as tariffs
+    from bot.internal_admin_user_commands import CommandValidationError
+
+    manager, path, initial = manager_fixture(tmp_path, monkeypatch)
+    tariffs._validate_tariff_config(initial)  # existing legacy file stays valid
+    with_bad_astro = {
+        **initial,
+        "service_prices": {**initial["service_prices"],
+                           "astro": {"natal": float("nan")}},
+    }
+    with pytest.raises(CommandValidationError, match="Astro"):
+        tariffs._validate_tariff_config(with_bad_astro)
+    with_bad_astro["service_prices"]["astro"] = {"made_up_service": 2}
+    with pytest.raises(CommandValidationError, match="Astro"):
+        tariffs._validate_tariff_config(with_bad_astro)
+    with_bad_astro["service_prices"]["astro"] = {"natal": 55.50}
+    tariffs._validate_tariff_config(with_bad_astro)
+    assert manager.get_price_config()["service_prices"]["video_prompt"] == 3
+
+
+@pytest.mark.asyncio
+async def test_existing_astro_price_update_rejects_stale_admin_value(tmp_path, monkeypatch):
+    manager, path, _ = manager_fixture(tmp_path, monkeypatch)
+    await update_astro_service_price(manager, "year", 15, expected_old=None)
+    state = SimpleNamespace(get_data=AsyncMock(return_value={
+        "price_target": "astro", "price_key": "year", "price_field": "cost",
+        "current_price_value": 15, "return_to": "admin_prices_astro",
+    }), clear=AsyncMock())
+    await update_astro_service_price(manager, "year", 25, expected_old=15)
+    message = SimpleNamespace(from_user=SimpleNamespace(id=1234), text="30", answer=AsyncMock())
+    await admin.admin_process_price_value(message, state)
+    assert get_astro_service_price(json.loads(path.read_text()), "year") == 25
+    assert "другой сессии" in message.answer.await_args.args[0]
+    state.clear.assert_awaited_once()
