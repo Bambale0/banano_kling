@@ -50,7 +50,7 @@ describe('Trend showcase viewport loading', () => {
       expect(enterViewport).toBeDefined()
       act(() => { enterViewport?.() })
       expect(card.querySelector('img')?.getAttribute('src')).toContain(imageThumbnail)
-      expect(card.querySelector('img')?.getAttribute('loading')).toBe('lazy')
+      expect(card.querySelector('img')?.getAttribute('loading')).toBe('eager')
       expect(container.querySelector('video')).toBeNull()
     } finally {
       Object.defineProperty(global, 'IntersectionObserver', { configurable: true, value: originalObserver })
