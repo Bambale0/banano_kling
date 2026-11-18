@@ -23,7 +23,7 @@
     (function () {
       var fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
       var query = new URLSearchParams(window.location.search);
-      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'];
+      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform', 'tgWebAppStartParam', 'startapp'];
       if (keys.some(function (key) { return fragment.has(key) || query.has(key); })) {
         window.location.replace('/mini-app/' + window.location.search + window.location.hash);
       }
