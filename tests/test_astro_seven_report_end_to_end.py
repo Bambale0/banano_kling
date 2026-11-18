@@ -14,6 +14,7 @@ from bot import astro_report_api, miniapp
 from bot.config import config
 from bot.services.astro_encrypted_checkpoint import EncryptedCheckpointStore
 from bot.services.astro_report_jobs import AstroReportJobs
+from bot.services.astro_report_pipeline import load_report_plan
 from bot.services.astro_report_store import AstroReportSqlStore
 from bot.services.astro_report_worker import AstroReportWorker
 from tests.test_astro_seven_complete_reports import LongFormFixtureProvider, fixtures
@@ -86,8 +87,13 @@ def test_seven_complete_reports_survive_sql_restart_and_are_readable_only_to_own
                     "init_data": "test-first", "service_id": "natal",
                     "input": {}, "consent": True,
                 })
-                assert (await second.json())["job_id"] == ids["natal"]
+                new_job_id = (await second.json())["job_id"]
+                assert second.status == 202
+                assert new_job_id != ids["natal"]
                 assert len(provider.section_ids) == count
+                assert await worker.run_once()
+                assert (await jobs.status(owner_id=101, job_id=new_job_id))["status"] == "completed"
+                assert len(provider.section_ids) == count + len(load_report_plan("natal").sections)
         # Independent store instance proves persistence across worker restart.
         restarted = AstroReportJobs(db_path=db_file, fingerprint_secret="test-astro-complete-secret",
                                     data_key=key)
