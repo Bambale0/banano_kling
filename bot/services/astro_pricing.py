@@ -32,7 +32,11 @@ def _validated_price(value: Any) -> int | float:
         amount = Decimal(str(value))
     except InvalidOperation as exc:
         raise ValueError("Invalid Astro price") from exc
-    if amount != amount.quantize(Decimal("0.01")):
+    try:
+        has_more_than_two_decimals = amount != amount.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ValueError("Astro price exceeds supported numeric precision") from exc
+    if has_more_than_two_decimals:
         raise ValueError("Astro price supports at most two fractional digits")
     return int(amount) if amount == amount.to_integral_value() else float(amount)
 
