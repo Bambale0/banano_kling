@@ -29,3 +29,7 @@
 - Production acceptance: `GET /` → 200 и NEUROMIX landing; `GET /mini-app/` → 200; `revision.txt` точный release SHA; `GET /robots.txt`, `GET /sitemap.xml` → 200; `nginx -t`; проверить browser Telegram login отдельно.
 - Rollback: nightly-owned backups `/var/backups/banano-landing/neuromixbot.com/` не удаляются; publisher сохраняет и восстанавливает исходный Nginx конфиг на сбое. Вся Mini App остаётся нетронутой.
 - Risk: исходный live Nginx vhost содержит оперативные изменения и отличается от template; deploy script изменяет только один точный блок и откажется работать при неизвестном формате, без перезаписи всего vhost.
+
+## Исправление preflight — изоляция корневого сайта
+
+18.11.2026 выяснено на production: `/var/www/neuromixbot.com` — симлинк на `/var/www/tanyapp.xn--e1aikcel5c5a.online`, а далее на `/var/www/tanyapp.chillcreative.ru`. Развёртывание HTML в этот путь затронуло бы резервное имя. Корневой публичный лендинг теперь публикуется **только в `/var/www/neuromix-landing`**, с правами `0755`, а точные Nginx-маршруты `/`, `/robots.txt`, `/sitemap.xml` задают локальный `root` отдельно от общей Mini App. Предусмотрен отказ при симлинке на приватном каталоге. Добавлен регрессионный тест; Mini App и резервные имена остаются неизменными.

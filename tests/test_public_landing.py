@@ -77,7 +77,7 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('property="og:title"', self.html)
 
     def test_nginx_root_and_app_routing(self):
-        self.assertIn("location = / {\n        try_files /index.html =404;", self.nginx)
+        self.assertIn("location = / {\n        root /var/www/neuromix-landing;\n        try_files /index.html =404;", self.nginx)
         self.assertNotIn("return 302 /mini-app/;", self.nginx)
         self.assertIn("location ^~ /mini-app/api/", self.nginx)
         self.assertIn("location /mini-app/", self.nginx)
@@ -88,6 +88,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertLess(self.deploy.index('log "LIVE_OK '), self.deploy.index("deploy_landing_local.sh"))
         for fragment in ("git -C", "nginx -t", "systemctl reload nginx", "rollback", "miniapp_revision"):
             self.assertIn(fragment, self.publisher)
+
+    def test_landing_isolated_from_shared_miniapp_document_root(self):
+        self.assertIn('root /var/www/neuromix-landing;', self.nginx)
+        self.assertIn('ROOT="/var/www/neuromix-landing"', self.publisher)
+        self.assertIn('[[ ! -L "$ROOT" ]]', self.publisher)
+        self.assertIn('install -d -m 0755 "$ROOT"', self.publisher)
+        self.assertNotIn('ROOT="/var/www/$HOST"', self.publisher)
 
     def test_public_sitemap(self):
         robots = (LANDING / "robots.txt").read_text(encoding="utf-8")

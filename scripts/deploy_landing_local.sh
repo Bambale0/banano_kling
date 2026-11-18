@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 EXPECTED_SHA="$1"
 HOST="neuromixbot.com"
-ROOT="/var/www/$HOST"
+ROOT="/var/www/neuromix-landing"
 LANDING="$PROJECT_DIR/web/landing"
 NGINX="/etc/nginx/sites-available/$HOST.conf"
 BACKUPS="/var/backups/banano-landing/$HOST"
@@ -50,7 +50,9 @@ assert p.links.count("/mini-app/") >= 3, "Missing direct app entrypoints"
 assert all(link.startswith(("/", "#")) for link in p.links), "Unexpected outbound link"
 PY
 
-mkdir -p "$BACKUP" "$ROOT"
+[[ ! -L "$ROOT" ]] || { echo "[landing] Isolated landing root cannot be a symlink" >&2; exit 1; }
+install -d -m 0755 "$ROOT"
+install -d -m 0700 "$BACKUP"
 cp -p -- "$NGINX" "$BACKUP/nginx.conf"
 if [[ -f "$ROOT/index.html" ]]; then cp -p -- "$ROOT/index.html" "$BACKUP/index.html"; fi
 for file in robots.txt sitemap.xml; do
@@ -95,16 +97,19 @@ old = """    location = / {
 """
 new = """    # Public marketing entry; existing Mini App stays at /mini-app/.
     location = / {
+        root /var/www/neuromix-landing;
         try_files /index.html =404;
         add_header Cache-Control "no-cache, max-age=0, must-revalidate" always;
     }
 
     location = /robots.txt {
+        root /var/www/neuromix-landing;
         try_files /robots.txt =404;
         add_header Cache-Control "public, max-age=3600" always;
     }
 
     location = /sitemap.xml {
+        root /var/www/neuromix-landing;
         try_files /sitemap.xml =404;
         add_header Cache-Control "public, max-age=3600" always;
     }
