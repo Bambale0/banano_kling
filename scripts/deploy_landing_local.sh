@@ -204,7 +204,16 @@ for mode in origin public; do
   args=()
   if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
   for path in /login /login/; do
-    code="$(curl -sS --connect-timeout 5 --max-time 20 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST$path" || true)"
+    # On reload an old Nginx worker can briefly serve 404; the revision query
+    # also avoids stale edge caches. Never accept a 200 from the Mini App fallback.
+    code=""
+    for (( attempt=1; attempt<=30; attempt++ )); do
+      code="$(curl -sS --connect-timeout 5 --max-time 15 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST$path?revision=$EXPECTED_SHA" || true)"
+      if [[ "$code" == 200 ]] && grep -q 'id="login-page-title"' "$SMOKE" && grep -q '/mini-app/_next/static/' "$SMOKE"; then
+        break
+      fi
+      sleep 1
+    done
     [[ "$code" == 200 ]] || { echo "[landing] $mode $path returned $code" >&2; exit 1; }
     grep -q 'id="login-page-title"' "$SMOKE" || { echo "[landing] $mode $path is not login page" >&2; exit 1; }
     grep -q '/mini-app/_next/static/' "$SMOKE" || { echo "[landing] $mode $path missing Next assets" >&2; exit 1; }
