@@ -8,8 +8,11 @@ exactly-once charged request); completed checkpoint sections are never redone.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 from uuid import uuid4
@@ -198,21 +201,35 @@ class AstroReportJobs:
     async def enqueue(
         self, *, owner_id: int, plan: ReportPlan, facts: dict,
         consent: bool, now: int | None = None,
+        request_id: str | None = None,
     ) -> str:
         if consent is not True:
             raise ValueError("Explicit Astro birth-data storage consent required")
         if type(owner_id) is not int or owner_id <= 0:
             raise ValueError("Invalid report owner")
+        if request_id is not None and (
+            not isinstance(request_id, str) or not re.fullmatch(r"[0-9a-f]{32}", request_id)
+        ):
+            raise ValueError("Invalid Astro request id")
         now = int(time.time()) if now is None else now
         approved = _fact_catalog(facts)
+        # A new click gets a fresh namespace; a replay of that same click must
+        # return the same job without triggering a second paid request.
+        job_id = (
+            hmac.new(
+                self.fingerprint_secret.encode("utf-8"),
+                f"astro-job:v1:{owner_id}:{request_id}".encode("ascii"),
+                hashlib.sha256,
+            ).hexdigest()[:32]
+            if request_id is not None else uuid4().hex
+        )
         fingerprint = report_fingerprint(
             owner_id=owner_id, plan=plan, facts=approved,
-            secret=self.fingerprint_secret,
+            secret=self.fingerprint_secret, generation_id=job_id,
         )
         sealed = self._seal(approved)
-        job_id = uuid4().hex
         await self.initialize()
-        # UNIQUE(owner,fingerprint) must not pin expired data forever.
+        # Deduplicate only HTTP replays of the same click, not birth facts.
         await self.purge_expired(now=now)
         async with self._connect() as conn:
             await conn.execute("""
@@ -220,14 +237,16 @@ class AstroReportJobs:
                     job_id, owner_id, fingerprint, service_id, facts_sealed,
                     status, next_run_at, created_at, updated_at, expires_at, consent_version
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, 'astro-consent-v1')
-                ON CONFLICT (owner_id, fingerprint) DO NOTHING
+                ON CONFLICT DO NOTHING
             """, (job_id, owner_id, fingerprint, plan.service_id, sealed,
                   now, now, now, now + 86400 * self.policy.retention_days))
             cursor = await conn.execute(
-                "SELECT job_id FROM astro_report_jobs WHERE owner_id=? AND fingerprint=?",
-                (owner_id, fingerprint),
+                "SELECT job_id, fingerprint FROM astro_report_jobs WHERE job_id=? AND owner_id=?",
+                (job_id, owner_id),
             )
             row = await cursor.fetchone()
+            if row and str(row[1]) != fingerprint:
+                raise ValueError("Astro request id reused with different source facts")
             await conn.commit()
         if not row:
             raise RuntimeError("Astro enqueue did not persist")

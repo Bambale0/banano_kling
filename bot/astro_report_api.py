@@ -146,6 +146,7 @@ async def astro_report_start(request: web.Request) -> web.Response:
             raise web.HTTPForbidden()
         job_id = await jobs.enqueue(
             owner_id=owner_id, plan=plan, facts=facts, consent=True,
+            request_id=body.get("request_id"),
         )
         current = await jobs.status(owner_id=owner_id, job_id=job_id)
         if current is None:

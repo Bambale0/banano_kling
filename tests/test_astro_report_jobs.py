@@ -1,6 +1,7 @@
 """Durable report queue: owner scoping, leases, retries, encryption, breaker."""
 import asyncio
 
+import pytest
 from cryptography.fernet import Fernet
 
 from bot.services.astro_report_jobs import AstroJobPolicy, AstroReportJobs
@@ -23,17 +24,33 @@ def facts():
     }
 
 
-def test_enqueue_is_idempotent_encrypted_and_owner_scoped(tmp_path):
+def test_enqueue_is_idempotent_per_request_not_per_birth_facts(tmp_path):
     async def check():
         jobs = store(tmp_path)
         plan = load_report_plan("natal")
-        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
-        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=101)
-        c = await jobs.enqueue(owner_id=2, plan=plan, facts=facts(), consent=True, now=102)
-        assert a == b and a != c
+        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=100, request_id="a" * 32)
+        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=101, request_id="a" * 32)
+        c = await jobs.enqueue(owner_id=2, plan=plan, facts=facts(), consent=True,
+                               now=102, request_id="a" * 32)
+        d = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=103, request_id="b" * 32)
+        e = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=104)
+        f = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=105)
+        assert a == b  # HTTP replay of one click is not double-charged.
+        assert len({a, c, d, e, f}) == 5  # Same birth facts: unlimited fresh reports.
         assert await jobs.status(owner_id=2, job_id=a) is None
-        assert (await jobs.status(owner_id=1, job_id=a, now=103))["status"] == "queued"
+        assert (await jobs.status(owner_id=1, job_id=a, now=106))["status"] == "queued"
         assert b"private city" not in (tmp_path / "jobs.db").read_bytes()
+
+        changed = {**facts(), "chart": {"bodies": {"Sun": {"lon": 44}}}}
+        with pytest.raises(ValueError, match="request"):
+            await jobs.enqueue(owner_id=1, plan=plan, facts=changed, consent=True,
+                               now=107, request_id="a" * 32)
+        with pytest.raises(ValueError):
+            await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True,
+                               now=108, request_id="not-a-valid-key")
     asyncio.run(check())
 
 
@@ -125,8 +142,8 @@ def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_bounded(tmp_pat
         assert await jobs.reschedule(job_id=job_id, worker_id="a", retry=False,
                                      error_code="temporary_provider_failure", now=102)
         assert (await jobs.status(owner_id=1, job_id=job_id, now=104))["status"] == "failed"
-        assert await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
-                                  consent=True, now=105) == job_id
+        # This test exercises only the explicit retry path; a new report
+        # would be a distinct queued job, covered in the fresh-generation test.
         assert not await jobs.retry_failed(owner_id=2, job_id=job_id, consent=True, now=106)
         assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=False, now=106)
         outcomes = await asyncio.gather(*[
@@ -244,4 +261,31 @@ def test_report_history_is_owner_scoped_sorted_and_excludes_private_facts(tmp_pa
         assert all(entry["job_id"] != other for entry in history)
         assert (await jobs.list_owner(owner_id=22, now=105))[0]["job_id"] == other
         assert await jobs.list_owner(owner_id=33, now=105) == []
+    asyncio.run(check())
+
+
+def test_repeated_fresh_generations_use_distinct_checkpoint_namespaces(tmp_path):
+    """New reports must not borrow a completed report or its paid sections."""
+    from bot.services.astro_report_pipeline import report_fingerprint
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
+        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=101)
+        assert a != b
+        first = await jobs.claim(worker_id="first", now=102)
+        second = await jobs.claim(worker_id="second", now=102)
+        assert first is not None and second is not None
+        assert first.fingerprint != second.fingerprint
+        assert first.fingerprint == report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+            generation_id=first.job_id,
+        )
+        assert second.fingerprint == report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+            generation_id=second.job_id,
+        )
+        assert first.fingerprint != report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+        )
     asyncio.run(check())

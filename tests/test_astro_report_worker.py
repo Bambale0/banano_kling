@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 
 from bot.services.astro_kie_gpt6 import KieRetryableError
 from bot.services.astro_report_jobs import AstroJobPolicy, AstroReportJobs
-from bot.services.astro_report_pipeline import load_report_plan
+from bot.services.astro_report_pipeline import load_report_plan, report_fingerprint
 from bot.services.astro_report_store import AstroReportSqlStore
 from bot.services.astro_report_worker import AstroReportWorker
 
@@ -132,4 +132,67 @@ def test_invalid_section_does_not_open_provider_circuit(tmp_path):
         assert (await jobs.status(owner_id=99, job_id=ident))["error_code"] == "section_validation_failed"
         await jobs.circuit_failure()
         assert await jobs.circuit_allows()  # KIE had responded successfully.
+    asyncio.run(check())
+
+
+def test_fresh_same_facts_reports_each_generate_all_sections(tmp_path):
+    async def check():
+        db_path = str(tmp_path / "independent-reports.db")
+        jobs = AstroReportJobs(
+            db_path=db_path, fingerprint_secret="fixture-for-fresh-report-tests",
+            data_key=Fernet.generate_key(),
+        )
+        facts = {"schema_version": "astro.natal-facts.v1",
+                 "chart": {"bodies": {"Sun": {"lon": 11.2}}}}
+        plan = load_report_plan("natal")
+        ids = [await jobs.enqueue(owner_id=99, plan=plan, facts=facts, consent=True,
+                                  request_id=key * 32) for key in ("a", "b")]
+        assert ids[0] != ids[1]
+        provider = Provider()
+        provider.fail_once_at = -1
+        worker = AstroReportWorker(
+            jobs=jobs, provider=provider,
+            checkpoints=AstroReportSqlStore(db_path=db_path),
+            is_admin=lambda owner: owner == 99,
+        )
+        assert await worker.run_once()
+        assert await worker.run_once()
+        for job_id in ids:
+            result = await jobs.status(owner_id=99, job_id=job_id)
+            assert result["status"] == "completed"
+            assert len(result["report"]["sections"]) == len(plan.sections)
+        assert len(provider.requests) == len(plan.sections) * 2
+        assert await worker.run_once() is False
+    asyncio.run(check())
+
+
+def test_existing_legacy_fingerprint_job_remains_resumable_after_upgrade(tmp_path):
+    async def check():
+        db_path = str(tmp_path / "legacy-job.db")
+        jobs = AstroReportJobs(
+            db_path=db_path, fingerprint_secret="fixture-for-legacy-report-tests",
+            data_key=Fernet.generate_key(),
+        )
+        facts = {"schema_version": "astro.natal-facts.v1",
+                 "chart": {"bodies": {"Sun": {"lon": 11.2}}}}
+        plan = load_report_plan("natal")
+        ident = await jobs.enqueue(owner_id=99, plan=plan, facts=facts, consent=True)
+        legacy_fingerprint = report_fingerprint(
+            owner_id=99, plan=plan, facts=facts, secret=jobs.fingerprint_secret,
+        )
+        # Emulate a report created before per-generation fingerprints were added.
+        async with jobs._connect() as conn:
+            await conn.execute("UPDATE astro_report_jobs SET fingerprint=? WHERE job_id=?",
+                               (legacy_fingerprint, ident))
+            await conn.commit()
+        provider = Provider()
+        provider.fail_once_at = -1
+        worker = AstroReportWorker(
+            jobs=jobs, provider=provider,
+            checkpoints=AstroReportSqlStore(db_path=db_path),
+            is_admin=lambda owner: owner == 99,
+        )
+        assert await worker.run_once()
+        assert (await jobs.status(owner_id=99, job_id=ident))["status"] == "completed"
+        assert len(provider.requests) == len(plan.sections)
     asyncio.run(check())

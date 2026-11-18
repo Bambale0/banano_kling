@@ -266,12 +266,20 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       return
     }
     const epoch = requestEpoch.current
+    // Every deliberate click is a new report; repeated HTTP delivery of this
+    // single click uses the same key so a proxy retry cannot enqueue twice.
+    const randomBytes = new Uint8Array(16)
+    globalThis.crypto?.getRandomValues?.(randomBytes)
+    const requestId = randomBytes.some((value) => value !== 0)
+      ? Array.from(randomBytes, (value) => value.toString(16).padStart(2, '0')).join('')
+      : undefined
     setBusy(true)
-    setMessage('Проверяем данные и начинаем разбор…')
+    setMessage('Проверяем данные и начинаем новый разбор…')
     try {
       const response = await fetch(REPORTS_ROOT + '/start', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ init_data: getInitData(), service_id: service, consent: true, input }),
+        body: JSON.stringify({ init_data: getInitData(), service_id: service, consent: true,
+          input, request_id: requestId }),
       })
       if (epoch !== requestEpoch.current) return
       if (response.status === 401 || response.status === 403) {

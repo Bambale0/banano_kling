@@ -111,6 +111,7 @@ describe('Astro long-report Mini App integration', () => {
       service_id: 'natal', consent: true, input: { place_id: 498817,
         date: '29.02.2000', time: '13:45' },
     })
+    expect(body.request_id).toMatch(/^[0-9a-f]{32}$/)
     expect(body.input).not.toHaveProperty('timezone')
     expect(body.input).not.toHaveProperty('longitude')
   })
@@ -293,7 +294,12 @@ describe('Astro long-report Mini App integration', () => {
     expect(retry).toBeEnabled()
     fireEvent.click(retry)
     expect(await screen.findByLabelText('Готовый полный ИИ-разбор')).toHaveTextContent('Сервер снова доступен.')
-    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(2)
+    const startRequests = mock.mock.calls.filter(([url]) => url.endsWith('/start'))
+    expect(startRequests).toHaveLength(2)
+    const keys = startRequests.map(([, options]) => JSON.parse(options.body).request_id)
+    expect(keys[0]).toMatch(/^[0-9a-f]{32}$/)
+    expect(keys[1]).toMatch(/^[0-9a-f]{32}$/)
+    expect(keys[1]).not.toBe(keys[0])
   })
 
   it('does not hide report creation when report history temporarily returns 503', async () => {
