@@ -25,7 +25,7 @@ ASTRO_SERVICE_LABELS: dict[str, str] = {
 def _validated_price(value: Any) -> int | float:
     """Enforce positive, finite banana prices with at most two decimals."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError("Astro price must be a number")
+        raise ValueError("Astro price must be a number")  # noqa: TRY004
     if not math.isfinite(value) or value <= 0:
         raise ValueError("Astro price must be finite and positive")
     try:
@@ -41,10 +41,10 @@ def validate_astro_service_prices(config: dict[str, Any]) -> None:
     """Validate optional service_prices.astro without requiring legacy migration."""
     services = config.get("service_prices", {})
     if not isinstance(services, dict):
-        raise ValueError("service_prices must be an object")
+        raise ValueError("service_prices must be an object")  # noqa: TRY004
     astro = services.get("astro", {})
     if not isinstance(astro, dict):
-        raise ValueError("service_prices.astro must be an object")
+        raise ValueError("service_prices.astro must be an object")  # noqa: TRY004
     unknown = set(astro) - set(ASTRO_SERVICE_LABELS)
     if unknown:
         raise ValueError("Unknown Astro service price")
@@ -61,8 +61,8 @@ def get_astro_service_price(config: dict[str, Any], service_id: str) -> int | fl
 
 
 async def update_astro_service_price(
-    manager: Any, service_id: str, value: int | float,
-    *, expected_old: int | float | None,
+    manager: Any, service_id: str, value: float,
+    *, expected_old: float | None,
 ) -> int | float | None:
     """CAS write under the same lock as authenticated internal tariff publishing.
 
@@ -79,7 +79,7 @@ async def update_astro_service_price(
         old_bytes = path.read_bytes()
         config = json.loads(old_bytes)
         if not isinstance(config, dict):
-            raise ValueError("Invalid price catalog")
+            raise ValueError("Invalid price catalog")  # noqa: TRY004
         current = get_astro_service_price(config, service_id)
         if current != expected_old:
             raise ValueError("Astro price changed: reopen the editor")
