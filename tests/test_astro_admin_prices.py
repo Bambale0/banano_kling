@@ -156,3 +156,21 @@ async def test_existing_astro_price_update_rejects_stale_admin_value(tmp_path, m
     assert get_astro_service_price(json.loads(path.read_text()), "year") == 25
     assert "другой сессии" in message.answer.await_args.args[0]
     state.clear.assert_awaited_once()
+
+
+
+def test_legacy_admin_tariff_editor_cannot_erase_existing_astro_prices(tmp_path, monkeypatch):
+    from bot import internal_admin_tariffs as tariffs
+
+    _, _, current = manager_fixture(tmp_path, monkeypatch)
+    current["service_prices"]["astro"] = {"natal": 95, "lunar": 5}
+    merged = tariffs._merge_tariff_view(current, {
+        "service_prices": {"video_prompt": 9, "photo_prompt_rub": 1},
+    })
+    assert merged["service_prices"]["astro"] == {"natal": 95, "lunar": 5}
+    assert merged["service_prices"]["video_prompt"] == 9
+    # An up-to-date editor explicitly naming Astro can still update/clear it.
+    explicit = tariffs._merge_tariff_view(current, {
+        "service_prices": {**current["service_prices"], "astro": {"natal": 12}},
+    })
+    assert explicit["service_prices"]["astro"] == {"natal": 12}
