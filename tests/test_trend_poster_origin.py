@@ -9,6 +9,7 @@ from io import BytesIO
 
 import pytest
 from aiohttp import web
+from aiohttp.test_utils import make_mocked_request
 
 from bot.services import trend_poster_origin as origin
 
@@ -103,3 +104,25 @@ async def test_transient_s3_failure_returns_503_without_redirect(monkeypatch):
     monkeypatch.setattr(origin, "_s3_client", lambda _s: client)
     with pytest.raises(web.HTTPServiceUnavailable):
         await origin.serve_public_trend_poster(Request("179502/0123456789abcdef01234567.jpg"))
+
+
+
+@pytest.mark.asyncio
+async def test_real_route_registration_preserves_compact_mp4_redirect():
+    """Regression: the public JPG route must not swallow compact preview MP4."""
+    app = web.Application()
+    origin.register_public_trend_poster_route(app)
+
+    async def normal_s3_upload(request):
+        return web.HTTPTemporaryRedirect(location="https://storage.example/preview.mp4")
+
+    app.router.add_get("/uploads/{path:.*}", normal_s3_upload)
+    hashed = "0123456789abcdef0123456789abcdef"
+
+    for path, expected_handler in (
+        (f"/uploads/trend-previews/catalog/{hashed}.jpg", origin.serve_public_trend_poster),
+        (f"/uploads/trend-previews/179502/{hashed}.mp4", normal_s3_upload),
+        (f"/uploads/feed/{hashed}.mp4", normal_s3_upload),
+    ):
+        match = await app.router.resolve(make_mocked_request("GET", path, app=app))
+        assert match.handler is expected_handler, path
