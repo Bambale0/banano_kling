@@ -358,7 +358,7 @@ async def web_auth_config(request: web.Request) -> web.Response:
                   "providers": {
                       "google": all(_credentials("google")),
                       "yandex": all(_credentials("yandex")),
-                      "telegram": True,
+                      "telegram": bool(_public_origin()),
                       "email": _email_enabled(),
                   }})
 
@@ -542,8 +542,7 @@ async def telegram_login(request: web.Request) -> web.StreamResponse:
             return _json({"ok": False, "error": "Session required"}, 401)
         flow = {"mode": mode, "source": account if mode == "link" else None,
                 "destination": _safe_next(payload.get("next"))}
-        result = await _complete_identity(request, "telegram", str(verified["id"]), flow)
-        return _json({"ok": True, "redirect": result.location})
+        return await _complete_identity(request, "telegram", str(verified["id"]), flow)
     except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
         return _json({"ok": False, "error": "Invalid Telegram signature"}, 401)
 
