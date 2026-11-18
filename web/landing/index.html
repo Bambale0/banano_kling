@@ -535,7 +535,14 @@
     @media (prefers-reduced-motion:reduce){
       .btn-primary.grunge-cta,.btn-primary.grunge-cta:hover{transition:none}
     }
-    </style>
+  
+    /* Override the existing .intro h1 span rule: it is too broad and otherwise
+       paints the white stencil gold and breaks the handwritten "В" inline. */
+    .grunge-intro h1 .headline-white {color:#f2ede2;display:block}
+    .grunge-intro h1 .headline-ideas {display:flex;align-items:center;color:#f2ede2}
+    .grunge-intro h1 .paint-ideas {display:inline-block;color:#10100e}
+    .grunge-intro h1 .scribble-v {display:inline-block;color:#ebe3d4}
+  </style>
 </head>
 <body>
   <header class="mast">
