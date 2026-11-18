@@ -89,3 +89,13 @@ async def serve_public_trend_poster(request: web.Request) -> web.Response:
     response.headers["Cache-Control"] = _PUBLIC_CACHE_CONTROL
     response.headers["X-Content-Type-Options"] = "nosniff"
     return response
+
+
+
+def register_public_trend_poster_route(app: web.Application) -> None:
+    """Register only JPG thumbnails; MP4s fall through to normal /uploads."""
+    app.router.add_get(
+        r"/uploads/trend-previews/{poster_path:.*\.jpg}",
+        serve_public_trend_poster,
+        name="public-trend-poster",
+    )
