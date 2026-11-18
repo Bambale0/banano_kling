@@ -278,112 +278,159 @@
       .intro h1{font-size:clamp(36px,10vw,43px)}
       .benefits-grid{grid-template-rows:280px 220px 220px}
     }
+
+    /* GRUNGE COVER / faithful approved 1672×941 artwork with native links */
+    .screenreader-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .grunge-stage{position:relative;background:#090b0c;color:#f4ede0}
+    .grunge-desktop{position:relative;width:100%;max-width:2200px;margin:0 auto}
+    .grunge-poster{aspect-ratio:1672/941;width:100%;background:#090b0c url("grunge-hero-v1.webp") center / 100% 100% no-repeat}
+    .hotspot{display:block;position:absolute;background:transparent;border:1px solid transparent;border-radius:7px;transition:background .12s}
+    .hotspot:hover{background:rgba(242,194,107,.065)}
+    .hotspot:focus-visible{outline:3px solid #f5cf82;outline-offset:1px;background:rgba(239,185,68,.14)}
+    .hot-brand{left:8.1%;top:1.2%;width:17.3%;height:7.0%}
+    .hot-possibilities{left:54.4%;top:1%;width:10%;height:7.6%}
+    .hot-how{left:64.5%;top:1%;width:11.3%;height:7.6%}
+    .hot-login{left:74.8%;top:1%;width:10.2%;height:7.6%}
+    .hot-enter{left:85%;top:1%;width:8.6%;height:7.6%}
+    .hot-hero-cta{left:7%;top:69%;width:30%;height:12%}
+    .hot-more{left:38%;top:70.5%;width:19.5%;height:10%}
+    .hot-photo{left:13%;top:85%;width:15%;height:11%}
+    .hot-video{left:31%;top:85%;width:16%;height:11%}
+    .hot-refs{left:49%;top:85%;width:17%;height:11%}
+    .hot-trends{left:68%;top:85%;width:16%;height:11%}
+    .grunge-mobile{display:none}
+    .grunge-anchor{scroll-margin-top:24px;height:0}
+    body{background:#090b0c;color:#f4ede0}
+    .section-story,.section-benefits,.section-how,.section-proof,.section-terms,.section-faq,.access-section{background-color:#0b0d0e;border-bottom:1px solid #9e6e2b60;position:relative;isolation:isolate}
+    .section-story::before,.section-benefits::before,.section-proof::before,.section-faq::before{content:"";position:absolute;inset:0;opacity:.1;pointer-events:none;z-index:-1;background-image:repeating-linear-gradient(40deg,transparent 0 17px,#ac9162 17.4px 17.8px,transparent 18px 45px)}
+    .section-context,.overline{display:inline-block;background:#d6a64c;color:#141211;padding:5px 12px;font-weight:850;letter-spacing:.09em;clip-path:polygon(1% 5%,97% 0,100% 9%,98% 94%,0 100%,2% 74%);font-family:Impact,"Arial Narrow",sans-serif;text-transform:uppercase}
+    .story-lead h2,.section-heading h2,.proof-lead h2,.terms-grid h2,.faq-grid h2,.access-lead h2{font-family:Impact,"Arial Narrow",system-ui,sans-serif;letter-spacing:-.02em;font-weight:900;text-transform:uppercase;line-height:1.03}
+    .story-row{border-bottom:1px dashed rgba(220,184,122,.32)}
+    .story-row>span,.step-number{color:#e3ad4d;font-family:Impact,"Arial Narrow",sans-serif;font-size:18px}
+    .subtle-link{color:#e3b258;border-bottom:2px solid #c5943b;letter-spacing:.02em;font-weight:800}
+    .benefit{border-radius:5px;border:1px solid rgba(229,181,92,.42);background-color:#191a1a;box-shadow:5px 6px 0 rgba(135,97,42,.18)}
+    .benefit-tag{font-family:Impact,"Arial Narrow",sans-serif;font-size:16px;letter-spacing:.07em;background:#e5b14c;color:#171411;width:max-content;padding:3px 10px;transform:rotate(-2deg)}
+    .steps{border-top:2px solid #b88a47}
+    .steps li:not(:last-child)::after{background:#dda741}
+    .proof-sheet{border:1px solid #a77e3e;border-radius:0;box-shadow:9px 9px 0 #a8813623;background:#181a1b}
+    .proof-index{color:#dbb06c}
+    .faq-items summary{font-weight:800}
+    .faq-items summary::after{color:#e7ad55}
+    .auth-box{border:1px solid rgba(231,184,96,.38);border-radius:4px;background:#151719;box-shadow:6px 7px 0 #a576342e}
+    .telegram-entry{border-radius:4px}
+    .access-section{background:radial-gradient(circle at 25% 15%,#7c502422,transparent 45%),#0b0d0e}
+    .foot{background:#090b0c;border-top:1px dashed rgba(238,180,93,.4)}
+    @media(max-width:820px){
+      .grunge-desktop{display:none}
+      .grunge-mobile{display:block;position:relative;overflow:hidden;background:radial-gradient(ellipse at 80% 35%,#11434955,transparent 49%),#0b0d0d}
+      .grunge-mobile::before{content:"";position:absolute;inset:0;pointer-events:none;opacity:.13;background-image:repeating-linear-gradient(128deg,transparent 0 27px,#c49b54 27.5px 28px,transparent 28.5px 72px);mix-blend-mode:overlay}
+      .grunge-mobile-header{min-height:77px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 18px;border-bottom:1px solid #b887503e}
+      .grunge-mobile-brand{display:flex;align-items:center;gap:10px;min-width:0}
+      .grunge-brand-mark{width:42px;height:42px;flex:none;border-radius:10px;border:1px solid #d09e4e;color:#ebb55a;background:linear-gradient(145deg,#392819,#0b1011);display:grid;place-items:center}
+      .grunge-brand-mark svg{width:34px;height:34px}
+      .grunge-brand-name{display:flex;flex-direction:column;font-size:19px;font-weight:1000;letter-spacing:.16em;line-height:1}
+      .grunge-brand-name small{font-size:8px;letter-spacing:.21em;color:#b1a8a1;margin-top:7px}
+      .grunge-mobile-enter{color:#eabb61;border:1px solid #bd8540;border-radius:10px;padding:12px 15px;font-weight:850;font-size:12px;white-space:nowrap}
+      .grunge-mobile-body{padding:36px 22px 19px;position:relative}
+      .grunge-mobile-body::before{content:"";position:absolute;top:0;left:-21px;width:72px;height:62px;background:linear-gradient(133deg,#c89645,#62431f);clip-path:polygon(0 0,100% 0,38% 53%,12% 75%,0 100%);opacity:.45}
+      .grunge-mobile-kicker{display:inline-block;background:#d0a04b;color:#171310;padding:9px 13px;transform:rotate(-1.4deg);font-size:10px;font-weight:1000;letter-spacing:.12em;clip-path:polygon(2% 1%,97% 0,100% 91%,3% 100%,0 14%)}
+      .grunge-mobile-title{margin:23px 0 17px;font-family:Impact,"Arial Narrow","Arial Black",system-ui,sans-serif;font-size:clamp(42px,12.2vw,68px);font-weight:1000;line-height:.99;letter-spacing:-.042em;color:#f2e9da;text-shadow:1px 1px #746858;transform:rotate(-1.1deg);max-width:620px}
+      .grunge-mobile-title>span{display:block;width:max-content;max-width:100%}
+      .grunge-painted{position:relative;z-index:0;margin:8px 0 6px;color:#17110a;padding:0 18px 3px 9px;transform:rotate(-2deg)}
+      .grunge-painted::before{content:"";position:absolute;inset:1px -10px 0 -6px;z-index:-1;background:linear-gradient(112deg,#b97925,#f2bb56 22%,#e5a647 68%,#ba792a);clip-path:polygon(1% 6%,98% 0,100% 8%,97% 22%,100% 80%,92% 97%,0 100%,3% 74%,0 54%)}
+      .grunge-painted em{font-family:Georgia,serif;font-weight:400;font-style:italic;color:#f3e3bd;font-size:.5em;position:absolute;right:-50px;top:1px;transform:rotate(25deg)}
+      .grunge-mobile-video{position:relative}
+      .grunge-mobile-video::after{content:"";position:absolute;bottom:-5px;left:1%;right:0;height:4px;background:#53b3b5;clip-path:polygon(1% 0,96% 0,100% 45%,3% 100%,0 44%)}
+      .grunge-mobile-description{max-width:490px;font-size:15px;line-height:1.64;color:#e6ded5;margin:21px 0 24px;border-left:3px solid #e3ac46;padding-left:13px}
+      .mobile-grunge-cta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:61px;width:min(100%,475px);padding:11px 20px;background:linear-gradient(105deg,#e4a73e,#f3c867 43%,#e0a641);color:#141008;font-family:Impact,"Arial Narrow",system-ui,sans-serif;letter-spacing:.027em;font-size:23px;font-weight:900;clip-path:polygon(2% 0,99% 3%,100% 88%,96% 100%,0 97%,1% 71%,0 15%);transform:rotate(-.8deg);box-shadow:inset 0 1px 0 #ffffff50}
+      .mobile-grunge-cta:hover{filter:brightness(1.08)}
+      .mobile-grunge-cta span{font-size:30px}
+      .grunge-mobile-more{display:inline-flex;gap:9px;margin:18px 0 10px;color:#f0e7d8;font-size:13px;font-weight:650;border-bottom:1px solid #aeaaa4;padding-bottom:6px}
+      .grunge-mobile-art{position:relative;margin:21px -16px 0;isolation:isolate}
+      .grunge-mobile-art img{display:block;width:100%;height:auto;aspect-ratio:975/719;object-fit:cover;filter:saturate(.94) contrast(1.03);clip-path:polygon(3% 4%,28% 1%,37% 5%,65% 0,98% 8%,96% 43%,100% 87%,89% 97%,61% 99%,35% 95%,2% 100%,0 55%)}
+      .grunge-art-label{position:absolute;left:6%;bottom:8%;font-family:ui-monospace,monospace;background:#0e1418;border:1px solid #ccb073;padding:7px 12px;font-size:11px;letter-spacing:.07em;color:#e6ca97;transform:rotate(-4deg)}
+      .grunge-art-cross{position:absolute;right:3%;top:3%;font-size:34px;color:#e9a23e;transform:rotate(12deg)}
+      .grunge-mobile-strip{border-block:1px solid #8e622f;display:grid;grid-template-columns:1fr 1fr;gap:0;padding:4px 14px 12px;background:#0b0d0e}
+      .grunge-mobile-strip a{display:block;padding:13px 4px;color:#ece4d3;font-family:Impact,"Arial Narrow",system-ui,sans-serif;font-size:16px;letter-spacing:.05em;border-bottom:1px solid #5d503c}
+      .grunge-mobile-strip a:nth-child(even){padding-left:12px;border-left:1px solid #5d503c}
+      .mobile-dock{background:#e7b052!important;color:#16120b!important;border-radius:4px!important;font-family:Impact,"Arial Narrow",system-ui,sans-serif;letter-spacing:.06em;font-size:18px!important}
+    }
+    @media(max-width:380px){
+      .grunge-mobile-header{padding:10px 12px}
+      .grunge-brand-name{font-size:15px}
+      .grunge-brand-name small{font-size:7px}
+      .grunge-mobile-enter{padding:11px 12px;font-size:11px}
+      .grunge-mobile-body{padding-inline:17px}
+      .grunge-mobile-title{font-size:clamp(40px,12.1vw,49px)}
+      .mobile-grunge-cta{font-size:20px}
+      .grunge-painted em{right:-32px}
+    }
+    @media(prefers-reduced-motion:reduce){
+      .hotspot,.mobile-grunge-cta{transition:none!important}
+    }
   </style>
 </head>
 <body>
-  <header class="mast">
-    <div class="container mast-inner">
-      <a href="/" class="brand" aria-label="NEUROMIX — главная">
-        <svg class="brand-icon" viewBox="0 0 180 180" fill="none" aria-hidden="true">
-          <path d="M101.141 53H136.632C151.023 53 162.689 64.6662 162.689 79.0573V112.904H148.112V79.0573C148.112 78.7105 148.098 78.3662 148.072 78.0251L112.581 112.898C112.701 112.902 112.821 112.904 112.941 112.904H148.112V126.672H112.941C98.5504 126.672 86.5638 114.891 86.5638 100.5V66.7434H101.141V100.5C101.141 101.15 101.191 101.792 101.289 102.422L137.56 66.7816C137.255 66.7563 136.945 66.7434 136.632 66.7434H101.141V53Z" fill="currentColor"/>
-          <path d="M65.2926 124.136L14 66.7372H34.6355L64.7495 100.436V66.7372H80.1365V118.47C80.1365 126.278 70.4953 129.958 65.2926 124.136Z" fill="currentColor"/>
-        </svg>
-        <span class="brand-text"><strong class="brand-name">NEUROMIX</strong><span class="brand-caption">Creative AI Studio</span></span>
-      </a>
-      <nav class="mast-links" aria-label="Основная навигация">
-        <a href="#benefits">Возможности</a>
-        <a href="#how">Как работает</a>
-        <a href="#faq">Вопросы</a>
-      </nav>
-      <a class="nav-enter" href="/mini-app/">В студию
-        <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </a>
-    </div>
-  </header>
-  <main>
-    <section class="hero" aria-labelledby="hero-title">
-      <div class="container hero-grid">
-        <div class="intro">
-          <span class="eyebrow">Твоя идея. Твои инструменты.</span>
-          <h1 id="hero-title">Превращай идеи <span>в фото и видео.</span></h1>
-          <p>Создавай изображения, работай с референсами, пробуй видеогенерацию и повторяй тренды. В одной AI-студии — прямо в браузере.</p>
-          <div class="hero-cta">
-            <a class="btn-primary" href="/mini-app/">Открыть AI-студию
-              <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
-            <a class="btn-text" href="#possibilities">Посмотреть возможности <span aria-hidden="true">↓</span></a>
-          </div>
-          <div class="hero-hint">
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 10 5 5L17 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Без установки. На телефоне и компьютере.
-          </div>
-        </div>
-        <div class="index" aria-label="Авторская иллюстрация возможностей фото и видео в NEUROMIX">
-          <div class="artboard">
-            <div class="art-big" aria-hidden="true">
-              <svg viewBox="0 0 330 460" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="sc-bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#152b3c"/><stop offset=".47" stop-color="#203b46"/><stop offset=".75" stop-color="#806345"/><stop offset="1" stop-color="#1d262e"/></linearGradient>
-                  <radialGradient id="sc-halo"><stop stop-color="#f7dba6"/><stop offset=".18" stop-color="#dba86f"/><stop offset=".53" stop-color="#617c77" stop-opacity=".54"/><stop offset="1" stop-color="#192c36" stop-opacity="0"/></radialGradient>
-                  <linearGradient id="sc-object" x1=".15" y1=".1" x2=".85" y2=".9"><stop stop-color="#fff1c5"/><stop offset=".2" stop-color="#b4d2c3"/><stop offset=".37" stop-color="#2c6270"/><stop offset=".56" stop-color="#edb570"/><stop offset=".75" stop-color="#916b52"/><stop offset="1" stop-color="#f9db9c"/></linearGradient>
-                  <linearGradient id="sc-crest" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d1fbec"/><stop offset=".3" stop-color="#346773"/><stop offset=".6" stop-color="#a5714b"/><stop offset="1" stop-color="#ffe5a7"/></linearGradient>
-                </defs>
-                <rect width="330" height="460" fill="url(#sc-bg)"/>
-                <circle cx="176" cy="205" r="178" fill="url(#sc-halo)"/>
-                <g stroke="#e6ca95" stroke-width=".8" opacity=".3" fill="none">
-                  <circle cx="158" cy="210" r="141"/><circle cx="158" cy="210" r="125"/>
-                  <path d="M-20 300C87 245 205 340 356 213M-25 321C99 263 243 360 355 238"/>
-                </g>
-                <path d="M200 51C155 51 102 87 97 157c-4 52 33 96 41 149 5 36-2 64-39 106 68-4 153-58 162-128 8-65-23-93-15-142 5-35 12-59-46-91Z" fill="#081b25" opacity=".73"/>
-                <path d="M165 58c-53 28-72 92-53 144 17 49 56 75 54 131-1 27-14 57-33 82 56-29 93-71 103-116 13-54-11-90-12-135-1-51 14-88-59-106Z" fill="url(#sc-object)"/>
-                <path d="M156 74c-25 40-30 71-19 108 10 34 50 60 50 102 1 38-12 77-43 112 39-22 65-67 73-100 11-48-13-96-17-128-5-37 1-71-44-94Z" fill="url(#sc-crest)" opacity=".92"/>
-                <path d="M146 100C140 151 175 188 180 239c5 48-8 95-28 127" fill="none" stroke="#f8dfb9" stroke-width="8" opacity=".65"/>
-                <path d="M194 94c-13 44 11 84 13 126 3 49-2 78-20 107" fill="none" stroke="#184b56" stroke-width="17" opacity=".65"/>
-                <path d="M120 144c18-16 35-22 44-48" stroke="#fff0cc" stroke-width="2" fill="none" opacity=".75"/>
-                <g fill="#d6e8dc" opacity=".6"><circle cx="76" cy="124" r="1.4"/><circle cx="257" cy="105" r="1"/><circle cx="270" cy="277" r="1.4"/><circle cx="70" cy="310" r=".8"/><circle cx="228" cy="361" r=".8"/></g>
-                <path d="M25 411h280" stroke="#eff1e5" opacity=".3"/>
-                <text x="27" y="432" fill="#f4e1bf" font-family="sans-serif" font-size="11" letter-spacing="2">ART / 001</text>
-              </svg>
-            </div>
-            <div class="art-small" aria-hidden="true">
-              <svg viewBox="0 0 185 305" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                  <linearGradient id="sm-bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#12293e"/><stop offset=".53" stop-color="#385875"/><stop offset=".74" stop-color="#a38c7a"/><stop offset="1" stop-color="#142638"/></linearGradient>
-                  <radialGradient id="sm-glow"><stop stop-color="#f0c989"/><stop offset=".4" stop-color="#c79e70" stop-opacity=".65"/><stop offset="1" stop-color="#d9ac74" stop-opacity="0"/></radialGradient>
-                </defs>
-                <rect width="185" height="305" fill="url(#sm-bg)"/>
-                <circle cx="118" cy="123" r="102" fill="url(#sm-glow)"/>
-                <circle cx="118" cy="123" r="41" fill="#f3c991" opacity=".92"/>
-                <path d="M-20 222 38 144 72 184 107 112 166 196 205 166v151H-20Z" fill="#1e3447"/>
-                <path d="m83 149 24-37 24 44-25-14Z" fill="#d2c6ae" opacity=".8"/>
-                <path d="M-10 247 52 198 95 232 153 188 202 225V317H-10Z" fill="#122637"/>
-                <path d="M-10 250Q64 243 188 250V310H-10Z" fill="#2e4b61"/>
-                <path d="M0 262q95-9 180 2M0 275q80-12 180 0" stroke="#ddbc9a" opacity=".28" fill="none"/>
-                <text x="15" y="291" fill="#f5e5ca" font-family="sans-serif" font-size="10" letter-spacing="1.4">MOTION / 002</text>
-              </svg>
-            </div>
-            <span class="art-artifact"><b>CREATIVE OUTPUT</b>NEUROMIX / 01—02</span>
-            <span class="art-number">IMAGINE / CREATE / REPEAT</span>
-            <div class="art-stamp" aria-hidden="true">MAKE<br>IT<br>REAL</div>
-          </div>
-        </div>
-      </div>
-    </section>
-    <section class="strip" id="possibilities" aria-label="Возможности студии">
-      <div class="container strip-grid">
-        <span class="strip-lead">От идеи<br>до результата</span>
-        <span class="strip-item">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><circle cx="8" cy="9" r="1.7" fill="currentColor"/><path d="m5 17 5-5 3 3 3-4 3 4" stroke="currentColor" stroke-width="1.5"/></svg>AI-фото
-        </span>
-        <span class="strip-item">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="m10 9 5 3-5 3Z" stroke="currentColor" stroke-width="1.5"/></svg>AI-видео
-        </span>
-        <span class="strip-item">
-          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 17 10 11l4 3 6-7M15 7h5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Тренды и референсы
-        </span>
-      </div>
-    </section>
+  <section class="grunge-stage" id="top" aria-labelledby="hero-title">
+    <h1 id="hero-title" class="screenreader-only">Превращай идеи в фото и видео — NEUROMIX, AI-студия в браузере</h1>
+    <p class="screenreader-only">Фото, референсы, генерация видео и тренды — в одной AI-студии. Открыть приложение можно через Telegram.</p>
 
+    <!-- Desktop composition is the approved art itself, rather than a generic approximation.
+         Link hitboxes align with the pictured typography and CTAs. -->
+    <div class="grunge-desktop">
+      <div class="grunge-poster" role="img" aria-label="NEUROMIX: чёрно-золотой гранж-коллаж, скульптура, рваная бумага и визуал AI-студии"></div>
+      <nav class="grunge-desktop-links" aria-label="Основная навигация">
+        <a class="hotspot hot-brand" href="/" aria-label="NEUROMIX — на главную"></a>
+        <a class="hotspot hot-possibilities" href="#possibilities" aria-label="Возможности"></a>
+        <a class="hotspot hot-how" href="#how" aria-label="Как это работает"></a>
+        <a class="hotspot hot-login" href="#login" aria-label="Вход в студию"></a>
+        <a class="hotspot hot-enter" href="/mini-app/" aria-label="Войти в студию"></a>
+      </nav>
+      <a class="hotspot hot-hero-cta" href="/mini-app/" aria-label="Открыть AI-студию"></a>
+      <a class="hotspot hot-more" href="#possibilities" aria-label="Посмотреть возможности"></a>
+      <nav class="grunge-desktop-categories" aria-label="Разделы NEUROMIX">
+        <a class="hotspot hot-photo" href="#benefits" aria-label="Фото генерация"></a>
+        <a class="hotspot hot-video" href="#benefits" aria-label="Видео генерация"></a>
+        <a class="hotspot hot-refs" href="#benefits" aria-label="Референсы и стили"></a>
+        <a class="hotspot hot-trends" href="#examples" aria-label="Тренды и идеи"></a>
+      </nav>
+    </div>
+
+    <div class="grunge-mobile">
+      <header class="grunge-mobile-header">
+        <a class="grunge-mobile-brand" href="/" aria-label="NEUROMIX — главная">
+          <span class="grunge-brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 44 44" fill="none"><path d="M5 23h7l4-12 7 22 5-14 3 4h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </span>
+          <span class="grunge-brand-name">NEUROMIX<small>AI CREATIVE STUDIO</small></span>
+        </a>
+        <a href="/mini-app/" class="grunge-mobile-enter">ВОЙТИ <span aria-hidden="true">↗</span></a>
+      </header>
+      <div class="grunge-mobile-body">
+        <span class="grunge-mobile-kicker">ТВОЯ AI-СТУДИЯ — В БРАУЗЕРЕ</span>
+        <div class="grunge-mobile-title" aria-hidden="true">
+          <span>ПРЕВРАЩАЙ</span>
+          <span class="grunge-painted">ИДЕИ <em>↗</em></span>
+          <span>В ФОТО</span>
+          <span class="grunge-mobile-video">И ВИДЕО</span>
+        </div>
+        <p class="grunge-mobile-description">Фото, референсы, генерация видео и тренды — в одной AI-студии.</p>
+        <a class="mobile-grunge-cta" href="/mini-app/">ОТКРЫТЬ AI-СТУДИЮ <span aria-hidden="true">→</span></a>
+        <a class="grunge-mobile-more" href="#possibilities">Посмотреть возможности <span aria-hidden="true">↓</span></a>
+        <div class="grunge-mobile-art" aria-hidden="true">
+          <img src="grunge-mobile-art-v1.webp" width="975" height="719" decoding="async" fetchpriority="low" alt="">
+          <span class="grunge-art-label">AI GENERATION / 001</span>
+          <span class="grunge-art-cross">✕</span>
+        </div>
+      </div>
+      <nav class="grunge-mobile-strip" aria-label="Возможности NEUROMIX">
+        <a href="#benefits">✦&nbsp; ФОТО</a><a href="#benefits">▷&nbsp; ВИДЕО</a>
+        <a href="#benefits">◈&nbsp; РЕФЕРЕНСЫ</a><a href="#examples">↗&nbsp; ТРЕНДЫ</a>
+      </nav>
+    </div>
+  </section>
+  <main>
+    <div id="possibilities" class="grunge-anchor" aria-hidden="true"></div>
     <section class="section-story" id="problems" aria-labelledby="problems-title">
       <div class="container story-grid">
         <div class="story-lead">
@@ -491,7 +538,7 @@
     // button leaves the viewport. IntersectionObserver avoids scroll handlers.
     (function () {
       var dock = document.querySelector('.mobile-dock');
-      var heroButton = document.querySelector('.hero-cta .btn-primary');
+      var heroButton = document.querySelector('.mobile-grunge-cta');
       if (!dock || !heroButton) return;
       function setDockVisible(visible) {
         dock.classList.toggle('is-visible', visible);
