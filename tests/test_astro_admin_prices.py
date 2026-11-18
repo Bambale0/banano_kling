@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 import pytest
 
 from bot.handlers import admin
-from bot.services.preset_manager import PresetManager
 from bot.services.astro_pricing import (
     ASTRO_SERVICE_LABELS,
     get_astro_service_price,
     update_astro_service_price,
     validate_astro_service_prices,
 )
+from bot.services.preset_manager import PresetManager
 
 
 def manager_fixture(tmp_path, monkeypatch):
