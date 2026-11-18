@@ -397,8 +397,9 @@ def test_parallel_failure_saves_successful_checkpoints_before_retry(monkeypatch)
         specs = tuple(SectionSpec(f"part_{n}", f"Раздел {n}", "Анализ", 5)
                       for n in range(3))
         config = replace(plan(), sections=specs, min_total_words=15)
-        kwargs = dict(owner_id=19, plan=config, facts=facts(),
-                      secret="test-concurrency-hmac", store=checkpoint, provider=provider)
+        kwargs = {"owner_id": 19, "plan": config, "facts": facts(),
+                  "secret": "test-concurrency-hmac", "store": checkpoint,
+                  "provider": provider}
         with pytest.raises(TimeoutError, match="injected"):
             await compose_report(**kwargs)
         assert len(checkpoint.saved) == 2
@@ -456,3 +457,37 @@ def test_sentence_repair_never_weakens_minimum_words_or_trust_boundary(monkeypat
     with pytest.raises(AstroReportError):
         compose(provider=provider)
     assert len(provider.calls) == 1
+
+
+def test_bounded_concurrency_does_not_start_more_than_configured(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "3")
+
+    class MeasuringProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.peak = 0
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return json.dumps({"section_id": req["section_id"],
+                               "text": "Осторожная символическая интерпретация. " * 12})
+
+    async def check():
+        provider = MeasuringProvider()
+        specs = tuple(SectionSpec(f"part_{n}", f"Раздел {n}", "Анализ", 5)
+                      for n in range(9))
+        result = await compose_report(
+            owner_id=19, plan=replace(plan(), sections=specs, min_total_words=45),
+            facts=facts(), secret="test-concurrency-hmac", store=Checkpoints(),
+            provider=provider,
+        )
+        assert len(provider.calls) == 9
+        assert provider.peak == 3
+        assert [s["id"] for s in result["sections"]] == [x.id for x in specs]
+    asyncio.run(check())
