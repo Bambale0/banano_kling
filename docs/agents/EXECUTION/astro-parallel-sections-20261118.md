@@ -21,6 +21,7 @@
 
 - Add red-capable async barrier tests: overlap/bound/order, failure drain/resume, cancellation cleanup, invalid configuration, shared cross-worker provider budget.
 - Run them against the unchanged serial baseline first.
+- Red baseline verified at `10bcd578309409d0a19b8288ce83352b0c99c76b`: **8 failed** in 6.17s. The serial pipeline cannot reach the three-call barrier; invalid budget is ignored; no shared provider limiter exists. Tests ran with synthetic actors and isolated SQLite, never production credentials/data.
 - Implement the minimum concurrency change; run all Astro regressions and changed-file lint.
 - Verify revocation while waiting for a provider slot and unchanged legacy/checkpoint identity.
 - Run the four protected CI gates, native auto-merge, exact merge-SHA production CI/deploy and health/frontend revision checks.

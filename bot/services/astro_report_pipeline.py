@@ -7,6 +7,7 @@ must supply an atomic, owner-scoped checkpoint storage adapter.
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import hashlib
 import hmac
@@ -391,6 +392,17 @@ def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec,
     return plan.sections + tuple(expanded)
 
 
+def report_section_concurrency() -> int:
+    """Bound both per-report fan-out and the runtime-wide paid request budget."""
+    try:
+        value = int(os.getenv("ASTRO_REPORT_SECTION_CONCURRENCY", "4"))
+    except ValueError as exc:
+        raise ValueError("Invalid Astro section concurrency") from exc
+    if not 1 <= value <= 8:
+        raise ValueError("Invalid Astro section concurrency")
+    return value
+
+
 async def compose_report(
     *,
     owner_id: int,
@@ -409,6 +421,7 @@ async def compose_report(
     A failure can be resumed
     without regenerating committed sections or double billing.
     """
+    concurrency = report_section_concurrency()
     fingerprint = report_fingerprint(
         owner_id=owner_id, plan=plan, facts=facts, secret=secret,
         generation_id=generation_id,
@@ -425,8 +438,8 @@ async def compose_report(
         raise ValueError("Invalid Astro section validation retry configuration") from exc
     if not 0 <= validation_retries <= 2:
         raise ValueError("Invalid Astro section validation retry configuration")
-    sections: list[dict] = []
-    for section in _expand_period_sections(plan, available):
+
+    async def build_section(section: SectionSpec) -> dict:
         prior = await store.read(owner_id=owner_id, fingerprint=fingerprint, section_id=section.id)
         if prior is not None:
             # Treat tampered/corrupt checkpoint as error; never silently accept it.
@@ -463,8 +476,10 @@ async def compose_report(
                     break
                 except AstroSectionValidationError as exc:
                     logger.warning(
-                        "astro_section_validation_failed service=%s section=%s reason=%s retry=%s",
+                        "astro_section_validation_failed service=%s section=%s reason=%s "
+                        "retry=%s job_id=%s",
                         plan.service_id, section.id, exc.reason, attempt,
+                        generation_id or fingerprint[:12],
                     )
                     if attempt >= validation_retries:
                         raise
@@ -495,7 +510,45 @@ async def compose_report(
             )
             if _word_count(text) < section.min_words:
                 raise AstroReportError("Недостоверное содержимое контрольной точки.")
-        sections.append({"id": section.id, "title": section.title, "text": text})
+        logger.info("astro_report_section_completed job_id=%s service=%s section=%s cached=%s",
+                    generation_id or fingerprint[:12], plan.service_id, section.id,
+                    prior is not None)
+        return {"id": section.id, "title": section.title, "text": text}
+
+    expanded = _expand_period_sections(plan, available)
+    ordered: list[dict | None] = [None] * len(expanded)
+    pending = iter(enumerate(expanded))
+    errors: list[Exception] = []
+
+    async def generate_sections() -> None:
+        while not errors:
+            try:
+                index, section = next(pending)
+            except StopIteration:
+                return
+            try:
+                ordered[index] = await build_section(section)
+            except Exception as exc:  # noqa: BLE001 -- re-raised after active paid calls drain
+                errors.append(exc)
+                return
+
+    tasks = [asyncio.create_task(generate_sections(), name=f"astro-section-{index}")
+             for index in range(min(concurrency, len(expanded)))]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        # Cancellation/worker timeout must not leave paid calls in background.
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+    if errors:
+        # Successful in-flight sections are already durably checkpointed. Stop
+        # before scheduling more; the normal job retry resumes only missing work.
+        raise errors[0]
+    if any(section is None for section in ordered):
+        raise AstroReportError("Не все разделы отчёта прошли проверку.")
+    sections = [section for section in ordered if section is not None]
 
     total = sum(_word_count(section["text"]) for section in sections)
     if total < plan.min_total_words:

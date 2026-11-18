@@ -18,7 +18,11 @@ from bot.config import config
 from bot.services.astro_encrypted_checkpoint import EncryptedCheckpointStore
 from bot.services.astro_kie_gpt6 import KieSectionProvider
 from bot.services.astro_report_jobs import AstroReportJobs
-from bot.services.astro_report_pipeline import AstroReportError, load_report_plan
+from bot.services.astro_report_pipeline import (
+    AstroReportError,
+    load_report_plan,
+    report_section_concurrency,
+)
 from bot.services.astro_report_store import AstroReportSqlStore
 
 logger = logging.getLogger(__name__)
@@ -250,6 +254,8 @@ async def _astro_report_retention_loop(jobs, checkpoints, stop: asyncio.Event):
 @asynccontextmanager
 async def _astro_report_runtime(app: web.Application):
     try:
+        section_concurrency = report_section_concurrency()
+        provider_limiter = asyncio.Semaphore(section_concurrency)
         jobs = AstroReportJobs.from_env()
         provider = KieSectionProvider.from_config()
         await jobs.initialize()
@@ -270,7 +276,7 @@ async def _astro_report_runtime(app: web.Application):
     app[ASTRO_REPORT_JOBS] = jobs
     tasks = [asyncio.create_task(AstroReportWorker(
         jobs=jobs, provider=provider, checkpoints=checkpoints,
-        is_admin=config.is_admin,
+        is_admin=config.is_admin, provider_limiter=provider_limiter,
     ).run_forever(stop), name=f"astro-report-worker-{index}")
         for index in range(count)]
     tasks.append(asyncio.create_task(
@@ -282,7 +288,8 @@ async def _astro_report_runtime(app: web.Application):
                                          is_admin=config.is_admin)
         tasks.append(asyncio.create_task(delivery.run_forever(stop),
                                          name="astro-telegram-delivery"))
-    logger.info("astro_report_queue_started workers=%s", count)
+    logger.info("astro_report_queue_started workers=%s section_concurrency=%s",
+                count, section_concurrency)
     try:
         yield
     finally:

@@ -20,6 +20,7 @@ from bot.services.astro_report_pipeline import (
     compose_report,
     load_report_plan,
     report_fingerprint,
+    report_section_concurrency,
 )
 
 logger = logging.getLogger(__name__)
@@ -30,12 +31,14 @@ class AstroReportWorker:
         self, *, jobs: AstroReportJobs, provider, checkpoints,
         is_admin, worker_id: str | None = None,
         job_timeout_seconds: float | None = None,
+        provider_limiter: asyncio.Semaphore | None = None,
     ):
         self.jobs = jobs
         self.provider = provider
         self.checkpoints = checkpoints
         self.is_admin = is_admin
         self.worker_id = worker_id or uuid4().hex
+        self.provider_limiter = provider_limiter or asyncio.Semaphore(report_section_concurrency())
         self.job_timeout_seconds = job_timeout_seconds or float(
             os.getenv("ASTRO_REPORT_JOB_TIMEOUT_SECONDS", "7200")
         )
@@ -62,6 +65,10 @@ class AstroReportWorker:
 
         class AuthorizedProvider:
             async def analyze_text(_, **kwargs):
+                async with self.provider_limiter:
+                    return await _._analyze_authorized(**kwargs)
+
+            async def _analyze_authorized(_, **kwargs):
                 nonlocal provider_call_count
                 if not self.is_admin(job.owner_id):
                     raise PermissionError("Astro owner role revoked")

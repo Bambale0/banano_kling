@@ -2,6 +2,20 @@
 
 Документ описывает группы env-переменных ветки `tanyapi`. Полный программный источник истины — `bot/config.py`.
 
+## Astro report generation parallelism
+
+`ASTRO_REPORT_SECTION_CONCURRENCY` controls independent missing sections per report
+and the shared maximum of simultaneous KIE report requests across all Astro workers
+in one application runtime. Default: `4`; valid integer range: `1`–`8`. Set `1` to
+restore serial execution. Invalid values disable report startup before paid calls.
+
+This technical setting does not change report content, model, plan/fingerprint,
+word/fact validation or billing. Completed checkpoints remain reusable. On one
+section failure, new sections stop and already-started work drains into validated
+checkpoints before normal retry. Actual worker cancellation cancels and awaits all
+section tasks. A process crash can still repeat a vendor request with an uncertain
+outcome; the provider supplies no exactly-once charge guarantee.
+
 ## 1. Общие правила
 
 - production `.env` хранится вне Git;
