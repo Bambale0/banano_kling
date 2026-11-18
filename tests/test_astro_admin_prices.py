@@ -54,7 +54,7 @@ async def test_admin_astro_editor_sets_state_without_charging(tmp_path, monkeypa
     assert state.update_data.await_args.kwargs["price_target"] == "astro"
     assert state.update_data.await_args.kwargs["price_key"] == "natal"
     assert "не настроена" in callback.message.edit_text.await_args.args[0]
-    assert "service_prices" not in json.loads(path.read_text())
+    assert "astro" not in json.loads(path.read_text())["service_prices"]
 
 
 @pytest.mark.asyncio
