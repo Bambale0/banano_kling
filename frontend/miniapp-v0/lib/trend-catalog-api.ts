@@ -7,6 +7,7 @@ import type { PromptItem } from './types'
 export interface ShowcaseTrend extends PromptItem {
   badge?: 'new'
   badge_until?: string | null
+  preview_poster_fast_url?: string | null
 }
 
 export interface ShowcaseCategory {
