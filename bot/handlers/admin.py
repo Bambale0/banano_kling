@@ -59,16 +59,16 @@ from bot.keyboards import (
     get_main_menu_button_keyboard,
 )
 from bot.kling4_tariff import ADMIN_RATE_FIELDS, admin_rate_rows, update_admin_rate
-from bot.services.astro_pricing import (
-    ASTRO_SERVICE_LABELS,
-    get_astro_service_price,
-    update_astro_service_price,
-)
 from bot.services.admin_ai_service import (
     admin_ai_service,
     normalize_plan,
     summarize_plan_actions,
     validate_plan,
+)
+from bot.services.astro_pricing import (
+    ASTRO_SERVICE_LABELS,
+    get_astro_service_price,
+    update_astro_service_price,
 )
 from bot.services.partner_approval_service import (
     count_pending_partner_applications,
