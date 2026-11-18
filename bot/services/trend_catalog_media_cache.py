@@ -5,15 +5,11 @@ stored in the same public upload bucket as their immutable originals.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import threading
 import time
 from urllib.parse import unquote, urlsplit
 
 from bot import db as db_backend
-from bot.config import config
-from bot.services.media_storage import is_s3_enabled, presigned_upload_url
 
 logger = logging.getLogger(__name__)
 _ALLOWED_HOSTS = frozenset({
@@ -23,25 +19,6 @@ _ALLOWED_HOSTS = frozenset({
 })
 _SOURCE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".avif",
                     ".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
-# Posters are public assets. Keep direct S3 signatures for a bounded fraction
-# of their configured expiry, so repeated catalog reads don't re-sign ~100 URLs.
-# URLs stay short-lived; the durable /uploads URL is always returned as fallback.
-_signed_poster_lock = threading.Lock()
-_signed_poster_cache: dict[str, tuple[float, str]] = {}
-_SIGNED_POSTER_CACHE_MAX_ITEMS = 2048
-
-
-def _signed_preview_now() -> float:
-    return time.monotonic()
-
-
-def _signed_preview_cache_seconds() -> int:
-    try:
-        return max(1, int(config.MEDIA_S3_PRESIGN_TTL_SECONDS) // 2)
-    except (ValueError, TypeError):
-        return 0
-
-
 _TABLE = """
     CREATE TABLE IF NOT EXISTS trend_catalog_preview_assets (
         source_key TEXT PRIMARY KEY,
@@ -139,53 +116,3 @@ async def enrich_cards(cards: list[dict]) -> None:
         key = source_key(card.get("preview_url"))
         if key and key in by_key:
             card["preview_poster_url"] = by_key[key]
-
-    # The durable URL stays unchanged. For the gallery we also expose a
-    # short-lived direct S3 URL, avoiding an extra no-store 307 per thumbnail.
-    # The client falls back to the durable URL if the signer's TTL expires
-    # while a Mini App session is open. Never sign original photos/videos.
-    if not is_s3_enabled():
-        return
-    keys = list(dict.fromkeys(
-        key for card in cards
-        if (key := source_key(card.get("preview_poster_url")))
-        and key.startswith("/uploads/trend-previews/")
-        and key.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))
-    ))
-    if not keys:
-        return
-    signed = await asyncio.to_thread(_sign_public_poster_urls, keys)
-    for card in cards:
-        key = source_key(card.get("preview_poster_url"))
-        if key in signed:
-            card["preview_poster_fast_url"] = signed[key]
-
-
-
-def _sign_public_poster_urls(keys: list[str]) -> dict[str, str]:
-    """Sign only public preview images; reuse bounded short-lived local results.
-
-    Never HEAD/GET S3 in a catalog read. The signature is safe to share because
-    the corresponding preview is already publicly served via /uploads.
-    """
-    result: dict[str, str] = {}
-    cache_seconds = _signed_preview_cache_seconds()
-    for key in keys:
-        with _signed_poster_lock:
-            now = _signed_preview_now()
-            cached = _signed_poster_cache.get(key)
-            if cached and cached[0] > now:
-                result[key] = cached[1]
-                continue
-            try:
-                url = presigned_upload_url(key.removeprefix("/uploads/"), method="GET")
-            except Exception:  # noqa: BLE001 -- durable /uploads poster remains usable
-                _signed_poster_cache.pop(key, None)
-                logger.warning("Could not sign one public trend preview; stable URL retained")
-                continue
-            result[key] = url
-            if cache_seconds > 0:
-                if key not in _signed_poster_cache and len(_signed_poster_cache) >= _SIGNED_POSTER_CACHE_MAX_ITEMS:
-                    _signed_poster_cache.pop(next(iter(_signed_poster_cache)))
-                _signed_poster_cache[key] = (now + cache_seconds, url)
-    return result
