@@ -1,0 +1,512 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#10131b">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="NEUROMIX: фото и видео по твоей идее, референсы и AI-тренды в одной веб-студии. Создавай в браузере, без установки приложений.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://neuromixbot.com/">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="NEUROMIX">
+  <meta property="og:title" content="NEUROMIX — превращай идеи в фото и видео">
+  <meta property="og:description" content="Фото, видео, референсы и тренды в одной студии. Открой NEUROMIX в браузере.">
+  <meta property="og:url" content="https://neuromixbot.com/">
+  <meta name="twitter:card" content="summary">
+  <title>NEUROMIX — создавай AI-фото и видео прямо в браузере</title>
+  <script>
+    // Preserve older Telegram root deep links and launch parameters verbatim.
+    (function () {
+      var fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      var query = new URLSearchParams(window.location.search);
+      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform', 'tgWebAppStartParam', 'startapp'];
+      if (keys.some(function (key) { return fragment.has(key) || query.has(key); })) {
+        window.location.replace('/mini-app/' + window.location.search + window.location.hash);
+      }
+    })();
+  </script>
+  <style>
+    :root {
+      color-scheme: dark;
+      /* Source: frontend/miniapp-v0/app/globals.css */
+      --background: oklch(0.12 0.015 260);
+      --foreground: oklch(0.95 0.01 80);
+      --card: oklch(0.16 0.012 260);
+      --primary: oklch(0.78 0.14 75);
+      --accent: oklch(0.65 0.12 220);
+      --muted: oklch(0.65 0.02 260);
+      --border: oklch(0.28 0.015 260);
+      --paper: #f4efe5;
+      --ink: #10131b;
+      --hairline: rgba(255,255,255,.105);
+      --content: 1190px;
+      --ease: cubic-bezier(.18,.85,.2,1);
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html{scroll-behavior:smooth;scroll-padding-top:96px}
+    body{margin:0;min-width:320px;background:var(--background);color:var(--foreground);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;line-height:1.45;overflow-x:hidden}
+    a{color:inherit;text-decoration:none}
+    a:focus-visible{outline:2px solid var(--primary);outline-offset:5px}
+    a,button{-webkit-tap-highlight-color:transparent}
+    a:active{transform:scale(.985)}
+    .container{width:min(calc(100% - 72px),var(--content));margin-inline:auto}
+    .mast{border-bottom:1px solid var(--hairline);position:relative;z-index:3;background:var(--background)}
+    .mast-inner{display:flex;align-items:center;justify-content:space-between;min-height:84px;gap:20px}
+    .brand{display:inline-flex;gap:13px;align-items:center;min-width:0}
+    .brand-icon{height:37px;width:37px;flex:none;color:var(--primary)}
+    .brand-text{display:flex;flex-direction:column;gap:2px}
+    .brand-name{font-size:17px;font-weight:850;letter-spacing:.155em;line-height:1.1}
+    .brand-caption{font-size:9px;letter-spacing:.25em;text-transform:uppercase;color:var(--muted)}
+    .mast-links{display:flex;gap:31px;align-items:center;margin-left:auto}
+    .mast-links a{font-size:13px;color:#aeb0b9;transition:color .2s var(--ease)}
+    .mast-links a:hover{color:var(--paper)}
+    .nav-enter{border:1px solid rgba(238,187,95,.4);border-radius:100px;min-height:42px;padding:0 18px;display:inline-flex;align-items:center;gap:11px;color:var(--primary);font-size:12px;font-weight:750;transition:background .2s var(--ease)}
+    .nav-enter:hover{background:rgba(238,187,95,.09)}
+    .arrow{width:15px;height:15px;flex:none}
+    .hero{position:relative;isolation:isolate;border-bottom:1px solid var(--hairline)}
+    .hero::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:-1;background:radial-gradient(ellipse at 77% 40%,rgba(35,71,91,.21),transparent 50%);opacity:.9}
+    .hero-grid{display:grid;grid-template-columns:minmax(0,1.07fr) minmax(0,.93fr);gap:24px;min-height:630px}
+    .intro{padding:103px 0 92px;display:flex;flex-direction:column;align-items:flex-start}
+    .eyebrow{display:flex;align-items:center;gap:12px;font-size:11px;letter-spacing:.21em;text-transform:uppercase;color:var(--primary);font-weight:750}
+    .eyebrow::before{content:"";height:1px;width:28px;background:currentColor}
+    .intro h1{margin:29px 0 23px;max-width:720px;font-size:clamp(58px,6.15vw,91px);letter-spacing:-.083em;line-height:.99;font-weight:775}
+    .intro h1 span{display:block;color:var(--primary)}
+    .intro p{margin:0;max-width:470px;font-size:16px;line-height:1.72;color:#b7b8c0}
+    .hero-cta{display:flex;align-items:center;gap:13px;margin-top:39px;flex-wrap:wrap}
+    .btn-primary{display:inline-flex;align-items:center;justify-content:space-between;gap:43px;min-height:58px;min-width:242px;padding:0 20px 0 25px;color:#1b1710;background:var(--primary);border-radius:11px;font-size:14px;font-weight:780;box-shadow:inset 0 1px rgba(255,255,255,.33);transition:background .2s var(--ease),transform .2s var(--ease)}
+    .btn-primary:hover{background:#f0ce88;transform:translateY(-2px)}
+    .btn-primary .arrow{height:19px;width:19px}
+    .btn-text{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding-inline:10px;font-size:13px;color:#d0cdd0;transition:color .2s}
+    .btn-text:hover{color:var(--paper)}
+    .hero-hint{display:flex;align-items:center;gap:10px;margin-top:28px;font-size:12px;color:#8f929e}
+    .hero-hint svg{width:15px;height:15px;color:var(--accent)}
+    .index{position:relative;min-width:0;display:flex;align-items:center;justify-content:center;padding:32px 0 36px}
+    .index::before{content:"";position:absolute;inset:0 0 0 12px;border-left:1px solid var(--hairline);pointer-events:none}
+    .artboard{position:relative;width:min(100%,460px);aspect-ratio:460/526;margin:0 auto 0 22px}
+    .artboard::before{content:"";position:absolute;left:9%;top:7%;width:80%;height:85%;border:1px solid rgba(226,189,119,.12);border-radius:180px 180px 18px 18px;transform:rotate(-4deg)}
+    .artboard::after{content:"";position:absolute;inset:12% 6% 2% 14%;background:radial-gradient(ellipse,rgba(146,89,40,.16),transparent 65%);filter:blur(35px);pointer-events:none}
+    .art-big,.art-small{position:absolute;overflow:hidden;border:1px solid rgba(255,255,255,.17);background:#0f1820;box-shadow:0 22px 55px rgba(0,0,0,.35)}
+    .art-big{inset:7.5% 22% 12% 3%;border-radius:165px 165px 16px 16px;transform:rotate(-5deg)}
+    .art-small{right:0;top:26%;width:38%;height:51%;border-radius:120px 120px 13px 13px;transform:rotate(8deg)}
+    .art-big svg,.art-small svg{height:100%;width:100%;display:block}
+    .art-artifact{position:absolute;right:1%;top:11%;display:flex;flex-direction:column;gap:5px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:9px;letter-spacing:.11em;color:#9eacb8}
+    .art-artifact b{font-weight:600;color:#d9dce3}
+    .art-number{position:absolute;left:6%;bottom:5%;font:500 10px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em;color:#8c8f9a}
+    .art-stamp{position:absolute;right:-1%;bottom:8%;width:90px;height:90px;border:1px solid rgba(225,185,109,.58);border-radius:50%;display:flex;align-items:center;justify-content:center;transform:rotate(16deg);color:var(--primary);font-size:9px;font-weight:700;text-align:center;letter-spacing:.11em;text-transform:uppercase;line-height:1.6;background:rgba(16,19,27,.72)}
+    .strip{border-bottom:1px solid var(--hairline)}
+    .strip-grid{display:grid;grid-template-columns:1.04fr 1fr 1fr 1fr;align-items:center;min-height:100px}
+    .strip-lead{font:600 10px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:#838b99}
+    .strip-item{display:flex;align-items:center;gap:14px;padding:25px 26px;border-left:1px solid var(--hairline);font-size:14px;font-weight:650}
+    .strip-item svg{width:19px;height:19px;color:var(--primary);flex:none}
+    .access-section{padding:80px 0 100px}
+    .access-layout{display:grid;grid-template-columns:1.05fr .95fr;gap:70px;align-items:start}
+    .access-lead{padding-top:17px}
+    .overline{font:600 10px ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.22em;color:var(--primary);text-transform:uppercase}
+    .access-lead h2{font-size:clamp(33px,4vw,55px);line-height:1.06;letter-spacing:-.059em;margin:20px 0 17px;font-weight:720;max-width:580px}
+    .access-lead h2 em{color:var(--primary);font-style:normal}
+    .access-lead p{max-width:415px;color:#aeb1bd;line-height:1.72;font-size:14px;margin:0}
+    .auth-box{border:1px solid rgba(255,255,255,.12);border-radius:19px;background:#191e28;padding:26px 28px 24px;box-shadow:0 22px 50px rgba(0,0,0,.12)}
+    .auth-head{display:flex;align-items:center;justify-content:space-between;gap:15px;margin-bottom:21px}
+    .auth-head strong{font-size:15px;font-weight:730}
+    .auth-head span{font-size:10px;color:#8595a5;font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
+    .telegram-entry{min-height:58px;border:1px solid rgba(84,182,223,.45);border-radius:12px;display:flex;align-items:center;gap:15px;padding:0 17px;background:rgba(67,116,142,.16);font-weight:720;font-size:14px;transition:background .2s var(--ease),border-color .2s var(--ease)}
+    .telegram-entry:hover{background:rgba(67,116,142,.29);border-color:rgba(100,210,242,.72)}
+    .telegram-icon{display:grid;place-items:center;width:26px;height:26px;flex:none;border-radius:50%;background:#2b9cce}
+    .telegram-icon svg{height:16px;width:16px;fill:white}
+    .telegram-entry .arrow{margin-left:auto;color:#bfe7f2}
+    .auth-status{display:flex;align-items:center;gap:11px;margin-top:20px;color:#9097a2;font-size:12px}
+    .auth-status::before{content:"";height:1px;background:#343a44;flex:1}
+    .auth-status::after{content:"";height:1px;background:#343a44;flex:1}
+    .auth-soon{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+    .auth-soon>div{border:1px solid rgba(255,255,255,.085);border-radius:9px;padding:14px 7px 12px;text-align:center;background:rgba(255,255,255,.015)}
+    .auth-soon strong{display:block;font-size:12px;font-weight:600;color:#b4b6bd}
+    .auth-soon small{display:block;font-size:10px;color:#76808b;margin-top:5px}
+    .account-note{margin-top:21px;display:flex;gap:11px;padding-top:17px;border-top:1px solid var(--hairline);font-size:12px;line-height:1.55;color:#9aa0a9}
+    .account-note svg{width:17px;height:17px;flex:none;color:var(--primary);margin-top:2px}
+    .foot{border-top:1px solid var(--hairline);padding:25px 0 33px}
+    .foot-inner{display:flex;gap:20px;justify-content:space-between;align-items:center;color:#838b95;font-size:11px}
+    .foot strong{color:var(--primary);letter-spacing:.15em;font-size:11px;font-weight:750}
+    .foot a{color:#bec3cb}
+    .mobile-dock{display:none}
+    @media (max-width:1050px) {
+      .container{width:min(calc(100% - 48px),var(--content))}
+      .hero-grid{gap:4px;grid-template-columns:minmax(0,1fr) minmax(0,.9fr)}
+      .intro h1{font-size:clamp(48px,6vw,76px)}
+      .intro p{font-size:15px}
+      .strip-item{padding-inline:16px}
+      .access-layout{gap:35px}
+    }
+    @media (max-width:760px) {
+      .container{width:min(calc(100% - 36px),540px)}
+      .mast-inner{min-height:72px}
+      .mast-links{display:none}
+      .brand-icon{height:32px;width:32px}
+      .brand-name{font-size:15px}
+      .brand-caption{font-size:8px}
+      .nav-enter{min-height:39px;padding-inline:15px}
+      .hero-grid{grid-template-columns:minmax(0,1fr);min-height:unset;gap:0}
+      .intro{padding:55px 0 5px}
+      .intro h1{font-size:clamp(46px,10.7vw,70px);margin:24px 0 19px;letter-spacing:-.075em}
+      .intro p{font-size:14px;line-height:1.65}
+      .hero-cta{margin-top:28px;gap:9px;width:100%}
+      .btn-primary{width:100%;min-height:54px;min-width:0}
+      .btn-text{width:100%;justify-content:center;min-height:34px}
+      .hero-hint{margin-top:10px;font-size:11px}
+      .index{padding:3px 0 10px;max-height:335px}
+      .index::before{display:none}
+      .artboard{width:min(100%,345px);aspect-ratio:460/400;margin-inline:auto;max-height:325px}
+      .art-big{inset:3% 25% 6% 9%;border-radius:140px 140px 14px 14px}
+      .art-small{right:4%;top:22%;height:58%}
+      .art-artifact{right:0;top:7%}
+      .art-number{bottom:0}
+      .art-stamp{bottom:1%;width:63px;height:63px;font-size:7px}
+      .strip-grid{grid-template-columns:1fr 1fr;min-height:0;padding-block:13px}
+      .strip-lead{grid-column:1/-1;margin-bottom:4px;font-size:9px}
+      .strip-item{padding:12px 0;border-left:0;font-size:12px;gap:9px}
+      .strip-item svg{height:17px;width:17px}
+      .strip-item:nth-child(4){grid-column:1/-1;border-top:1px solid var(--hairline)}
+      .access-section{padding:57px 0 75px}
+      .access-layout{grid-template-columns:1fr;gap:26px}
+      .access-lead{padding-top:0}
+      .access-lead h2{font-size:clamp(31px,8vw,44px);margin:14px 0}
+      .access-lead p{font-size:13px;line-height:1.62}
+      .auth-box{padding:22px;border-radius:17px}
+      .foot{padding:21px 0 calc(90px + env(safe-area-inset-bottom))}
+      .mobile-dock{position:fixed;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:18px;bottom:calc(12px + env(safe-area-inset-bottom));left:18px;right:18px;min-height:55px;background:var(--primary);color:#19170f;border-radius:12px;padding:0 20px;font-weight:780;font-size:13px;box-shadow:0 10px 34px rgba(0,0,0,.5);opacity:0;transform:translateY(18px);pointer-events:none;transition:opacity .25s var(--ease),transform .25s var(--ease)}
+      .mobile-dock.is-visible{opacity:1;transform:translateY(0);pointer-events:auto}
+    }
+    @media (max-width:380px) {
+      .container{width:calc(100% - 28px)}
+      .brand-name{font-size:13px;letter-spacing:.12em}
+      .intro h1{font-size:clamp(40px,11vw,46px)}
+      .intro{padding-top:45px}
+      .index{max-height:270px}
+      .artboard{max-height:265px}
+      .strip-item{font-size:11px}
+      .auth-box{padding:19px 15px}
+    }
+    @media (prefers-reduced-motion:reduce) {
+      html{scroll-behavior:auto}
+      *,*::before,*::after{transition:none!important;animation:none!important}
+    }
+
+    /* Editorial marketing sections use the exact Mini App palette; no external assets. */
+    .section-story,.section-benefits,.section-how,.section-proof,.section-terms,.section-faq{padding:90px 0;border-bottom:1px solid var(--hairline)}
+    .section-context{margin:0 0 20px;font-size:13px;font-weight:650;color:var(--primary)}
+    .story-grid,.proof-grid,.terms-grid,.faq-grid{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(30px,7vw,105px)}
+    .story-lead h2,.section-heading h2,.proof-lead h2,.terms-grid h2,.faq-grid h2{font-size:clamp(34px,4vw,55px);letter-spacing:-.056em;line-height:1.09;margin:0 0 21px;font-weight:720}
+    .story-lead p:not(.section-context),.section-heading p:not(.section-context),.proof-lead>p:not(.section-context),.terms-copy p,.faq-intro{font-size:14px;color:#acb1bc;line-height:1.75;max-width:475px}
+    .subtle-link{display:inline-flex;align-items:center;gap:12px;margin-top:21px;font-size:13px;font-weight:740;color:var(--primary);border-bottom:1px solid rgba(230,185,96,.4);padding:0 0 7px;transition:border-color .2s var(--ease)}
+    .subtle-link:hover{border-color:var(--primary)}
+    .story-rows{border-top:1px solid var(--hairline)}
+    .story-row{display:grid;grid-template-columns:41px 1fr;gap:13px;border-bottom:1px solid var(--hairline);padding:19px 0}
+    .story-row>span{font-size:12px;color:var(--primary);padding-top:3px}
+    .story-row h3{font-size:16px;font-weight:680;letter-spacing:-.024em;margin:0 0 6px}
+    .story-row p{font-size:13px;color:#a7abb6;line-height:1.58;margin:0}
+    .section-heading{max-width:730px;margin-bottom:37px}
+    .benefits-grid{display:grid;grid-template-columns:1.15fr .85fr;grid-template-rows:repeat(2,225px);gap:16px}
+    .benefit{border:1px solid var(--hairline);border-radius:19px;padding:25px;position:relative;overflow:hidden;background:#181d26;display:flex;flex-direction:column;justify-content:space-between;isolation:isolate}
+    .benefit-primary{grid-row:1/3;background:radial-gradient(circle at 78% 38%,rgba(96,126,129,.14),transparent 44%),#181d26}
+    .benefit-primary h3{font-size:clamp(24px,2.7vw,35px);max-width:380px}
+    .benefit-video{background:radial-gradient(circle at 95% 20%,rgba(225,167,85,.10),transparent 50%),#171d28}
+    .benefit-trends{background:radial-gradient(circle at 85% 65%,rgba(74,154,167,.10),transparent 50%),#171c25}
+    .benefit-tag{color:var(--primary);font-size:12px;font-weight:700}
+    .benefit h3{letter-spacing:-.03em;font-size:22px;line-height:1.17;margin:0 0 8px}
+    .benefit p{font-size:13px;line-height:1.59;color:#b1b7c0;margin:0;max-width:390px}
+    .benefit-visual{position:relative;flex:1;min-height:135px}
+    .visual-frame{position:absolute;border:1px solid rgba(220,197,150,.33);border-radius:88px 88px 13px 13px;transform:rotate(-12deg)}
+    .visual-frame-one{width:150px;height:157px;top:4%;left:35%;background:linear-gradient(155deg,#a0c9c2 0%,#325c68 36%,#ac845b 62%,#132f3f)}
+    .visual-frame-two{width:118px;height:135px;top:18%;left:59%;background:linear-gradient(155deg,#233953,#cc9c67 45%,#172737 50%)}
+    .visual-orb{position:absolute;top:19%;left:62%;width:65px;height:65px;border-radius:50%;background:#f0c884;box-shadow:0 0 35px #cf9e6570}
+    .benefit-glyph{position:absolute;right:25px;top:27px;font-size:35px;font-weight:300;color:rgba(239,203,135,.65)}
+    .section-tail{margin-top:28px}
+    .section-how{background:rgba(255,255,255,.017)}
+    .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;list-style:none;padding:0;margin:0;border-top:1px solid rgba(220,189,124,.35)}
+    .steps li{position:relative;padding:27px 21px 0 0;margin-right:16px}
+    .steps li:not(:last-child)::after{content:"";position:absolute;right:0;top:-2px;width:6px;height:6px;border-radius:50%;background:var(--primary)}
+    .step-number{display:block;color:var(--primary);font-size:12px;margin-bottom:28px}
+    .steps h3{font-size:18px;letter-spacing:-.025em;margin:0 0 8px}
+    .steps p{font-size:13px;color:#a9aeba;line-height:1.6;margin:0}
+    .section-proof{background:radial-gradient(ellipse at 65% 55%,rgba(200,145,80,.06),transparent 56%)}
+    .proof-sheet{display:grid;border:1px solid rgba(228,190,115,.24);border-radius:19px;background:#1b202a;overflow:hidden}
+    .proof-sheet>div{padding:18px 24px;border-bottom:1px solid var(--hairline);display:grid;grid-template-columns:90px 1fr auto;align-items:center;gap:14px}
+    .proof-sheet strong{font-size:15px}
+    .proof-index{font-size:12px;color:var(--primary)}
+    .proof-sheet small{font-size:11px;color:#9ca4af;text-align:right}
+    .proof-sheet>p{margin:0;padding:15px 24px;font-size:11px;line-height:1.6;color:#8993a0}
+    .terms-grid{align-items:start}
+    .terms-copy p:first-child{margin-top:0}
+    .section-faq{padding-bottom:94px}
+    .faq-items{border-top:1px solid var(--hairline)}
+    .faq-items details{border-bottom:1px solid var(--hairline);padding:19px 0}
+    .faq-items summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:18px;font-size:15px;font-weight:680;line-height:1.4}
+    .faq-items summary::-webkit-details-marker{display:none}
+    .faq-items summary::after{content:"+";font-weight:450;font-size:22px;color:var(--primary);flex:none}
+    .faq-items details[open] summary::after{content:"−"}
+    .faq-items details p{color:#aeb5c0;line-height:1.7;margin:12px 36px 0 0;font-size:13px}
+    .faq-items summary:focus-visible{outline:2px solid var(--primary);outline-offset:6px}
+    .intro h1{font-size:clamp(48px,5.55vw,78px)}
+    @media (max-width:760px) {
+      .section-story,.section-benefits,.section-how,.section-proof,.section-terms,.section-faq{padding:58px 0}
+      .story-grid,.proof-grid,.terms-grid,.faq-grid{grid-template-columns:1fr;gap:29px}
+      .story-lead h2,.section-heading h2,.proof-lead h2,.terms-grid h2,.faq-grid h2{font-size:clamp(30px,7.9vw,42px)}
+      .story-row{grid-template-columns:33px 1fr;padding:16px 0}
+      .story-row h3{font-size:15px}
+      .benefits-grid{grid-template-columns:1fr;grid-template-rows:285px 208px 208px;gap:12px}
+      .benefit-primary{grid-row:auto}
+      .benefit{padding:21px}
+      .benefit-primary h3{font-size:25px}
+      .benefit-visual{min-height:55px}
+      .visual-frame-one{width:85px;height:80px;left:46%;top:-14%}
+      .visual-frame-two{width:68px;height:78px;left:65%;top:0}
+      .visual-orb{width:37px;height:37px;top:3%;left:68%}
+      .steps{grid-template-columns:1fr;gap:0;border-top:0;border-left:1px solid rgba(220,189,124,.35);margin-left:4px}
+      .steps li{margin:0 0 0 21px;padding:0 0 24px;min-height:88px}
+      .steps li::before{content:"";position:absolute;left:-26px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--primary)}
+      .steps li:not(:last-child)::after{display:none}
+      .step-number{margin-bottom:5px;font-size:11px}
+      .steps h3{font-size:17px}
+      .proof-sheet>div{grid-template-columns:75px 1fr;gap:4px 9px;padding:15px}
+      .proof-sheet small{grid-column:2;text-align:left}
+      .proof-sheet>p{padding:14px 15px}
+      .intro h1{font-size:clamp(39px,9.2vw,57px)}
+    }
+    @media (max-width:380px) {
+      .intro h1{font-size:clamp(36px,10vw,43px)}
+      .benefits-grid{grid-template-rows:280px 220px 220px}
+    }
+  </style>
+</head>
+<body>
+  <header class="mast">
+    <div class="container mast-inner">
+      <a href="/" class="brand" aria-label="NEUROMIX — главная">
+        <svg class="brand-icon" viewBox="0 0 180 180" fill="none" aria-hidden="true">
+          <path d="M101.141 53H136.632C151.023 53 162.689 64.6662 162.689 79.0573V112.904H148.112V79.0573C148.112 78.7105 148.098 78.3662 148.072 78.0251L112.581 112.898C112.701 112.902 112.821 112.904 112.941 112.904H148.112V126.672H112.941C98.5504 126.672 86.5638 114.891 86.5638 100.5V66.7434H101.141V100.5C101.141 101.15 101.191 101.792 101.289 102.422L137.56 66.7816C137.255 66.7563 136.945 66.7434 136.632 66.7434H101.141V53Z" fill="currentColor"/>
+          <path d="M65.2926 124.136L14 66.7372H34.6355L64.7495 100.436V66.7372H80.1365V118.47C80.1365 126.278 70.4953 129.958 65.2926 124.136Z" fill="currentColor"/>
+        </svg>
+        <span class="brand-text"><strong class="brand-name">NEUROMIX</strong><span class="brand-caption">Creative AI Studio</span></span>
+      </a>
+      <nav class="mast-links" aria-label="Основная навигация">
+        <a href="#benefits">Возможности</a>
+        <a href="#how">Как работает</a>
+        <a href="#faq">Вопросы</a>
+      </nav>
+      <a class="nav-enter" href="/mini-app/">В студию
+        <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </a>
+    </div>
+  </header>
+  <main>
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="container hero-grid">
+        <div class="intro">
+          <span class="eyebrow">Твоя идея. Твои инструменты.</span>
+          <h1 id="hero-title">Превращай идеи <span>в фото и видео.</span></h1>
+          <p>Создавай изображения, работай с референсами, пробуй видеогенерацию и повторяй тренды. В одной AI-студии — прямо в браузере.</p>
+          <div class="hero-cta">
+            <a class="btn-primary" href="/mini-app/">Открыть AI-студию
+              <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <a class="btn-text" href="#possibilities">Посмотреть возможности <span aria-hidden="true">↓</span></a>
+          </div>
+          <div class="hero-hint">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 10 5 5L17 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Без установки. На телефоне и компьютере.
+          </div>
+        </div>
+        <div class="index" aria-label="Авторская иллюстрация возможностей фото и видео в NEUROMIX">
+          <div class="artboard">
+            <div class="art-big" aria-hidden="true">
+              <svg viewBox="0 0 330 460" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="sc-bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#152b3c"/><stop offset=".47" stop-color="#203b46"/><stop offset=".75" stop-color="#806345"/><stop offset="1" stop-color="#1d262e"/></linearGradient>
+                  <radialGradient id="sc-halo"><stop stop-color="#f7dba6"/><stop offset=".18" stop-color="#dba86f"/><stop offset=".53" stop-color="#617c77" stop-opacity=".54"/><stop offset="1" stop-color="#192c36" stop-opacity="0"/></radialGradient>
+                  <linearGradient id="sc-object" x1=".15" y1=".1" x2=".85" y2=".9"><stop stop-color="#fff1c5"/><stop offset=".2" stop-color="#b4d2c3"/><stop offset=".37" stop-color="#2c6270"/><stop offset=".56" stop-color="#edb570"/><stop offset=".75" stop-color="#916b52"/><stop offset="1" stop-color="#f9db9c"/></linearGradient>
+                  <linearGradient id="sc-crest" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#d1fbec"/><stop offset=".3" stop-color="#346773"/><stop offset=".6" stop-color="#a5714b"/><stop offset="1" stop-color="#ffe5a7"/></linearGradient>
+                </defs>
+                <rect width="330" height="460" fill="url(#sc-bg)"/>
+                <circle cx="176" cy="205" r="178" fill="url(#sc-halo)"/>
+                <g stroke="#e6ca95" stroke-width=".8" opacity=".3" fill="none">
+                  <circle cx="158" cy="210" r="141"/><circle cx="158" cy="210" r="125"/>
+                  <path d="M-20 300C87 245 205 340 356 213M-25 321C99 263 243 360 355 238"/>
+                </g>
+                <path d="M200 51C155 51 102 87 97 157c-4 52 33 96 41 149 5 36-2 64-39 106 68-4 153-58 162-128 8-65-23-93-15-142 5-35 12-59-46-91Z" fill="#081b25" opacity=".73"/>
+                <path d="M165 58c-53 28-72 92-53 144 17 49 56 75 54 131-1 27-14 57-33 82 56-29 93-71 103-116 13-54-11-90-12-135-1-51 14-88-59-106Z" fill="url(#sc-object)"/>
+                <path d="M156 74c-25 40-30 71-19 108 10 34 50 60 50 102 1 38-12 77-43 112 39-22 65-67 73-100 11-48-13-96-17-128-5-37 1-71-44-94Z" fill="url(#sc-crest)" opacity=".92"/>
+                <path d="M146 100C140 151 175 188 180 239c5 48-8 95-28 127" fill="none" stroke="#f8dfb9" stroke-width="8" opacity=".65"/>
+                <path d="M194 94c-13 44 11 84 13 126 3 49-2 78-20 107" fill="none" stroke="#184b56" stroke-width="17" opacity=".65"/>
+                <path d="M120 144c18-16 35-22 44-48" stroke="#fff0cc" stroke-width="2" fill="none" opacity=".75"/>
+                <g fill="#d6e8dc" opacity=".6"><circle cx="76" cy="124" r="1.4"/><circle cx="257" cy="105" r="1"/><circle cx="270" cy="277" r="1.4"/><circle cx="70" cy="310" r=".8"/><circle cx="228" cy="361" r=".8"/></g>
+                <path d="M25 411h280" stroke="#eff1e5" opacity=".3"/>
+                <text x="27" y="432" fill="#f4e1bf" font-family="sans-serif" font-size="11" letter-spacing="2">ART / 001</text>
+              </svg>
+            </div>
+            <div class="art-small" aria-hidden="true">
+              <svg viewBox="0 0 185 305" preserveAspectRatio="xMidYMid slice" xmlns="http://www.w3.org/2000/svg">
+                <defs>
+                  <linearGradient id="sm-bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#12293e"/><stop offset=".53" stop-color="#385875"/><stop offset=".74" stop-color="#a38c7a"/><stop offset="1" stop-color="#142638"/></linearGradient>
+                  <radialGradient id="sm-glow"><stop stop-color="#f0c989"/><stop offset=".4" stop-color="#c79e70" stop-opacity=".65"/><stop offset="1" stop-color="#d9ac74" stop-opacity="0"/></radialGradient>
+                </defs>
+                <rect width="185" height="305" fill="url(#sm-bg)"/>
+                <circle cx="118" cy="123" r="102" fill="url(#sm-glow)"/>
+                <circle cx="118" cy="123" r="41" fill="#f3c991" opacity=".92"/>
+                <path d="M-20 222 38 144 72 184 107 112 166 196 205 166v151H-20Z" fill="#1e3447"/>
+                <path d="m83 149 24-37 24 44-25-14Z" fill="#d2c6ae" opacity=".8"/>
+                <path d="M-10 247 52 198 95 232 153 188 202 225V317H-10Z" fill="#122637"/>
+                <path d="M-10 250Q64 243 188 250V310H-10Z" fill="#2e4b61"/>
+                <path d="M0 262q95-9 180 2M0 275q80-12 180 0" stroke="#ddbc9a" opacity=".28" fill="none"/>
+                <text x="15" y="291" fill="#f5e5ca" font-family="sans-serif" font-size="10" letter-spacing="1.4">MOTION / 002</text>
+              </svg>
+            </div>
+            <span class="art-artifact"><b>CREATIVE OUTPUT</b>NEUROMIX / 01—02</span>
+            <span class="art-number">IMAGINE / CREATE / REPEAT</span>
+            <div class="art-stamp" aria-hidden="true">MAKE<br>IT<br>REAL</div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="strip" id="possibilities" aria-label="Возможности студии">
+      <div class="container strip-grid">
+        <span class="strip-lead">От идеи<br>до результата</span>
+        <span class="strip-item">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><circle cx="8" cy="9" r="1.7" fill="currentColor"/><path d="m5 17 5-5 3 3 3-4 3 4" stroke="currentColor" stroke-width="1.5"/></svg>AI-фото
+        </span>
+        <span class="strip-item">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" stroke-width="1.7"/><path d="m10 9 5 3-5 3Z" stroke="currentColor" stroke-width="1.5"/></svg>AI-видео
+        </span>
+        <span class="strip-item">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 17 10 11l4 3 6-7M15 7h5v5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Тренды и референсы
+        </span>
+      </div>
+    </section>
+
+    <section class="section-story" id="problems" aria-labelledby="problems-title">
+      <div class="container story-grid">
+        <div class="story-lead">
+          <p class="section-context">Когда хочется создавать</p>
+          <h2 id="problems-title">Идей много.<br>Лишних шагов — тоже.</h2>
+          <p>От первого промпта до повтора понравившегося формата. Убери лишние переключения и сосредоточься на результате.</p>
+          <a class="subtle-link" href="#benefits">Что можно сделать <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="story-rows">
+          <article class="story-row"><span aria-hidden="true">01</span><div><h3>Для фото одно приложение, для видео — другое?</h3><p>Фото, видео и тренды собраны в одной студии.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">02</span><div><h3>Есть пример, но трудно описать его словами?</h3><p>Добавляй референсы в режимах, которые их поддерживают.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">03</span><div><h3>Хочется повторить формат, а не собирать всё заново?</h3><p>В трендах есть сценарии, от которых можно оттолкнуться.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">04</span><div><h3>Нужно найти прошлый результат?</h3><p>Возвращайся к работам и статусам задач в приложении.</p></div></article>
+        </div>
+      </div>
+    </section>
+    <section class="section-benefits" id="benefits" aria-labelledby="benefits-title">
+      <div class="container">
+        <div class="section-heading"><p class="section-context">Выбирай свой сценарий</p><h2 id="benefits-title">Меньше рутины.<br>Больше места для идеи.</h2><p>NEUROMIX помогает перейти от замысла к конкретной задаче — для контента, видео или эксперимента.</p></div>
+        <div class="benefits-grid">
+          <article class="benefit benefit-primary"><span class="benefit-tag">Фото</span><div class="benefit-visual" aria-hidden="true"><span class="visual-frame visual-frame-one"></span><span class="visual-frame visual-frame-two"></span><span class="visual-orb"></span></div><div><h3>Преврати описание в изображение</h3><p>Собирай идеи для публикаций, пробуй стили и уточняй результат референсами.</p></div></article>
+          <article class="benefit benefit-video"><span class="benefit-tag">Видео</span><div><h3>Дай идее движение</h3><p>Выбирай видеорежим, настраивай сцену и добавляй доступные референсы.</p></div><span class="benefit-glyph" aria-hidden="true">▶</span></article>
+          <article class="benefit benefit-trends"><span class="benefit-tag">Тренды</span><div><h3>Не начинай каждый раз с нуля</h3><p>Пробуй готовые сценарии, повторяй форматы и возвращайся к своим работам.</p></div><span class="benefit-glyph" aria-hidden="true">↗</span></article>
+        </div>
+        <a class="subtle-link section-tail" href="/mini-app/">Открыть инструменты <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+    <section class="section-how" id="how" aria-labelledby="how-title">
+      <div class="container">
+        <div class="section-heading"><p class="section-context">Четыре шага</p><h2 id="how-title">От замысла к готовой работе.</h2><p>Можно начать с текста, а можно добавить изображение-пример.</p></div>
+        <ol class="steps">
+          <li><span class="step-number">01</span><h3>Открой студию</h3><p>Войди в браузере через Telegram.</p></li>
+          <li><span class="step-number">02</span><h3>Выбери задачу</h3><p>Фото, видео или подходящий тренд.</p></li>
+          <li><span class="step-number">03</span><h3>Настрой генерацию</h3><p>Опиши идею, выбери параметры и добавь референс, если он поддерживается.</p></li>
+          <li><span class="step-number">04</span><h3>Забери результат</h3><p>Следи за статусом и возвращайся к своим задачам в истории.</p></li>
+        </ol>
+        <a class="subtle-link section-tail" href="/mini-app/">Начать создавать <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+    <section class="section-proof" id="examples" aria-labelledby="examples-title">
+      <div class="container proof-grid">
+        <div class="proof-lead"><p class="section-context">Вместо обещаний</p><h2 id="examples-title">Работающая студия, а не картинка будущего.</h2><p>Фото, видео, тренды, лента и история задач уже находятся внутри NEUROMIX. Можешь открыть интерфейс и посмотреть сам.</p><a class="subtle-link" href="/mini-app/">Заглянуть в студию <span aria-hidden="true">↗</span></a></div>
+        <div class="proof-sheet" aria-label="Реальные разделы приложения NEUROMIX">
+          <div><span class="proof-index">Форматы</span><strong>Фото и видео</strong><small>Генерация и настройки</small></div>
+          <div><span class="proof-index">Повтор</span><strong>Тренды</strong><small>Готовые сценарии</small></div>
+          <div><span class="proof-index">Возврат</span><strong>История задач</strong><small>Статусы и результаты</small></div>
+          <p>Здесь показаны реальные разделы продукта, а не выдуманные отзывы или результаты пользователей.</p>
+        </div>
+      </div>
+    </section>
+    <section class="section-terms" id="pricing" aria-labelledby="pricing-title">
+      <div class="container terms-grid">
+        <div><p class="section-context">Условия</p><h2 id="pricing-title">Сначала выбери задачу. Стоимость — в студии.</h2></div>
+        <div class="terms-copy"><p>У разных моделей и режимов отличаются параметры и стоимость генерации. Актуальные пакеты пополнения, баланс и способы оплаты находятся в приложении.</p><p>Мы не дублируем суммы здесь, чтобы устаревшая цена не повлияла на твой выбор.</p><a class="subtle-link" href="/mini-app/">Посмотреть условия в студии <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </section>
+    <section class="section-faq" id="faq" aria-labelledby="faq-title">
+      <div class="container faq-grid">
+        <div><p class="section-context">Без мелкого шрифта</p><h2 id="faq-title">Коротко о главном.</h2><p class="faq-intro">Ответы перед первым запуском.</p></div>
+        <div class="faq-items">
+          <details><summary>Нужно устанавливать приложение?</summary><p>Нет. NEUROMIX работает в браузере — на телефоне и компьютере.</p></details>
+          <details><summary>Можно войти без Telegram?</summary><p>Сейчас веб-версия использует вход через Telegram. Почта, Google и Яндекс ID пока не подключены.</p></details>
+          <details><summary>Нужен опыт работы с нейросетями?</summary><p>Можно начать с простого описания или готового тренда. Выбери раздел и следуй подсказкам интерфейса.</p></details>
+          <details><summary>Могу использовать свои фото и видео?</summary><p>Да, в тех моделях и сценариях, где предусмотрены референсы. Доступные форматы указаны в настройках генерации.</p></details>
+          <details><summary>Где посмотреть стоимость и готовые работы?</summary><p>Актуальные условия, пополнение и история задач находятся в приложении. Параметры зависят от выбранного режима.</p></details>
+        </div>
+      </div>
+    </section>
+    <section class="access-section" id="login" aria-labelledby="login-title">
+      <div class="container access-layout">
+        <div class="access-lead">
+          <span class="overline">Одна идея — один шаг до студии</span>
+          <h2 id="login-title">Есть идея? <em>Начни с неё.</em></h2>
+          <p>Открой NEUROMIX в браузере и выбери нужный инструмент. Сейчас вход в веб-студию работает через Telegram; почту, Google и Яндекс ID подключим отдельно.</p>
+        </div>
+        <div class="auth-box">
+          <div class="auth-head"><strong>Вход в NEUROMIX</strong><span>Веб-студия</span></div>
+          <a class="telegram-entry" href="/mini-app/" aria-label="Продолжить с Telegram в NEUROMIX">
+            <span class="telegram-icon">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.7 4.3c.4-.2.8.2.7.7l-3.2 14.9c-.1.6-.7.8-1.1.5l-4.7-3.5-2.3 2.2c-.3.3-.8.1-.8-.3v-4.2l8.7-7.8-10.7 6.7-4.3-1.3c-.6-.2-.6-1 0-1.2L20.7 4.3Z"/></svg>
+            </span>
+            Продолжить с Telegram
+            <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <div class="auth-status">Другие способы входа</div>
+          <div class="auth-soon" aria-label="Дополнительные способы входа пока недоступны">
+            <div><strong>Почта</strong><small>скоро</small></div>
+            <div><strong>Google</strong><small>скоро</small></div>
+            <div><strong>Яндекс ID</strong><small>скоро</small></div>
+          </div>
+          <div class="account-note">
+            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7.5 12.5a3.5 3.5 0 0 0 5 .3l2.2-2.2a3.5 3.5 0 0 0-4.9-5L8 7.4m4.5 0a3.5 3.5 0 0 0-5-.3L5.3 9.3a3.5 3.5 0 0 0 4.9 5L12 12.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+            Привязка нескольких способов входа к одному аккаунту появится после подключения серверной авторизации.
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="foot"><div class="container foot-inner"><strong>NEUROMIX</strong><span>AI Creative Studio · 2026</span><a href="/mini-app/">Открыть студию ↗</a></div></footer>
+  <a class="mobile-dock" href="/mini-app/" aria-label="Открыть студию NEUROMIX" aria-hidden="true" inert>Открыть студию
+    <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </a>
+  <script>
+    // Keep one clear mobile CTA in view; show the dock only after the hero
+    // button leaves the viewport. IntersectionObserver avoids scroll handlers.
+    (function () {
+      var dock = document.querySelector('.mobile-dock');
+      var heroButton = document.querySelector('.hero-cta .btn-primary');
+      if (!dock || !heroButton) return;
+      function setDockVisible(visible) {
+        dock.classList.toggle('is-visible', visible);
+        dock.toggleAttribute('inert', !visible);
+        dock.setAttribute('aria-hidden', String(!visible));
+      }
+      if (!('IntersectionObserver' in window)) {
+        setDockVisible(true);
+        return;
+      }
+      var observer = new IntersectionObserver(function (entries) {
+        setDockVisible(!entries[0].isIntersecting);
+      }, { threshold: 0.1 });
+      observer.observe(heroButton);
+    })();
+  </script>
+</body>
+</html>

@@ -88,4 +88,15 @@ PATH="$probe_root/bin:$PATH" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"; then
  exit 1
 fi
 [[ ! -s "$fail_root/apt.log" ]]
+# A third-party Microsoft feed returning 429 must not block signed Ubuntu
+# dependency installation on an ephemeral GitHub Actions runner.
+mkdir -p "$probe_root/etc/apt/sources.list.d"
+printf 'deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\n' > "$probe_root/etc/apt/sources.list.d/microsoft-prod.list"
+CI_APT_TEST_ROOT="$probe_root" CI_APT_TEST_RUN_FULL=1 GITHUB_ACTIONS=true CI_APT_TEST_FAIL_ALL=0 CI_APT_TEST_BACKUP=0 \
+CI_APT_TEST_CURL_LOG="$probe_root/curl.log" CI_APT_TEST_APT_LOG="$probe_root/apt.log" \
+PATH="$probe_root/bin:$PATH" bash "$(dirname "$0")/prepare-ubuntu-apt.sh"
+[[ ! -f "$probe_root/etc/apt/sources.list.d/microsoft-prod.list" ]]
+grep -q 'packages.microsoft.com' "$probe_root/etc/apt/sources.list.d/microsoft-prod.list.neuromix-ci-disabled"
+echo 'GitHub runner third-party apt 429 isolation PASS'
+
 echo 'Ubuntu apt mirror selection and fail-closed fallback PASS'
