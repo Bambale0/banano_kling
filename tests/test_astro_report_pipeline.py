@@ -512,3 +512,32 @@ def test_sentence_repair_splits_newline_without_deleting_verified_narrative(monk
     assert len(provider.calls) == 2
     assert all("299°" not in row["text"] for row in result["sections"])
     assert all("12,5°" in row["text"] for row in result["sections"])
+
+
+@pytest.mark.parametrize("retries", [0, 1])
+def test_repair_with_mixed_wrapped_claims_preserves_bounded_rewrite(monkeypatch, retries):
+    from bot.services.astro_report_pipeline import AstroSectionValidationError
+
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", str(retries))
+
+    class MixedClaims(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            text = "Осторожная символическая интерпретация проверенных данных. " * 20
+            if len(self.calls) == 1:
+                text += "Марс находится в 299\n°.\nСатурн находится в 298°."
+            return json.dumps({"section_id": req["section_id"], "text": text})
+
+    provider, checkpoints = MixedClaims(), Checkpoints()
+    report_plan = replace(plan(), sections=(plan().sections[0],), min_total_words=5)
+    if retries:
+        result = compose(provider=provider, store=checkpoints, given_plan=report_plan)
+        assert result["status"] == "completed" and len(provider.calls) == 2
+        assert provider.calls[1]["validation_feedback"]["reason"] == "unsupported_claim"
+        assert "299" not in result["sections"][0]["text"]
+        assert len(checkpoints.saved) == 1
+    else:
+        with pytest.raises(AstroSectionValidationError):
+            compose(provider=provider, store=checkpoints, given_plan=report_plan)
+        assert len(provider.calls) == 1 and not checkpoints.saved
