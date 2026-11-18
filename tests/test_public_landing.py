@@ -134,7 +134,7 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('class="grunge-ribbon"', self.html)
         self.assertIn('class="btn-primary grunge-cta" href="/mini-app/"', self.html)
         self.assertIn('class="btn-text grunge-more" href="#possibilities"', self.html)
-        self.assertIn('class="grunge-strip"', self.html)
+        self.assertIn('class="strip grunge-strip"', self.html)
         self.assertIn('src="/grunge-collage.webp"', self.html)
         self.assertIn('fetchpriority="high"', self.html)
         self.assertIn('aria-label="Превращай идеи в фото и видео"', self.html)
