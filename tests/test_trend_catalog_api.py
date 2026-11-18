@@ -404,3 +404,38 @@ async def test_catalog_cache_disabled_by_zero_ttl(monkeypatch):
     cache = trend_catalog_api.TrendCatalogReadCache(ttl_seconds=0)
     assert (await cache.get(is_admin=False, tariff="standard", limit=6))[0]["id"] == 1
     assert (await cache.get(is_admin=False, tariff="standard", limit=6))[0]["id"] == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_refresh_bypasses_hot_catalog_but_viewer_cannot_invalidate(
+    catalog_client, monkeypatch,
+):
+    from bot import trend_catalog
+
+    calls = 0
+
+    async def catalog(**kwargs):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(trend_catalog, "list_catalog", catalog)
+    admin = signed_init_data(999999999)
+    viewer = signed_init_data(8311004)
+    path = "/mini-app/api/trends/catalog"
+    for _ in range(2):
+        response = await catalog_client.post(path, json={"init_data": admin})
+        assert response.status == 200
+    assert calls == 1
+
+    response = await catalog_client.post(path, json={
+        "init_data": admin, "force_refresh": True,
+    })
+    assert response.status == 200 and calls == 2
+
+    for _ in range(2):
+        response = await catalog_client.post(path, json={
+            "init_data": viewer, "force_refresh": True,
+        })
+        assert response.status == 200
+    assert calls == 3

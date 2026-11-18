@@ -111,8 +111,13 @@ async def miniapp_trend_catalog(request: web.Request) -> web.Response:
 
         payload = await _request(request)
         actor_id, _ = await _context(request, payload)
+        is_admin = config.is_admin(actor_id)
+        # A just-saved admin trend must be immediately visible even while the
+        # public read cache is warm. Viewers cannot invalidate shared caches.
+        if is_admin and payload.get("force_refresh") is True:
+            request.app[_CATALOG_CACHE].invalidate()
         catalog = await request.app[_CATALOG_CACHE].get(
-            is_admin=config.is_admin(actor_id),
+            is_admin=is_admin,
             limit=payload.get("limit", 6),
             tariff=await get_actor_tariff(actor_id),
         )

@@ -197,7 +197,7 @@ export function TrendsTab() {
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
 
-  const refreshCatalog = useCallback(async () => {
+  const refreshCatalog = useCallback(async (forceRefresh = false) => {
     const request = ++catalogRequestRef.current
     if (!isLive) {
       setCatalog([])
@@ -207,7 +207,7 @@ export function TrendsTab() {
     setCatalogLoading(true)
     setError(null)
     try {
-      const loaded = await fetchTrendCatalog(6)
+      const loaded = await fetchTrendCatalog(6, forceRefresh)
       if (request !== catalogRequestRef.current) return
       setCatalog(loaded)
       // Catalog cards are usable immediately. Private Genjutsu recipe costs
@@ -509,7 +509,7 @@ export function TrendsTab() {
         setEditPreviewUrl(result.uploadedUrl)
         setEditingTrend(result.updated)
         setItems((prev) => prev.map((item) => item.id === result.updated.id ? result.updated : item))
-        await refreshCatalog()
+        await refreshCatalog(true)
       }
     } finally {
       if (editUploadAttemptRef.current === attemptId) {
@@ -692,7 +692,7 @@ export function TrendsTab() {
       resetForm()
       setNewTrendCategories([])
       setIsCreateOpen(false)
-      await refreshCatalog()
+      await refreshCatalog(true)
       if (!categoriesSaved) {
         setError('Тренд опубликован, но не удалось назначить папки. Откройте «Категории» и разместите его вручную. Повторно публиковать не нужно.')
       }
@@ -711,7 +711,7 @@ export function TrendsTab() {
     try {
       await deactivatePrompt(trend.id)
       setItems((prev) => prev.filter((item) => item.id !== trend.id))
-      await refreshCatalog()
+      await refreshCatalog(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось убрать тренд')
     } finally {
@@ -1512,7 +1512,7 @@ export function TrendsTab() {
                     setEditingTrend((current) => current?.id === editingTrend.id ? { ...current, title } : current)
                     setItems((previous) => previous.map((item) => item.id === editingTrend.id ? { ...item, title } : item))
                     setContentRefreshVersion((value) => value + 1)
-                    await refreshCatalog()
+                    await refreshCatalog(true)
                   }} />
                 <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.</p>
               </div>

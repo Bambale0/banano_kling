@@ -91,8 +91,9 @@ async function call<T>(
   }
 }
 
-export async function fetchTrendCatalog(limit = 6): Promise<ShowcaseCategory[]> {
-  const result = await call<{ ok: true; categories: ShowcaseCategory[] }>('/trends/catalog', { limit }, TREND_CATALOG_READ_TIMEOUT_MS)
+export async function fetchTrendCatalog(limit = 6, forceRefresh = false): Promise<ShowcaseCategory[]> {
+  const payload = { limit, ...(forceRefresh ? { force_refresh: true } : {}) }
+  const result = await call<{ ok: true; categories: ShowcaseCategory[] }>('/trends/catalog', payload, TREND_CATALOG_READ_TIMEOUT_MS)
   if (!Array.isArray(result.categories) || result.categories.some((category) =>
     !category || typeof category.title !== 'string' || !Array.isArray(category.items)
   )) {
