@@ -345,7 +345,7 @@ def _repair_unsupported_sentences(raw: str, spec: SectionSpec, facts: dict) -> s
     original = document.get("text")
     if not isinstance(original, str) or len(original) > 180_000 or "\x00" in original:
         return None
-    parts = re.split(r"(?<=[.!?])(?:[ \\t]+|\\n+)|\\n+", original)
+    parts = re.split(r"(?<=[.!?])(?:[ \t]+|\n+)|\n+", original)
     valid: list[str] = []
     removed_words = 0
     for part in parts:
