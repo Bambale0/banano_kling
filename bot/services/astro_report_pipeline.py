@@ -7,6 +7,7 @@ must supply an atomic, owner-scoped checkpoint storage adapter.
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import hashlib
 import hmac
@@ -327,6 +328,48 @@ def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> st
     return text.strip()
 
 
+
+def _repair_unsupported_sentences(raw: str, spec: SectionSpec, facts: dict) -> str | None:
+    """Salvage a complete section by removing whole unverified sentences.
+
+    Never invent or replace numeric evidence. Only checkpoint the remaining
+    narrative if its minimum length and full proof gate still pass. Otherwise
+    the normal bounded LLM rewrite remains necessary.
+    """
+    try:
+        document = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(document, dict) or document.get("section_id") != spec.id:
+        return None
+    original = document.get("text")
+    if not isinstance(original, str) or len(original) > 180_000 or "\x00" in original:
+        return None
+    parts = re.split(r"(?<=[.!?])(?:[ \\t]+|\\n+)|\\n+", original)
+    valid: list[str] = []
+    removed_words = 0
+    for part in parts:
+        if not part.strip():
+            continue
+        try:
+            _validate_written_facts(part, facts)
+        except AstroSectionValidationError as exc:
+            if exc.reason != "unsupported_claim":
+                return None
+            removed_words += _word_count(part)
+        else:
+            valid.append(part.strip())
+    if not removed_words:
+        return None
+    repaired = "\n".join(valid).strip()
+    # Do not turn a long report into a substantially different, short summary.
+    if (not repaired or _word_count(repaired) < spec.min_words
+        or removed_words * 5 > _word_count(original)):
+        return None
+    _validate_written_facts(repaired, facts)
+    return repaired
+
+
 def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec, ...]:
     """No daily/monthly narrative may silently skip a real calendar day/month.
 
@@ -421,15 +464,18 @@ async def compose_report(
         raise AstroReportError("Слишком большой объём исходных фактов.")
     try:
         validation_retries = int(os.getenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1"))
+        section_concurrency = int(os.getenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1"))
     except ValueError as exc:
-        raise ValueError("Invalid Astro section validation retry configuration") from exc
+        raise ValueError("Invalid Astro section retry or concurrency configuration") from exc
     if not 0 <= validation_retries <= 2:
         raise ValueError("Invalid Astro section validation retry configuration")
-    sections: list[dict] = []
-    for section in _expand_period_sections(plan, available):
+    if not 1 <= section_concurrency <= 4:
+        raise ValueError("Invalid Astro section concurrency configuration")
+
+    async def build_section(section: SectionSpec) -> dict[str, str]:
         prior = await store.read(owner_id=owner_id, fingerprint=fingerprint, section_id=section.id)
         if prior is not None:
-            # Treat tampered/corrupt checkpoint as error; never silently accept it.
+            # A resumed section has already passed the same content gates.
             if _word_count(prior) < section.min_words:
                 raise AstroReportError("Сохранённый раздел не прошёл проверку целостности.")
             text = prior
@@ -462,14 +508,21 @@ async def compose_report(
                     candidate = _parse_section(response, section, available)
                     break
                 except AstroSectionValidationError as exc:
+                    if exc.reason == "unsupported_claim":
+                        repaired = _repair_unsupported_sentences(response, section, available)
+                        if repaired is not None:
+                            candidate = repaired
+                            logger.info(
+                                "astro_section_safe_repair service=%s section=%s",
+                                plan.service_id, section.id,
+                            )
+                            break
                     logger.warning(
                         "astro_section_validation_failed service=%s section=%s reason=%s retry=%s",
                         plan.service_id, section.id, exc.reason, attempt,
                     )
                     if attempt >= validation_retries:
                         raise
-                    # Preserve all original astronomical facts and the proof gate.
-                    # The next response must satisfy the exact same contract.
                     request["validation_feedback"] = {
                         "reason": exc.reason,
                         "minimum_words": section.min_words,
@@ -495,7 +548,27 @@ async def compose_report(
             )
             if _word_count(text) < section.min_words:
                 raise AstroReportError("Недостоверное содержимое контрольной точки.")
-        sections.append({"id": section.id, "title": section.title, "text": text})
+            logger.info(
+                "astro_section_checkpointed service=%s section=%s words=%s",
+                plan.service_id, section.id, _word_count(text),
+            )
+        return {"id": section.id, "title": section.title, "text": text}
+
+    expanded = _expand_period_sections(plan, available)
+    sections: list[dict] = []
+    # Bounded waves preserve all successful checkpoints even if a sibling
+    # section fails. Stop before starting another paid wave on provider failure.
+    # Each wave uses one job lease and preserves the plan-defined report order.
+    for index in range(0, len(expanded), section_concurrency):
+        wave = expanded[index:index + section_concurrency]
+        results = await asyncio.gather(
+            *(build_section(section) for section in wave),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        sections.extend(results)
 
     total = sum(_word_count(section["text"]) for section in sections)
     if total < plan.min_total_words:
