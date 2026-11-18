@@ -84,6 +84,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertNotIn('href="/login/yandex', self.html)
         self.assertLess(len(self.html.encode("utf-8")), 40000)
 
+    def test_mobile_sticky_action_waits_until_primary_button_is_out_of_view(self):
+        self.assertIn("IntersectionObserver", self.html)
+        self.assertIn("observer.observe(heroButton)", self.html)
+        self.assertIn("dock.classList.toggle('is-visible'", self.html)
+        self.assertIn(".mobile-dock.is-visible", self.html)
+        self.assertIn("pointer-events:none", self.html)
+
     def test_mobile_and_accessibility_seams(self):
         self.assertIn("@media (max-width:760px)", self.html)
         self.assertIn("@media (max-width:380px)", self.html)
