@@ -464,11 +464,14 @@ async def compose_report(
         raise AstroReportError("Слишком большой объём исходных фактов.")
     try:
         validation_retries = int(os.getenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1"))
-        section_concurrency = int(os.getenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1"))
     except ValueError as exc:
-        raise ValueError("Invalid Astro section retry or concurrency configuration") from exc
+        raise ValueError("Invalid Astro section validation retry configuration") from exc
     if not 0 <= validation_retries <= 2:
         raise ValueError("Invalid Astro section validation retry configuration")
+    try:
+        section_concurrency = int(os.getenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1"))
+    except ValueError as exc:
+        raise ValueError("Invalid Astro section concurrency configuration") from exc
     if not 1 <= section_concurrency <= 4:
         raise ValueError("Invalid Astro section concurrency configuration")
 
