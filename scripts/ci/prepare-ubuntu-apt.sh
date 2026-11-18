@@ -54,7 +54,7 @@ fi
 if [[ ${GITHUB_ACTIONS:-} == true ]]; then
   for source in "${root}"/etc/apt/sources.list.d/*.list "${root}"/etc/apt/sources.list.d/*.sources; do
     [[ -f $source ]] || continue
-    if grep -Eqi 'packages\\.microsoft\\.com' "$source"; then
+    if grep -Eqi 'packages\.microsoft\.com' "$source"; then
       "${sudo_cmd[@]}" mv "$source" "${source}.neuromix-ci-disabled"
       echo "Disabled unrelated Microsoft apt feed for ephemeral CI runner: ${source##*/}"
     fi
