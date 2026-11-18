@@ -21,7 +21,7 @@ SMOKE=""
 [[ -n "$EXPECTED_SHA" && "$(git -C "$PROJECT_DIR" rev-parse HEAD)" == "$EXPECTED_SHA" ]] || {
   echo "[landing] Exact checked-out SHA does not match" >&2; exit 1;
 }
-[[ -f "$LANDING/index.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" && -f "$LANDING/grunge-hero-v1.webp" && -f "$LANDING/grunge-mobile-art-v1.webp" ]] || {
+[[ -f "$LANDING/index.html" && -f "$LANDING/login.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" && -f "$LANDING/grunge-hero-v1.webp" && -f "$LANDING/grunge-mobile-art-v1.webp" ]] || {
   echo "[landing] Website assets missing" >&2; exit 1;
 }
 [[ -f "$NGINX" ]] || { echo "[landing] Expected Nginx vhost missing: $NGINX" >&2; exit 1; }
@@ -55,6 +55,7 @@ install -d -m 0755 "$ROOT"
 install -d -m 0700 "$BACKUP"
 cp -p -- "$NGINX" "$BACKUP/nginx.conf"
 if [[ -f "$ROOT/index.html" ]]; then cp -p -- "$ROOT/index.html" "$BACKUP/index.html"; fi
+if [[ -f "$ROOT/login.html" ]]; then cp -p -- "$ROOT/login.html" "$BACKUP/login.html"; fi
 for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   if [[ -f "$ROOT/$file" ]]; then cp -p -- "$ROOT/$file" "$BACKUP/$file"; fi
 done
@@ -69,6 +70,7 @@ rollback() {
   fi
   if [[ "$VERIFIED" != 1 ]]; then
     if [[ -f "$BACKUP/index.html" ]]; then cp -p -- "$BACKUP/index.html" "$ROOT/index.html"; else rm -f -- "$ROOT/index.html"; fi
+    if [[ -f "$BACKUP/login.html" ]]; then cp -p -- "$BACKUP/login.html" "$ROOT/login.html"; else rm -f -- "$ROOT/login.html"; fi
     for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
       if [[ -f "$BACKUP/$file" ]]; then cp -p -- "$BACKUP/$file" "$ROOT/$file"; else rm -f -- "$ROOT/$file"; fi
     done
@@ -77,7 +79,7 @@ rollback() {
 }
 trap rollback EXIT
 
-for file in index.html robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
+for file in index.html login.html robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   tmp="$(mktemp "$ROOT/.landing-$file.XXXXXX")"
   install -m 0644 "$LANDING/$file" "$tmp"
   mv -f -- "$tmp" "$ROOT/$file"
@@ -128,6 +130,26 @@ if assets not in content:
     if content.count(new) != 1:
         raise SystemExit("Cannot safely insert grunge asset routes")
     content = content.replace(new, new + "\n" + assets, 1)
+# Two exact login routes; no redirect loops and no impact on /mini-app/.
+login_locations = """    location = /login {
+        root /var/www/neuromix-landing;
+        try_files /login.html =404;
+        add_header Cache-Control "no-store" always;
+    }
+
+    location = /login/ {
+        root /var/www/neuromix-landing;
+        try_files /login.html =404;
+        add_header Cache-Control "no-store" always;
+    }
+
+"""
+if "location = /login {" not in content:
+    if content.count(new) != 1:
+        raise SystemExit("Cannot safely insert login routes")
+    content = content.replace(new, new + "\n" + login_locations, 1)
+if content.count("location = /login {") != 1 or content.count("location = /login/ {") != 1:
+    raise SystemExit("Ambiguous login routes")
 if content.count("location = /grunge-hero-v1.webp {") != 1 or content.count("location = /grunge-mobile-art-v1.webp {") != 1:
     raise SystemExit("Grunge asset routes ambiguous")
 if content.count("location = / {") != 1:
@@ -161,7 +183,7 @@ for mode in origin public; do
   grep -q 'id="hero-title"' "$SMOKE" || { echo "[landing] $mode root does not serve landing" >&2; exit 1; }
   grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] $mode root missing app entry" >&2; exit 1; }
 done
-for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
+for file in login robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   code="$(curl -sS --max-time 15 --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/$file")"
   [[ "$code" == 200 ]] || { echo "[landing] /$file returned $code" >&2; exit 1; }
 done
