@@ -131,7 +131,7 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('class="hero grunge-hero"', self.html)
         self.assertIn('class="grunge-headline"', self.html)
         self.assertIn('class="paint-ideas"', self.html)
-        self.assertIn('class="grunge-ribbon"', self.html)
+        self.assertIn('class="eyebrow grunge-ribbon"', self.html)
         self.assertIn('class="btn-primary grunge-cta" href="/mini-app/"', self.html)
         self.assertIn('class="btn-text grunge-more" href="#possibilities"', self.html)
         self.assertIn('class="strip grunge-strip"', self.html)
