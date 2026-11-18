@@ -17,6 +17,18 @@
   <meta property="og:url" content="https://neuromixbot.com/">
   <meta name="twitter:card" content="summary">
   <title>NEUROMIX — генерация фото и видео с AI | Веб-студия</title>
+  <script>
+    // Old Telegram launch links may target the domain root. Preserve their
+    // launch parameters and open the existing Mini App, not the marketing page.
+    (function () {
+      var fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      var query = new URLSearchParams(window.location.search);
+      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'];
+      if (keys.some(function (key) { return fragment.has(key) || query.has(key); })) {
+        window.location.replace('/mini-app/' + window.location.search + window.location.hash);
+      }
+    })();
+  </script>
   <style>
     :root {
       color-scheme: dark;
