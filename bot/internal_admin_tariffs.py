@@ -202,6 +202,17 @@ def _merge_tariff_view(current: dict[str, Any], view: dict[str, Any]) -> dict[st
     for key in _TARIFF_KEYS:
         if key in view:
             merged[key] = view[key]
+            if key == "service_prices" and isinstance(view[key], dict):
+                # Older admin clients know only existing service prices; their
+                # snapshots must not silently erase Astro prices added by the
+                # Telegram tariff editor.
+                current_prices = current.get("service_prices", {})
+                if (
+                    "astro" not in view[key]
+                    and isinstance(current_prices, dict)
+                    and "astro" in current_prices
+                ):
+                    merged[key] = {**view[key], "astro": current_prices["astro"]}
     _validate_tariff_config(merged)
     return merged
 
