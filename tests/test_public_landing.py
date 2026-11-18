@@ -56,6 +56,8 @@ class LandingPublicContractTest(unittest.TestCase):
     def test_legacy_telegram_webview_launch_bypasses_public_landing(self):
         self.assertIn("tgWebAppData", self.html)
         self.assertIn("tgWebAppVersion", self.html)
+        self.assertIn("tgWebAppStartParam", self.html)
+        self.assertIn("'startapp'", self.html)
         self.assertIn("window.location.replace('/mini-app/'", self.html)
         self.assertIn("window.location.hash", self.html)
 
