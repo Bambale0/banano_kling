@@ -34,6 +34,9 @@ jobs:
       - name: Install locked application and E2E dependencies
         run: npm ci --no-audit --fund=false
 
+      - name: Verify private security fix and original upstream advisories
+        run: npm run security:picomatch
+
       - name: Block high-severity dependency vulnerabilities
         run: npm audit --audit-level=high
 
