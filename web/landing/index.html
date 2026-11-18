@@ -175,7 +175,8 @@
       .access-lead p{font-size:13px;line-height:1.62}
       .auth-box{padding:22px;border-radius:17px}
       .foot{padding:21px 0 calc(90px + env(safe-area-inset-bottom))}
-      .mobile-dock{position:fixed;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:18px;bottom:calc(12px + env(safe-area-inset-bottom));left:18px;right:18px;min-height:55px;background:var(--primary);color:#19170f;border-radius:12px;padding:0 20px;font-weight:780;font-size:13px;box-shadow:0 10px 34px rgba(0,0,0,.5)}
+      .mobile-dock{position:fixed;z-index:5;display:flex;justify-content:space-between;align-items:center;gap:18px;bottom:calc(12px + env(safe-area-inset-bottom));left:18px;right:18px;min-height:55px;background:var(--primary);color:#19170f;border-radius:12px;padding:0 20px;font-weight:780;font-size:13px;box-shadow:0 10px 34px rgba(0,0,0,.5);opacity:0;transform:translateY(18px);pointer-events:none;transition:opacity .25s var(--ease),transform .25s var(--ease)}
+      .mobile-dock.is-visible{opacity:1;transform:translateY(0);pointer-events:auto}
     }
     @media (max-width:380px) {
       .container{width:calc(100% - 28px)}
@@ -329,5 +330,22 @@
   <a class="mobile-dock" href="/mini-app/" aria-label="Открыть студию NEUROMIX">Открыть студию
     <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </a>
+  <script>
+    // Keep one clear mobile CTA in view; show the dock only after the hero
+    // button leaves the viewport. IntersectionObserver avoids scroll handlers.
+    (function () {
+      var dock = document.querySelector('.mobile-dock');
+      var heroButton = document.querySelector('.hero-cta .btn-primary');
+      if (!dock || !heroButton) return;
+      if (!('IntersectionObserver' in window)) {
+        dock.classList.add('is-visible');
+        return;
+      }
+      var observer = new IntersectionObserver(function (entries) {
+        dock.classList.toggle('is-visible', !entries[0].isIntersecting);
+      }, { threshold: 0.1 });
+      observer.observe(heroButton);
+    })();
+  </script>
 </body>
 </html>
