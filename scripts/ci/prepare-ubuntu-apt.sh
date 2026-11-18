@@ -46,6 +46,21 @@ if [[ ${CI_APT_TEST_ROOT:-} && ${CI_APT_TEST_RUN_FULL:-} != 1 ]]; then
   exit 0
 fi
 
+# The ephemeral GitHub runner includes unrelated Microsoft apt feeds. They
+# sometimes return HTTP 429 and make APT::Update::Error-Mode=any fail even when
+# the selected signed Ubuntu mirror is healthy. Only for GitHub Actions, move
+# those sources outside apt's sourceparts directory for this job. Ubuntu
+# signature verification and strict apt errors remain enabled.
+if [[ ${GITHUB_ACTIONS:-} == true ]]; then
+  for source in "${root}"/etc/apt/sources.list.d/*.list "${root}"/etc/apt/sources.list.d/*.sources; do
+    [[ -f $source ]] || continue
+    if grep -Eqi 'packages\\.microsoft\\.com' "$source"; then
+      "${sudo_cmd[@]}" mv "$source" "${source}.neuromix-ci-disabled"
+      echo "Disabled unrelated Microsoft apt feed for ephemeral CI runner: ${source##*/}"
+    fi
+  done
+fi
+
 # Prefer the Ubuntu/Azure mirror used on GitHub-hosted runners. InRelease metadata
 # and package hashes remain checked by apt against trusted Ubuntu GPG keys.
 # Check their DNS reachability before waiting for apt retries. Never mark the
