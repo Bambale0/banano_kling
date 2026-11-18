@@ -357,3 +357,7 @@ else
   log "VK_DEPLOY_SKIPPED Telegram-only release (retired VK host not probed)"
 fi
 log "LIVE_OK ${BASE_URL}/ revision=${EXPECTED_SHA}"
+
+# Public SEO entrance: independent of the existing Mini App root and API.
+# Deploy only after its exact-SHA frontend smoke has passed.
+bash "${PROJECT_DIR}/scripts/deploy_landing_local.sh" "$EXPECTED_SHA"
