@@ -21,7 +21,7 @@ SMOKE=""
 [[ -n "$EXPECTED_SHA" && "$(git -C "$PROJECT_DIR" rev-parse HEAD)" == "$EXPECTED_SHA" ]] || {
   echo "[landing] Exact checked-out SHA does not match" >&2; exit 1;
 }
-[[ -f "$LANDING/index.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" ]] || {
+[[ -f "$LANDING/index.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" && -f "$LANDING/grunge-hero-v1.webp" && -f "$LANDING/grunge-mobile-art-v1.webp" ]] || {
   echo "[landing] Website assets missing" >&2; exit 1;
 }
 [[ -f "$NGINX" ]] || { echo "[landing] Expected Nginx vhost missing: $NGINX" >&2; exit 1; }
@@ -55,7 +55,7 @@ install -d -m 0755 "$ROOT"
 install -d -m 0700 "$BACKUP"
 cp -p -- "$NGINX" "$BACKUP/nginx.conf"
 if [[ -f "$ROOT/index.html" ]]; then cp -p -- "$ROOT/index.html" "$BACKUP/index.html"; fi
-for file in robots.txt sitemap.xml; do
+for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   if [[ -f "$ROOT/$file" ]]; then cp -p -- "$ROOT/$file" "$BACKUP/$file"; fi
 done
 
@@ -69,7 +69,7 @@ rollback() {
   fi
   if [[ "$VERIFIED" != 1 ]]; then
     if [[ -f "$BACKUP/index.html" ]]; then cp -p -- "$BACKUP/index.html" "$ROOT/index.html"; else rm -f -- "$ROOT/index.html"; fi
-    for file in robots.txt sitemap.xml; do
+    for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
       if [[ -f "$BACKUP/$file" ]]; then cp -p -- "$BACKUP/$file" "$ROOT/$file"; else rm -f -- "$ROOT/$file"; fi
     done
   fi
@@ -77,7 +77,7 @@ rollback() {
 }
 trap rollback EXIT
 
-for file in index.html robots.txt sitemap.xml; do
+for file in index.html robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   tmp="$(mktemp "$ROOT/.landing-$file.XXXXXX")"
   install -m 0644 "$LANDING/$file" "$tmp"
   mv -f -- "$tmp" "$ROOT/$file"
@@ -122,6 +122,14 @@ elif new in content:
     pass
 else:
     raise SystemExit("Unknown Nginx root route; refusing mutation")
+# Add exact asset routes without changing Mini App or fallback routes.
+assets = "    location = /grunge-hero-v1.webp {\n        root /var/www/neuromix-landing;\n        try_files /grunge-hero-v1.webp =404;\n        add_header Cache-Control \"public, max-age=86400\" always;\n    }\n\n    location = /grunge-mobile-art-v1.webp {\n        root /var/www/neuromix-landing;\n        try_files /grunge-mobile-art-v1.webp =404;\n        add_header Cache-Control \"public, max-age=86400\" always;\n    }\n"
+if assets not in content:
+    if content.count(new) != 1:
+        raise SystemExit("Cannot safely insert grunge asset routes")
+    content = content.replace(new, new + "\n" + assets, 1)
+if content.count("location = /grunge-hero-v1.webp {") != 1 or content.count("location = /grunge-mobile-art-v1.webp {") != 1:
+    raise SystemExit("Grunge asset routes ambiguous")
 if content.count("location = / {") != 1:
     raise SystemExit("Unexpected HTTPS root location count")
 tmp = path.with_suffix(path.suffix + ".landing-tmp")
@@ -153,9 +161,18 @@ for mode in origin public; do
   grep -q 'id="hero-title"' "$SMOKE" || { echo "[landing] $mode root does not serve landing" >&2; exit 1; }
   grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] $mode root missing app entry" >&2; exit 1; }
 done
-for file in robots.txt sitemap.xml; do
+for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   code="$(curl -sS --max-time 15 --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/$file")"
   [[ "$code" == 200 ]] || { echo "[landing] /$file returned $code" >&2; exit 1; }
+done
+# Asset routes are served by the isolated landing root, not the Mini App.
+for file in grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
+  for mode in origin public; do
+    args=()
+    if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
+    actual="$(curl -sS --max-time 20 "${args[@]}" -o /dev/null -w '%{http_code} %{content_type}' "https://$HOST/$file" || true)"
+    [[ "$actual" == "200 image/webp" ]] || { echo "[landing] $mode /$file returned $actual" >&2; exit 1; }
+  done
 done
 miniapp_revision="$(curl -fsS --max-time 20 --resolve "$HOST:443:127.0.0.1" "https://$HOST/mini-app/revision.txt")"
 [[ "$miniapp_revision" == "$EXPECTED_SHA" ]] || { echo "[landing] Existing Mini App revision mismatch" >&2; exit 1; }

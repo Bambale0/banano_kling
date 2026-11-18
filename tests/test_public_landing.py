@@ -44,7 +44,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#faq"})
+        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#examples", "#login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -73,7 +73,8 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_redesign_is_short_real_entry_portal_not_fake_app(self):
         # Marketing root remains a small no-dependency gateway, not a second app.
-        self.assertIn('class="container hero-grid"', self.html)
+        self.assertIn('class="grunge-desktop"', self.html)
+        self.assertIn('class="grunge-mobile"', self.html)
         self.assertIn('class="container access-layout"', self.html)
         self.assertIn('id="login-title"', self.html)
         self.assertIn("Превращай идеи", self.html)
@@ -87,6 +88,7 @@ class LandingPublicContractTest(unittest.TestCase):
     def test_mobile_sticky_action_waits_until_primary_button_is_out_of_view(self):
         self.assertIn("IntersectionObserver", self.html)
         self.assertIn("observer.observe(heroButton)", self.html)
+        self.assertIn("document.querySelector('.mobile-grunge-cta')", self.html)
         self.assertIn("dock.classList.toggle('is-visible'", self.html)
         self.assertIn(".mobile-dock.is-visible", self.html)
         self.assertIn("pointer-events:none", self.html)
@@ -127,6 +129,28 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertNotIn('class="fake-review"', self.html)
         self.assertIn(".faq-items summary:focus-visible", self.html)
 
+    def test_grunge_hero_uses_approved_art_with_real_clickable_regions(self):
+        self.assertIn('grunge-hero-v1.webp', self.html)
+        self.assertIn('grunge-mobile-art-v1.webp', self.html)
+        self.assertIn('class="grunge-poster"', self.html)
+        self.assertIn('class="hotspot hot-hero-cta"', self.html)
+        self.assertIn('class="hotspot hot-enter"', self.html)
+        self.assertIn('class="mobile-grunge-cta"', self.html)
+        self.assertIn('class="screenreader-only"', self.html)
+        self.assertIn('class="grunge-mobile-title"', self.html)
+        self.assertIn('id="hero-title"', self.html)
+        self.assertIn('aria-label="Основная навигация"', self.html)
+        self.assertIn('background:#090b0c url("grunge-hero-v1.webp")', self.html)
+        for name in ("grunge-hero-v1.webp", "grunge-mobile-art-v1.webp"):
+            asset = LANDING / name
+            self.assertTrue(asset.is_file(), name)
+            data = asset.read_bytes()
+            self.assertGreater(len(data), 100_000)
+            self.assertTrue(data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+            self.assertIn(f'location = /{name} {{', self.nginx)
+            self.assertIn(f'/{name}', self.publisher)
+        self.assertIn("image/webp", self.publisher)
+
     def test_seo_metadata(self):
         self.assertIn('href="https://neuromixbot.com/"', self.html)
         self.assertIn('name="description"', self.html)
@@ -139,6 +163,8 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("location /mini-app/", self.nginx)
         self.assertIn("location = /robots.txt", self.nginx)
         self.assertIn("location = /sitemap.xml", self.nginx)
+        self.assertIn("location = /grunge-hero-v1.webp", self.nginx)
+        self.assertIn("location = /grunge-mobile-art-v1.webp", self.nginx)
 
     def test_release_runs_after_miniapp_smoke_and_has_rollback(self):
         self.assertLess(self.deploy.index('log "LIVE_OK '), self.deploy.index("deploy_landing_local.sh"))
