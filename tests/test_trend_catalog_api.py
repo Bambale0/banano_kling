@@ -360,3 +360,47 @@ async def test_shared_prompt_detail_keeps_stats_only_for_signed_admin(actor_id, 
             assert "successful_runs_count" not in prompt
             assert "uses_count" not in prompt
             assert prompt["description"] == "День рождения"
+
+
+@pytest.mark.asyncio
+async def test_catalog_cache_coalesces_concurrent_reads_and_invalidates_after_edit(monkeypatch):
+    import asyncio
+
+    from bot import trend_catalog_api
+
+    builds = 0
+    async def build(**kwargs):
+        nonlocal builds
+        builds += 1
+        await asyncio.sleep(0.02)
+        return [{"id": builds, "items": [], "is_visible": True}]
+
+    monkeypatch.setattr(trend_catalog_api.trend_catalog, "list_catalog", build)
+    cache = trend_catalog_api.TrendCatalogReadCache(ttl_seconds=30)
+    values = await asyncio.gather(*[
+        cache.get(is_admin=False, tariff="standard", limit=6) for _ in range(12)
+    ])
+    assert builds == 1
+    assert all(value[0]["id"] == 1 for value in values)
+    cache.invalidate()
+    next_value = await cache.get(is_admin=False, tariff="standard", limit=6)
+    assert next_value[0]["id"] == 2
+    assert builds == 2
+    await cache.get(is_admin=True, tariff="standard", limit=6)
+    await cache.get(is_admin=False, tariff="creator", limit=6)
+    assert builds == 4
+
+
+@pytest.mark.asyncio
+async def test_catalog_cache_disabled_by_zero_ttl(monkeypatch):
+    from bot import trend_catalog_api
+    builds = 0
+    async def build(**kwargs):
+        nonlocal builds
+        builds += 1
+        return [{"id": builds}]
+
+    monkeypatch.setattr(trend_catalog_api.trend_catalog, "list_catalog", build)
+    cache = trend_catalog_api.TrendCatalogReadCache(ttl_seconds=0)
+    assert (await cache.get(is_admin=False, tariff="standard", limit=6))[0]["id"] == 1
+    assert (await cache.get(is_admin=False, tariff="standard", limit=6))[0]["id"] == 2

@@ -205,6 +205,7 @@ export function TrendsTab() {
       return
     }
     setCatalogLoading(true)
+    setError(null)
     try {
       const loaded = await fetchTrendCatalog(6)
       if (request !== catalogRequestRef.current) return
@@ -216,12 +217,16 @@ export function TrendsTab() {
       })
     } catch (e) {
       if (request !== catalogRequestRef.current) return
-      if (e instanceof ShowcaseApiError && e.status === 403) {
-        setCatalog([])
-        setError(e.message)
-      } else {
-        // Only transport/unavailable API failures can enter the legacy fallback.
+      if (e instanceof ShowcaseApiError
+        && (e.status === 404 || e.code === 'invalid_catalog')) {
+        // Only servers that do not implement the current catalog contract
+        // may fall back to the older, heavier prompt-list endpoint.
         setCatalog(null)
+      } else {
+        // Timeout, auth and network failures must stop the spinner.
+        // Keep previous cards, if any, and expose an explicit retry.
+        setCatalog((current) => current ?? [])
+        setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды.')
       }
     } finally {
       if (request === catalogRequestRef.current) setCatalogLoading(false)
@@ -1343,7 +1348,13 @@ export function TrendsTab() {
 
       {error ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
+          <span>{error}</span>
+          {!catalogLoading && catalog !== null && catalog.length === 0 ? (
+            <Button type="button" variant="secondary" size="sm"
+              className="mt-3" onClick={() => { void refreshCatalog() }}>
+              Повторить загрузку трендов
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

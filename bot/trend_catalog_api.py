@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import time
 
 from aiohttp import web
 
@@ -10,6 +13,50 @@ from bot import trend_catalog, trend_catalog_audit
 from bot.config import config
 
 logger = logging.getLogger(__name__)
+
+
+class TrendCatalogReadCache:
+    """Short-lived, role/tariff-scoped catalog; coalesce bursty identical reads.
+
+    The cache contains only sanitized public DTOs, never initData, private
+    prompts or actor identity. Admin writes invalidate it immediately.
+    """
+
+    def __init__(self, *, ttl_seconds: float | None = None):
+        if ttl_seconds is None:
+            ttl_seconds = float(os.getenv("TREND_CATALOG_CACHE_TTL_SECONDS", "12"))
+        if not 0 <= ttl_seconds <= 120:
+            raise ValueError("Invalid trends catalog cache TTL")
+        self.ttl_seconds = ttl_seconds
+        self._entries: dict[tuple[bool, str, int], tuple[float, list]] = {}
+        self._lock = asyncio.Lock()
+        self._revision = 0
+
+    def invalidate(self) -> None:
+        self._revision += 1
+        self._entries.clear()
+
+    async def get(
+        self, *, is_admin: bool, tariff: str, limit: int,
+    ) -> list:
+        key = (is_admin, tariff, max(1, min(12, int(limit))))
+        cached = self._entries.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        async with self._lock:
+            cached = self._entries.get(key)
+            if cached and cached[0] > time.monotonic():
+                return cached[1]
+            revision = self._revision
+            result = await trend_catalog.list_catalog(
+                is_admin=is_admin, tariff=tariff, per_category=key[2],
+            )
+            if self.ttl_seconds and revision == self._revision:
+                self._entries[key] = (time.monotonic() + self.ttl_seconds, result)
+            return result
+
+
+_CATALOG_CACHE = web.AppKey("trend_catalog_read_cache", TrendCatalogReadCache)
 
 
 async def _context(request: web.Request, payload: dict):
@@ -64,9 +111,9 @@ async def miniapp_trend_catalog(request: web.Request) -> web.Response:
 
         payload = await _request(request)
         actor_id, _ = await _context(request, payload)
-        catalog = await trend_catalog.list_catalog(
+        catalog = await request.app[_CATALOG_CACHE].get(
             is_admin=config.is_admin(actor_id),
-            per_category=payload.get("limit", 6),
+            limit=payload.get("limit", 6),
             tariff=await get_actor_tariff(actor_id),
         )
         return web.json_response(
@@ -180,6 +227,7 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
                 "Неизвестное действие редактора витрины"
             )
         if op not in {"search_trends", "history"}:
+            request.app[_CATALOG_CACHE].invalidate()
             logger.info(
                 "Trend showcase admin mutation: op=%s actor=%s category=%s trend=%s",
                 op,
@@ -195,6 +243,7 @@ async def miniapp_admin_trend_categories(request: web.Request) -> web.Response:
 
 
 def setup_trend_catalog_routes(app: web.Application, miniapp_root: str) -> None:
+    app[_CATALOG_CACHE] = TrendCatalogReadCache()
     base = str(miniapp_root or "/mini-app").rstrip("/") or "/mini-app"
     app.router.add_post(f"{base}/api/trends/catalog", miniapp_trend_catalog)
     app.router.add_post(f"{base}/api/trends/category", miniapp_trend_category)

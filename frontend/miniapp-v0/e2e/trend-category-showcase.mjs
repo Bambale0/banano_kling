@@ -35,6 +35,7 @@ let privateContentRequests = 0
 let privatePrompt = "Use @Image1 in a garden"
 let contentRevision = "v1"
 let legacyPromptRequests = 0
+let catalogRequests = 0
 let adminMode = false
 const category = {
   id: 101, title:'День рождения', emoji:'🧁', sort_order:0, revision:3,
@@ -82,6 +83,8 @@ try {
           video_models:[{id:'seedance_2_5',label:'Seedance 2.5', supports:['imgtxt'], ratios:['9:16'],durations:[10],costs:{}}],
           recent_tasks:[], saved_references:[], actions:[], payment_packages:[]}
       }else if(url.pathname.endsWith('/trends/catalog')){
+        catalogRequests += 1
+        if (catalogRequests === 1) return route.abort('failed')
         body={ok:true,categories:[category,reels]}
       }else if(url.pathname.endsWith('/trends/category')){
         const p=route.request().postDataJSON()
@@ -124,7 +127,13 @@ try {
     return route.abort()
   })
   await page.goto(base+'/mini-app/?tgWebAppData=query_id%3Dfixture',{waitUntil:'networkidle'})
+  // A failed catalog transport must release the spinner and permit retry.
+  await page.getByRole('button',{name:'Повторить загрузку трендов'}).waitFor()
+  assert.equal(await page.locator('.animate-spin').count(),0,
+    'A rejected catalog must not leave an infinite loading spinner')
+  await page.getByRole('button',{name:'Повторить загрузку трендов'}).click()
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).waitFor()
+  assert.equal(catalogRequests,2)
   assert.equal(legacyPromptRequests, 0, 'A successful catalog must not download and convert legacy grids')
   assert.equal(await page.getByText('Новинка',{exact:true}).count(),2)
   assert.equal(await page.getByRole('button',{name:'Все тренды категории Липсинги'}).count(),1)
