@@ -102,14 +102,24 @@ class AstroReportWorker:
             plan = load_report_plan(job.service_id)
             expected = report_fingerprint(
                 owner_id=job.owner_id, plan=plan, facts=job.facts,
+                secret=self.jobs.fingerprint_secret, generation_id=job.job_id,
+            )
+            # Historic queued jobs use the original facts-only HMAC. Keep them
+            # resumable after release; new jobs have an isolated checkpoint key.
+            legacy = report_fingerprint(
+                owner_id=job.owner_id, plan=plan, facts=job.facts,
                 secret=self.jobs.fingerprint_secret,
             )
-            if expected != job.fingerprint:
+            if job.fingerprint == expected:
+                generation_id = job.job_id
+            elif job.fingerprint == legacy:
+                generation_id = None
+            else:
                 raise ValueError("Astro source facts or template changed")
             report = await asyncio.wait_for(compose_report(
                 owner_id=job.owner_id, plan=plan, facts=job.facts,
                 secret=self.jobs.fingerprint_secret, store=self.checkpoints,
-                provider=AuthorizedProvider(),
+                provider=AuthorizedProvider(), generation_id=generation_id,
             ), timeout=self.job_timeout_seconds)
             if not self.is_admin(job.owner_id):
                 raise PermissionError("Astro owner role revoked")
