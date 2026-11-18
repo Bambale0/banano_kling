@@ -69,6 +69,14 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("window.location.replace(studioUrlWithSession", panel)
         self.assertIn("skoro", panel.replace("скоро", "skoro"))
         self.assertIn("neuromix-login", css)
+        self.assertIn("NoiseTexture", panel)
+        magic = (ROOT / "frontend/miniapp-v0/components/magicui/noise-texture.tsx").read_text(encoding="utf-8")
+        license_text = (ROOT / "docs/licenses/MAGICUI.md").read_text(encoding="utf-8")
+        self.assertIn("feTurbulence", magic)
+        self.assertIn("useId", magic)
+        self.assertNotIn("requestAnimationFrame", magic)
+        self.assertIn("Copyright (c) Magic UI", license_text)
+
         self.assertNotIn('href="/oauth/google', panel)
         self.assertNotIn("localStorage.setItem", panel)
 
