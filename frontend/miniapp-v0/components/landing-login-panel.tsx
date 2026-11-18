@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { NoiseTexture } from '@/components/magicui/noise-texture'
 
 type TelegramLoginUser = {
   id: number
@@ -193,7 +194,7 @@ function TelegramWidget() {
 export function LoginPanel() {
   return (
     <main className="neuromix-login min-h-svh">
-      <div className="login-noise" aria-hidden="true" />
+      <NoiseTexture className="login-noise" />
       <header className="login-header mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-5 py-5 sm:px-8">
         <a href="/" className="login-brand group flex items-center gap-3 text-[#f4ead6]" aria-label="NEUROMIX — на главную">
           <span className="login-brand-mark" aria-hidden="true">N</span>
