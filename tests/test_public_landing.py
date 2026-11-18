@@ -73,8 +73,8 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_redesign_is_short_real_entry_portal_not_fake_app(self):
         # Marketing root remains a small no-dependency gateway, not a second app.
-        self.assertIn('class="hero-grid"', self.html)
-        self.assertIn('class="access-layout"', self.html)
+        self.assertIn('class="container hero-grid"', self.html)
+        self.assertIn('class="container access-layout"', self.html)
         self.assertIn('id="login-title"', self.html)
         self.assertIn("Идея —", self.html)
         self.assertNotIn('<script src=', self.html)
