@@ -142,11 +142,8 @@ def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_bounded(tmp_pat
         assert await jobs.reschedule(job_id=job_id, worker_id="a", retry=False,
                                      error_code="temporary_provider_failure", now=102)
         assert (await jobs.status(owner_id=1, job_id=job_id, now=104))["status"] == "failed"
-        # A new click never reuses this failed job. The explicit retry API
-        # below still remains scoped to the existing job id.
-        new_job = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
-                                     consent=True, now=105)
-        assert new_job != job_id
+        # This test exercises only the explicit retry path; a new report
+        # would be a distinct queued job, covered in the fresh-generation test.
         assert not await jobs.retry_failed(owner_id=2, job_id=job_id, consent=True, now=106)
         assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=False, now=106)
         outcomes = await asyncio.gather(*[
