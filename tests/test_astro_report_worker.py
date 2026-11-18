@@ -61,6 +61,8 @@ def test_job_recovers_full_natal_after_provider_error_and_reuses_checkpoint(tmp_
     assert any('astro_provider_call_started' in event for event in events)
     assert any('astro_provider_call_succeeded' in event for event in events)
     assert any('astro_provider_call_retryable' in event for event in events)
+    assert any(f'section={load_report_plan("natal").sections[0].id}' in event
+               for event in events)
     assert all('fake 429' not in event and 'символический анализ' not in event for event in events)
 
 
