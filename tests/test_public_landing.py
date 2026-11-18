@@ -1,7 +1,7 @@
 """Public regression contract for NEUROMIX root landing, separate from Mini App."""
+import unittest
 from html.parser import HTMLParser
 from pathlib import Path
-import unittest
 from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[1]
