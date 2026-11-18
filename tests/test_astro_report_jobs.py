@@ -142,8 +142,11 @@ def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_bounded(tmp_pat
         assert await jobs.reschedule(job_id=job_id, worker_id="a", retry=False,
                                      error_code="temporary_provider_failure", now=102)
         assert (await jobs.status(owner_id=1, job_id=job_id, now=104))["status"] == "failed"
-        assert await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
-                                  consent=True, now=105) == job_id
+        # A new click never reuses this failed job. The explicit retry API
+        # below still remains scoped to the existing job id.
+        new_job = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(),
+                                     consent=True, now=105)
+        assert new_job != job_id
         assert not await jobs.retry_failed(owner_id=2, job_id=job_id, consent=True, now=106)
         assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=False, now=106)
         outcomes = await asyncio.gather(*[
@@ -261,4 +264,31 @@ def test_report_history_is_owner_scoped_sorted_and_excludes_private_facts(tmp_pa
         assert all(entry["job_id"] != other for entry in history)
         assert (await jobs.list_owner(owner_id=22, now=105))[0]["job_id"] == other
         assert await jobs.list_owner(owner_id=33, now=105) == []
+    asyncio.run(check())
+
+
+def test_repeated_fresh_generations_use_distinct_checkpoint_namespaces(tmp_path):
+    """New reports must not borrow a completed report or its paid sections."""
+    from bot.services.astro_report_pipeline import report_fingerprint
+    async def check():
+        jobs = store(tmp_path)
+        plan = load_report_plan("natal")
+        a = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=100)
+        b = await jobs.enqueue(owner_id=1, plan=plan, facts=facts(), consent=True, now=101)
+        assert a != b
+        first = await jobs.claim(worker_id="first", now=102)
+        second = await jobs.claim(worker_id="second", now=102)
+        assert first is not None and second is not None
+        assert first.fingerprint != second.fingerprint
+        assert first.fingerprint == report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+            generation_id=first.job_id,
+        )
+        assert second.fingerprint == report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+            generation_id=second.job_id,
+        )
+        assert first.fingerprint != report_fingerprint(
+            owner_id=1, plan=plan, facts=facts(), secret=jobs.fingerprint_secret,
+        )
     asyncio.run(check())
