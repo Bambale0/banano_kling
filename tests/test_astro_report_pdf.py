@@ -1,7 +1,7 @@
 """Read real exported PDFs through an independent parser, using synthetic data."""
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
-from threading import Event
+from threading import Event, Lock
 from time import monotonic
 
 import pytest
@@ -53,6 +53,106 @@ def test_concurrent_exports_keep_unicode_maps_and_text_separate():
     _, second = read(documents[1])
     assert 'Первый ☉ ♈ 😀' in first and 'Второй' not in first
     assert 'Второй ☽ ♓ ✨' in second and 'Первый' not in second
+
+
+@pytest.fixture
+def held_pdf_build(monkeypatch):
+    """Hold one real library build while observing other public exports."""
+    document_type = astro_report_pdf.SimpleDocTemplate
+    original_build = document_type.build
+    guard = Lock()
+    state = {"active": 0, "peak": 0, "calls": 0, "documents": 0,
+             "entered": Event(), "second_entered": Event(),
+             "second_prepared": Event(), "release": Event()}
+
+    def create_document(*args, **kwargs):
+        document = document_type(*args, **kwargs)
+        with guard:
+            state["documents"] += 1
+            if state["documents"] == 2:
+                state["second_prepared"].set()
+        return document
+
+    def build(document, *args, **kwargs):
+        with guard:
+            state["calls"] += 1
+            call = state["calls"]
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        try:
+            if call == 1:
+                state["entered"].set()
+                assert state["release"].wait(3), "test did not release first build"
+            else:
+                state["second_entered"].set()
+            return original_build(document, *args, **kwargs)
+        finally:
+            with guard:
+                state["active"] -= 1
+
+    monkeypatch.setattr(document_type, "build", build)
+    monkeypatch.setattr(astro_report_pdf, "SimpleDocTemplate", create_document)
+    yield state
+    state["release"].set()
+
+
+def test_shared_font_builds_never_overlap(held_pdf_build):
+    state = held_pdf_build
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(render_astro_pdf, report("Первый ☉ ♈ 😀"))
+        try:
+            assert state["entered"].wait(2)
+            second = executor.submit(render_astro_pdf, report("Второй ☽ ♓ ✨"))
+            assert state["second_prepared"].wait(2)
+            overlapped = state["second_entered"].wait(0.15)
+        finally:
+            state["release"].set()
+        documents = [first.result(timeout=3), second.result(timeout=3)]
+    assert not overlapped and state["peak"] == 1
+    texts = [read(data)[1] for data in documents]
+    assert "Первый ☉ ♈ 😀" in texts[0] and "Второй" not in texts[0]
+    assert "Второй ☽ ♓ ✨" in texts[1] and "Первый" not in texts[1]
+
+
+@pytest.mark.parametrize("budget", ["cancel", "deadline"])
+def test_waiting_export_exits_without_entering_build(held_pdf_build, budget, monkeypatch):
+    state = held_pdf_build
+    cancel = Event()
+    clock = [0.0]
+    monkeypatch.setattr(astro_report_pdf, "monotonic", lambda: clock[0])
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(render_astro_pdf, report())
+        try:
+            assert state["entered"].wait(2)
+            options = {"cancel_event": cancel} if budget == "cancel" else {"deadline": 1.0}
+            waiter = executor.submit(render_astro_pdf, report("Ожидающий документ"), **options)
+            assert state["second_prepared"].wait(2)
+            if budget == "cancel":
+                cancel.set()
+            else:
+                clock[0] = 2.0
+            with pytest.raises(TimeoutError, match="Astro PDF rendering deadline"):
+                waiter.result(timeout=0.8)
+            assert state["calls"] == 1
+        finally:
+            state["release"].set()
+        read(first.result(timeout=3))
+    # A cancelled waiter must neither start later nor leak the build lock.
+    read(render_astro_pdf(report("Следующий документ")))
+    assert state["calls"] == 2
+
+
+def test_build_exception_releases_shared_font_guard(monkeypatch):
+    original_build = astro_report_pdf.SimpleDocTemplate.build
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("synthetic layout failure")
+
+    monkeypatch.setattr(astro_report_pdf.SimpleDocTemplate, "build", fail)
+    with pytest.raises(RuntimeError, match="synthetic layout"):
+        render_astro_pdf(report())
+    monkeypatch.setattr(astro_report_pdf.SimpleDocTemplate, "build", original_build)
+    read(render_astro_pdf(report("После ошибки"), deadline=monotonic() + 2))
 
 
 def test_unsupported_glyph_fails_closed_instead_of_delivering_empty_boxes():

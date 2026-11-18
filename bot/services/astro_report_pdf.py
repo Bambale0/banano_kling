@@ -32,6 +32,9 @@ SERVICE_NAMES = {
     "lunar": "Лунный календарь",
 }
 _FONT_LOCK = Lock()
+# ReportLab's TTFont contract forbids sharing one registered font between
+# simultaneous document builds. Registration and immutable preparation differ.
+_BUILD_LOCK = Lock()
 _FONT_FILES = {
     "AstroNoto": "NotoSans-Regular.ttf",
     "AstroNotoBold": "NotoSans-Bold.ttf",
@@ -194,7 +197,14 @@ def render_astro_pdf(report: dict, *, cancel_event: Event | None = None,
         canvas.drawRightString(A4[0] - 48, 27, f"Страница {doc.page}")
         canvas.restoreState()
 
-    document.build(story, onFirstPage=footer, onLaterPages=footer)
+    while not _BUILD_LOCK.acquire(timeout=0.05):
+        check_budget()
+    try:
+        check_budget()
+        document.build(story, onFirstPage=footer, onLaterPages=footer)
+        check_budget()
+    finally:
+        _BUILD_LOCK.release()
     data = output.getvalue()
     if len(data) > MAX_PDF_BYTES:
         raise ValueError("Astro PDF exceeds Telegram upload limit")
