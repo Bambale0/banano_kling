@@ -50,7 +50,7 @@ describe('Trend showcase viewport loading', () => {
       expect(enterViewport).toBeDefined()
       act(() => { enterViewport?.() })
       expect(card.querySelector('img')?.getAttribute('src')).toContain(imageThumbnail)
-      expect(card.querySelector('img')?.getAttribute('loading')).toBe('lazy')
+      expect(card.querySelector('img')?.getAttribute('loading')).toBe('eager')
       expect(container.querySelector('video')).toBeNull()
     } finally {
       Object.defineProperty(global, 'IntersectionObserver', { configurable: true, value: originalObserver })
@@ -109,6 +109,31 @@ describe('Trend showcase S3 preview performance', () => {
     const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 4' })
     const image = card.querySelector('img')!
     fireEvent.error(image)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(imageOriginal)
+  })
+
+
+  it('prefers a signed direct S3 poster and falls back to the stable URL on expiry', () => {
+    const direct = 'https://s3.example.test/bucket/poster.jpg?X-Amz-Signature=temporary'
+    const item = { ...trend(7, original, videoPoster), preview_poster_fast_url: direct }
+    const { container } = show(item)
+    const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 7' })
+    const image = card.querySelector('img')!
+    expect(image.getAttribute('src')).toBe(direct)
+    fireEvent.error(image)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(videoPoster)
+    expect(container.querySelector('video')).toBeNull()
+  })
+
+  it('falls back from an expired direct S3 photo URL to stable poster then original', () => {
+    const direct = 'https://s3.example.test/bucket/image.jpg?X-Amz-Signature=temporary'
+    const item = { ...trend(8, imageOriginal, imageThumbnail), preview_poster_fast_url: direct }
+    show(item)
+    const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 8' })
+    expect(card.querySelector('img')?.getAttribute('src')).toBe(direct)
+    fireEvent.error(card.querySelector('img')!)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(imageThumbnail)
+    fireEvent.error(card.querySelector('img')!)
     expect(card.querySelector('img')?.getAttribute('src')).toContain(imageOriginal)
   })
 })
