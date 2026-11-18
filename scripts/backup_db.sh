@@ -58,6 +58,40 @@ read_env_value() {
 
 mkdir -p "$BACKUP_DIR" "$PROJECT_DIR/logs"
 
+# Retry only Telegram's *explicitly rejected* flood-control responses.
+# A transport timeout leaves upload acceptance ambiguous and must NOT cause a
+# second sendDocument POST (or an accidental duplicate backup delivery).
+telegram_retry_after() {
+    python3 - "$1" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(0)
+if not isinstance(data, dict) or data.get("ok") is not False:
+    raise SystemExit(0)
+code = data.get("error_code")
+description = str(data.get("description") or "")
+if code not in (400, 429):
+    raise SystemExit(0)
+if code == 400 and "too many requests" not in description.lower():
+    raise SystemExit(0)
+params = data.get("parameters")
+seconds = params.get("retry_after") if isinstance(params, dict) else None
+if not isinstance(seconds, int) or isinstance(seconds, bool):
+    match = re.search(r"retry\s+after\s+(\d+)", description, re.IGNORECASE)
+    seconds = int(match.group(1)) if match else (10 if code == 429 else None)
+# Wait at least as long as Telegram requests plus a one-second margin.
+# Larger waits are not automatically retried: operator review is safer.
+if isinstance(seconds, int) and 1 <= seconds <= 60:
+    print(seconds + 1)
+PY
+}
+
 send_document() {
     local bot_token="$1"
     local chat_id="$2"
@@ -65,20 +99,33 @@ send_document() {
     local file_name="$4"
     local caption="$5"
     local response_file="$BACKUP_DIR/.telegram-response-${chat_id}.json"
+    local curl_rc=0
+    local retry_after=""
+    local attempt=0
 
-    # Preserve Telegram's JSON error body on HTTP 400. Plain -f discards it,
-    # leaving operators with curl (22) but no actionable error description.
-    if curl --fail-with-body -sS --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 600 \
-        -X POST "https://api.telegram.org/bot${bot_token}/sendDocument" \
-        -F "chat_id=${chat_id}" \
-        -F "document=@${file_path};filename=${file_name}" \
-        -F "caption=${caption}" \
-        -o "$response_file"; then
-        if grep -q '"ok":true' "$response_file"; then
+    for attempt in 1 2 3 4; do
+        : > "$response_file"
+        curl_rc=0
+        # Do not use curl --retry on a paid/side-effecting POST: only explicit
+        # Telegram 400/429 flood rejections below are safe to repeat.
+        curl --fail-with-body -sS --connect-timeout 20 --max-time 600 \
+            -X POST "https://api.telegram.org/bot${bot_token}/sendDocument" \
+            -F "chat_id=${chat_id}" \
+            -F "document=@${file_path};filename=${file_name}" \
+            -F "caption=${caption}" \
+            -o "$response_file" || curl_rc=$?
+        if [ "$curl_rc" -eq 0 ] && grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$response_file"; then
             rm -f "$response_file"
             return 0
         fi
-    fi
+        retry_after="$(telegram_retry_after "$response_file")"
+        if [ -n "$retry_after" ] && [ "$attempt" -lt 4 ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') telegram backup rate limited; retrying rejected upload attempt $attempt after ${retry_after}s" >&2
+            sleep "$retry_after"
+            continue
+        fi
+        break
+    done
 
     echo "$(date '+%Y-%m-%d %H:%M:%S') telegram send failed for admin $chat_id: $(head -c 500 "$response_file" 2>/dev/null || true)" >&2
     rm -f "$response_file"
