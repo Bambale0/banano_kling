@@ -95,6 +95,13 @@ def _email_enabled() -> bool:
                 and os.getenv("WEB_AUTH_SMTP_FROM"))
 
 
+def _valid_browser_origin(request: web.Request) -> bool:
+    # With explicit configured origin use it; otherwise trust only same-host
+    # browser POSTs on the public TLS vhost (not untrusted Origin alone).
+    expected = _public_origin() or "https://" + request.host
+    return request.headers.get("Origin", "") == expected
+
+
 def _safe_next(raw: str | None) -> str:
     """Only same-origin app/login routes. Prevent //, backslashes and header injection."""
     value = str(raw or "/mini-app/").strip()
@@ -358,7 +365,7 @@ async def web_auth_config(request: web.Request) -> web.Response:
                   "providers": {
                       "google": all(_credentials("google")),
                       "yandex": all(_credentials("yandex")),
-                      "telegram": bool(_public_origin()),
+                      "telegram": True,
                       "email": _email_enabled(),
                   }})
 
@@ -489,7 +496,7 @@ def _send_magic_link(email: str, link: str) -> None:
 async def email_start(request: web.Request) -> web.Response:
     if not _email_enabled():
         return _json({"ok": False, "error": "Email sign-in is not configured"}, 503)
-    if request.headers.get("Origin", "") != _public_origin():
+    if not _valid_browser_origin(request):
         return _json({"ok": False, "error": "Invalid request origin"}, 403)
     if request.content_length and request.content_length > 4096:
         return _json({"ok": False, "error": "Invalid request"}, 413)
@@ -526,12 +533,12 @@ async def email_verify(request: web.Request) -> web.StreamResponse:
 
 
 async def telegram_login(request: web.Request) -> web.StreamResponse:
-    if request.headers.get("Origin", "") != _public_origin():
+    if not _valid_browser_origin(request):
         return _json({"ok": False, "error": "Invalid request origin"}, 403)
     if request.content_length and request.content_length > 8192:
         return _json({"ok": False, "error": "Invalid request"}, 413)
     try:
-        from bot.browser_auth import _verify_telegram_login
+        from bot.browser_auth import _build_browser_init_data, _verify_telegram_login
         from bot.config import config
 
         payload = await request.json()
@@ -542,13 +549,23 @@ async def telegram_login(request: web.Request) -> web.StreamResponse:
             return _json({"ok": False, "error": "Session required"}, 401)
         flow = {"mode": mode, "source": account if mode == "link" else None,
                 "destination": _safe_next(payload.get("next"))}
-        return await _complete_identity(request, "telegram", str(verified["id"]), flow)
+        result = await _complete_identity(request, "telegram", str(verified["id"]), flow)
+        if _SESSION_COOKIE not in result.cookies:
+            return _json({"ok": False, "error": "Already linked to another account"}, 409)
+        redirect = result.location
+        if mode == "login" and redirect.startswith("/mini-app/"):
+            from urllib.parse import quote
+            fragment = "tgWebAppData=" + quote(_build_browser_init_data(verified, config.BOT_TOKEN), safe="")
+            redirect += ("&" if "#" in redirect else "#") + fragment
+        response = _json({"ok": True, "redirect": redirect})
+        _set_session_cookie(response, result.cookies[_SESSION_COOKIE].value)
+        return response
     except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
         return _json({"ok": False, "error": "Invalid Telegram signature"}, 401)
 
 
 async def logout(request: web.Request) -> web.Response:
-    if request.headers.get("Origin", "") != _public_origin():
+    if not _valid_browser_origin(request):
         return _json({"ok": False, "error": "Invalid request origin"}, 403)
     raw = request.cookies.get(_SESSION_COOKIE, "")
     try:
