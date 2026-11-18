@@ -23,10 +23,16 @@ from bot.services.astro_report_pipeline import (
     report_fingerprint,
 )
 
+_RECOVERABLE_ERRORS = frozenset({
+    "temporary_provider_failure", "internal_retry", "lease_exhausted",
+    "section_validation_failed", "invalid_report_content",
+})
+
 
 @dataclass(frozen=True)
 class AstroJobPolicy:
     max_attempts: int = 4
+    max_manual_retries: int = 2
     retry_base_seconds: int = 5
     retry_max_seconds: int = 300
     lease_seconds: int = 180
@@ -36,6 +42,7 @@ class AstroJobPolicy:
 
     def __post_init__(self):
         if not (1 <= self.max_attempts <= 20
+                and 1 <= self.max_manual_retries <= 8
                 and 1 <= self.retry_base_seconds <= self.retry_max_seconds <= 86400
                 and 10 <= self.lease_seconds <= 3600
                 and 1 <= self.circuit_failures <= 100
@@ -47,6 +54,7 @@ class AstroJobPolicy:
     def from_env(cls):
         return cls(
             max_attempts=int(os.getenv("ASTRO_REPORT_MAX_ATTEMPTS", "4")),
+            max_manual_retries=int(os.getenv("ASTRO_REPORT_MAX_MANUAL_RETRIES", "2")),
             retry_base_seconds=int(os.getenv("ASTRO_REPORT_RETRY_BASE_SECONDS", "5")),
             retry_max_seconds=int(os.getenv("ASTRO_REPORT_RETRY_MAX_SECONDS", "300")),
             lease_seconds=int(os.getenv("ASTRO_REPORT_LEASE_SECONDS", "180")),
@@ -163,6 +171,14 @@ class AstroReportJobs:
                         retried_at BIGINT NOT NULL
                     )
                 """)
+                # Preserve existing manual-retry history and count additional
+                # explicitly consented recovery attempts separately.
+                await _create_astro_table(conn, """
+                    CREATE TABLE IF NOT EXISTS astro_report_manual_retry_extra (
+                        job_id TEXT PRIMARY KEY,
+                        extra_retries INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 await _create_astro_table(conn, """
                     CREATE TABLE IF NOT EXISTS astro_report_deliveries (
                         job_id TEXT NOT NULL, event_kind TEXT NOT NULL,
@@ -221,10 +237,10 @@ class AstroReportJobs:
         self, *, owner_id: int, job_id: str, consent: bool,
         now: int | None = None,
     ) -> bool:
-        """One owner-authorized restart of recoverable failures; retain checkpoints.
+        """Bounded explicit retry after failed generation, preserving checkpoints.
 
-        The conditional UPDATE is the admission lock: duplicate concurrent taps
-        never queue a second charged worker. Permanently rejected jobs remain failed.
+        The retry count is durable across deploys. A conditional SQL update
+        guards against concurrent duplicate clicks and excess vendor charges.
         """
         if type(owner_id) is not int or owner_id <= 0 or not isinstance(job_id, str):
             return False
@@ -243,17 +259,33 @@ class AstroReportJobs:
                         'temporary_provider_failure', 'internal_retry', 'lease_exhausted',
                         'section_validation_failed', 'invalid_report_content'
                     )
-                    AND NOT EXISTS (
-                        SELECT 1 FROM astro_report_manual_retry
-                        WHERE astro_report_manual_retry.job_id=astro_report_jobs.job_id
-                    )
-            """, (now, now, job_id, owner_id, now))
+                    AND (
+                        CASE WHEN EXISTS (
+                            SELECT 1 FROM astro_report_manual_retry r
+                            WHERE r.job_id=astro_report_jobs.job_id
+                        ) THEN 1 ELSE 0 END
+                        + COALESCE((
+                            SELECT extra_retries FROM astro_report_manual_retry_extra x
+                            WHERE x.job_id=astro_report_jobs.job_id
+                        ), 0)
+                    ) < ?
+            """, (now, now, job_id, owner_id, now, self.policy.max_manual_retries))
             accepted = cursor.rowcount == 1
             if accepted:
-                await conn.execute("""
-                    INSERT INTO astro_report_manual_retry (job_id, retried_at)
-                    VALUES (?, ?)
-                """, (job_id, now))
+                used_before = await conn.execute(
+                    "SELECT 1 FROM astro_report_manual_retry WHERE job_id=?", (job_id,)
+                )
+                if await used_before.fetchone():
+                    await conn.execute("""
+                        INSERT INTO astro_report_manual_retry_extra (job_id, extra_retries)
+                        VALUES (?, 1) ON CONFLICT (job_id) DO UPDATE
+                        SET extra_retries=astro_report_manual_retry_extra.extra_retries+1
+                    """, (job_id,))
+                else:
+                    await conn.execute("""
+                        INSERT INTO astro_report_manual_retry (job_id, retried_at)
+                        VALUES (?, ?)
+                    """, (job_id, now))
                 await conn.execute("""
                     UPDATE astro_report_deliveries SET status='cancelled', updated_at=?
                     WHERE job_id=? AND event_kind='failed' AND status='pending'
@@ -268,15 +300,23 @@ class AstroReportJobs:
         now = int(time.time()) if now is None else now
         async with self._connect() as conn:
             cursor = await conn.execute("""
-                SELECT service_id, status, attempts, error_code, report_sealed
-                FROM astro_report_jobs
-                WHERE job_id=? AND owner_id=? AND expires_at > ?
+                SELECT j.service_id, j.status, j.attempts, j.error_code, j.report_sealed,
+                    (CASE WHEN r.job_id IS NULL THEN 0 ELSE 1 END +
+                     COALESCE(x.extra_retries, 0)) AS retry_count
+                FROM astro_report_jobs j
+                LEFT JOIN astro_report_manual_retry r ON r.job_id=j.job_id
+                LEFT JOIN astro_report_manual_retry_extra x ON x.job_id=j.job_id
+                WHERE j.job_id=? AND j.owner_id=? AND j.expires_at > ?
             """, (job_id, owner_id, now))
             row = await cursor.fetchone()
         if not row:
             return None
         output = {"job_id": job_id, "service_id": row[0], "status": row[1],
-                  "attempts": row[2], "error_code": row[3]}
+                  "attempts": row[2], "error_code": row[3],
+                  "retry_available": (
+                      row[1] == "failed" and row[3] in _RECOVERABLE_ERRORS
+                      and int(row[5]) < self.policy.max_manual_retries
+                  )}
         if row[1] == "completed":
             output["report"] = self._unseal(row[4])
         if row[1] in ("completed", "failed"):
@@ -412,7 +452,11 @@ class AstroReportJobs:
                         job_id, event_kind, owner_id, status, next_run_at, updated_at
                     ) SELECT job_id, 'failed', owner_id, 'pending', ?, ?
                       FROM astro_report_jobs WHERE job_id=?
-                    ON CONFLICT (job_id, event_kind) DO NOTHING
+                    ON CONFLICT (job_id, event_kind) DO UPDATE SET
+                        status='pending', worker_id=NULL, lease_until=0,
+                        next_run_at=excluded.next_run_at, attempts=0,
+                        delivered_at=NULL, message_id=NULL, error_code=NULL,
+                        updated_at=excluded.updated_at
                 """, (now, now, job_id))
             await conn.commit()
             return changed
@@ -450,7 +494,7 @@ class AstroReportJobs:
         self, *, owner_id: int, service_id: str | None = None,
         limit: int = 30, now: int | None = None,
     ) -> list[dict]:
-        """Metadata only; never expose encrypted facts, sections or other owners."""
+        """Owner-only metadata without source facts or generated sections."""
         if type(owner_id) is not int or owner_id <= 0:
             raise ValueError("Invalid Astro history owner")
         if type(limit) is not int or not 1 <= limit <= 50:
@@ -461,14 +505,19 @@ class AstroReportJobs:
             raise ValueError("Invalid Astro history service")
         await self.initialize()
         now = int(time.time()) if now is None else now
-        where_service = " AND service_id = ?" if service_id else ""
+        where_service = " AND j.service_id = ?" if service_id else ""
         params = (owner_id, now, service_id, limit) if service_id else (owner_id, now, limit)
         async with self._connect() as conn:
             cursor = await conn.execute(
-                "SELECT job_id, service_id, status, attempts, created_at, "
-                "updated_at, error_code FROM astro_report_jobs "
-                "WHERE owner_id = ? AND expires_at > ?" + where_service +
-                " ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                "SELECT j.job_id, j.service_id, j.status, j.attempts, "
+                "j.created_at, j.updated_at, j.error_code, "
+                "(CASE WHEN r.job_id IS NULL THEN 0 ELSE 1 END + "
+                "COALESCE(x.extra_retries, 0)) AS retry_count "
+                "FROM astro_report_jobs j "
+                "LEFT JOIN astro_report_manual_retry r ON r.job_id=j.job_id "
+                "LEFT JOIN astro_report_manual_retry_extra x ON x.job_id=j.job_id "
+                "WHERE j.owner_id = ? AND j.expires_at > ?" + where_service +
+                " ORDER BY j.created_at DESC, j.job_id DESC LIMIT ?",
                 params,
             )
             rows = await cursor.fetchall()
@@ -477,6 +526,9 @@ class AstroReportJobs:
             "status": str(row[2]), "attempts": int(row[3]),
             "created_at": int(row[4]), "updated_at": int(row[5]),
             "error_code": row[6],
+            "retry_available": (row[2] == "failed"
+                                and row[6] in _RECOVERABLE_ERRORS
+                                and int(row[7]) < self.policy.max_manual_retries),
         } for row in rows]
 
     async def delete_owner(self, *, owner_id: int) -> int:
@@ -487,6 +539,11 @@ class AstroReportJobs:
             await conn.execute("DELETE FROM astro_report_deliveries WHERE owner_id=?", (owner_id,))
             await conn.execute("""
                 DELETE FROM astro_report_manual_retry WHERE job_id IN (
+                    SELECT job_id FROM astro_report_jobs WHERE owner_id=?
+                )
+            """, (owner_id,))
+            await conn.execute("""
+                DELETE FROM astro_report_manual_retry_extra WHERE job_id IN (
                     SELECT job_id FROM astro_report_jobs WHERE owner_id=?
                 )
             """, (owner_id,))
@@ -507,6 +564,12 @@ class AstroReportJobs:
                 DELETE FROM astro_report_manual_retry WHERE NOT EXISTS (
                     SELECT 1 FROM astro_report_jobs
                     WHERE astro_report_jobs.job_id=astro_report_manual_retry.job_id
+                )
+            """)
+            await conn.execute("""
+                DELETE FROM astro_report_manual_retry_extra WHERE NOT EXISTS (
+                    SELECT 1 FROM astro_report_jobs
+                    WHERE astro_report_jobs.job_id=astro_report_manual_retry_extra.job_id
                 )
             """)
             await conn.execute("""

@@ -223,10 +223,10 @@ describe('Astro long-report Mini App integration', () => {
       ok: true, status: url.endsWith('/retry') ? 202 : 200,
       json: async () => url.endsWith('/history')
         ? { ok: true, jobs: [{ job_id: identifier, service_id: 'natal',
-          status: 'failed', attempts: 4, created_at: 1794931200 }] }
+          status: 'failed', attempts: 4, created_at: 1794931200, retry_available: true }] }
         : url.endsWith('/retry')
           ? { ok: true, job_id: identifier, status: 'queued' }
-          : { ok: true, status: 'failed', error_code: 'temporary_provider_failure' },
+          : { ok: true, status: 'failed', error_code: 'temporary_provider_failure', retry_available: true },
     }))
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
     render(<MountedReport />)
@@ -243,6 +243,26 @@ describe('Astro long-report Mini App integration', () => {
     const body = JSON.parse(mock.mock.calls.find(([url]) => url.endsWith('/retry'))![1].body)
     expect(body).toEqual({ init_data: 'synthetic-telegram-signed', job_id: identifier, consent: true })
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
+  })
+
+  it('hides an exhausted retry action even after fresh consent', async () => {
+    const identifier = '6'.repeat(32)
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: 200, json: async () => url.endsWith('/history')
+        ? { ok: true, jobs: [{ job_id: identifier, service_id: 'natal', status: 'failed',
+            attempts: 2, created_at: 1794931200, retry_available: false }] }
+        : { ok: true, status: 'failed', error_code: 'temporary_provider_failure',
+            retry_available: false },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Открыть' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть' }))
+    await waitFor(() => expect(screen.getByText(/Лимит безопасных повторов исчерпан/)).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(screen.queryByRole('button', { name: 'Повторить отчёт' })).not.toBeInTheDocument()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/retry'))).toHaveLength(0)
   })
 
   it('can retry report creation after a temporary 503 without navigating away', async () => {
@@ -293,7 +313,7 @@ describe('Astro long-report Mini App integration', () => {
       if (url.endsWith('/history')) return Promise.resolve({
         ok: true, status: 200, json: async () => ({ ok: true, jobs: [
           { job_id: identifier, service_id: 'natal', status: 'failed',
-            attempts: 2, created_at: 1794931200 },
+            attempts: 2, created_at: 1794931200, retry_available: true },
         ] }),
       })
       if (url.endsWith('/retry')) {
@@ -303,7 +323,7 @@ describe('Astro long-report Mini App integration', () => {
           : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier, status: 'queued' }) })
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
-        ok: true, status: 'failed', error_code: 'temporary_provider_failure',
+        ok: true, status: 'failed', error_code: 'temporary_provider_failure', retry_available: true,
       }) })
     })
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
