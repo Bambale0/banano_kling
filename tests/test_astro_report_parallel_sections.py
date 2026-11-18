@@ -225,3 +225,64 @@ def test_workers_share_provider_budget(monkeypatch, tmp_path):
             assert (await jobs.status(owner_id=19, job_id=job_id))["status"] == "completed"
 
     asyncio.run(run())
+
+
+def test_role_is_rechecked_after_waiting_for_provider_slot(monkeypatch, tmp_path):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "4")
+
+    async def run():
+        from bot.services.astro_report_pipeline import load_report_plan
+        path = str(tmp_path / "revoked.db")
+        jobs = AstroReportJobs(db_path=path, fingerprint_secret="parallel-revocation-fixture",
+                               data_key=Fernet.generate_key())
+        job_id = await jobs.enqueue(owner_id=19, plan=load_report_plan("natal"),
+                                    facts=facts(), consent=True)
+        waiting = asyncio.Event()
+        current = {"admin": True}
+
+        class Limiter(asyncio.Semaphore):
+            async def __aenter__(self):
+                waiting.set()
+                return await super().__aenter__()
+
+        class Provider:
+            async def analyze_text(self, **_):
+                pytest.fail("Revoked owner must not send facts after waiting for a slot")
+
+        limiter = Limiter(1)
+        await limiter.acquire()
+        worker = AstroReportWorker(jobs=jobs, provider=Provider(),
+                    checkpoints=AstroReportSqlStore(db_path=path),
+                    is_admin=lambda _: current["admin"], provider_limiter=limiter)
+        task = asyncio.create_task(worker.run_once())
+        try:
+            await asyncio.wait_for(waiting.wait(), 2)
+            current["admin"] = False
+            limiter.release()
+            assert await task
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        status = await jobs.status(owner_id=19, job_id=job_id)
+        assert status["status"] == "failed" and status["error_code"] == "report_not_allowed"
+
+    asyncio.run(run())
+
+
+def test_changing_parallel_budget_reuses_existing_checkpoint_identity(monkeypatch):
+    store = Checkpoints()
+
+    class Provider:
+        async def analyze_text(self, **kwargs):
+            return response(json.loads(kwargs["user_instruction"]))
+
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1")
+    first = asyncio.run(compose(store, Provider()))
+
+    class NoPaidCalls:
+        async def analyze_text(self, **_):
+            pytest.fail("Changing scheduling must not regenerate completed sections")
+
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "4")
+    second = asyncio.run(compose(store, NoPaidCalls()))
+    assert second == first and len(store.saved) == 7
