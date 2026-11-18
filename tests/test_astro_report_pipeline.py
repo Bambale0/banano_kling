@@ -491,3 +491,24 @@ def test_bounded_concurrency_does_not_start_more_than_configured(monkeypatch):
         assert provider.peak == 3
         assert [s["id"] for s in result["sections"]] == [x.id for x in specs]
     asyncio.run(check())
+
+
+def test_sentence_repair_splits_newline_without_deleting_verified_narrative(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "0")
+
+    class NewlineClaimProvider(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            body = (
+                "Вычисленная долгота допускает 12,5° внутри знака.\n"
+                "Солнце в 299° — это неподтверждённое утверждение\n"
+                "Разбор символических особенностей не требует выдуманных градусов. " * 8
+            )
+            return json.dumps({"section_id": req["section_id"], "text": body})
+
+    provider = NewlineClaimProvider()
+    result = compose(provider=provider)
+    assert len(provider.calls) == 2
+    assert all("299°" not in row["text"] for row in result["sections"])
+    assert all("12,5°" in row["text"] for row in result["sections"])
