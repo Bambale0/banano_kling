@@ -327,7 +327,7 @@
     </section>
   </main>
   <footer class="foot"><div class="container foot-inner"><strong>NEUROMIX</strong><span>AI Creative Studio · 2026</span><a href="/mini-app/">Открыть студию ↗</a></div></footer>
-  <a class="mobile-dock" href="/mini-app/" aria-label="Открыть студию NEUROMIX">Открыть студию
+  <a class="mobile-dock" href="/mini-app/" aria-label="Открыть студию NEUROMIX" aria-hidden="true" inert>Открыть студию
     <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
   </a>
   <script>
@@ -337,12 +337,17 @@
       var dock = document.querySelector('.mobile-dock');
       var heroButton = document.querySelector('.hero-cta .btn-primary');
       if (!dock || !heroButton) return;
+      function setDockVisible(visible) {
+        dock.classList.toggle('is-visible', visible);
+        dock.toggleAttribute('inert', !visible);
+        dock.setAttribute('aria-hidden', String(!visible));
+      }
       if (!('IntersectionObserver' in window)) {
-        dock.classList.add('is-visible');
+        setDockVisible(true);
         return;
       }
       var observer = new IntersectionObserver(function (entries) {
-        dock.classList.toggle('is-visible', !entries[0].isIntersecting);
+        setDockVisible(!entries[0].isIntersecting);
       }, { threshold: 0.1 });
       observer.observe(heroButton);
     })();
