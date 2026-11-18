@@ -32,9 +32,17 @@ class AstroReportError(RuntimeError):
 class AstroSectionValidationError(AstroReportError):
     """A generated section failed validation; safe reason contains no report text."""
 
-    def __init__(self, message: str, *, reason: str):
+    def __init__(
+        self, message: str, *, reason: str,
+        unsupported_degrees: tuple[float, ...] = (),
+        unsupported_dates: tuple[str, ...] = (),
+    ):
         super().__init__(message)
         self.reason = reason
+        # Only these bounded, provider-derived values go back to the LLM.
+        # Never put them in public HTTP errors or server logs.
+        self.unsupported_degrees = unsupported_degrees
+        self.unsupported_dates = unsupported_dates
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,20 +264,13 @@ def _word_count(value: str) -> int:
 
 
 def _validate_written_facts(text: str, facts: dict) -> None:
-    """Conservative proof gate for numerical zodiac claims and ISO dates.
-
-    This rejects invented *explicit* degrees and ISO dates. It is not a
-    substitute for human review of all natural-language interpretations.
-    """
+    """Reject unsupported numeric positions/dates; retain exact evidence."""
     values: list[float] = []
 
     def visit(item, *, field: str = ""):
         if type(item) in (float, int):
             actual = float(item)
             values.append(actual)
-            # Ephemerides store absolute ecliptic longitude (0–360 degrees),
-            # while a natural-language chart uses degrees *inside the sign*.
-            # The sign-relative number is an exact derivation, not a new claim.
             if field in ("lon", "longitude_deg") and 0 <= actual < 360:
                 values.append(actual % 30)
         elif isinstance(item, dict):
@@ -280,15 +281,24 @@ def _validate_written_facts(text: str, facts: dict) -> None:
                 visit(value)
 
     visit(facts)
+    invalid_degrees = set()
     for match in re.finditer(r"(?<![\w.])(\d{1,3}(?:[.,]\d{1,6})?)\s*°", text):
         claimed = float(match.group(1).replace(",", "."))
         if not any(abs(claimed - actual) <= 0.11 for actual in values):
-            raise AstroSectionValidationError("В тексте найден неподтверждённый градус.", reason="unsupported_claim")
+            invalid_degrees.add(claimed)
     source_json = json.dumps(facts, ensure_ascii=False, allow_nan=False)
     allowed_dates = set(re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", source_json))
-    for date_str in re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", text):
-        if date_str not in allowed_dates:
-            raise AstroSectionValidationError("В тексте найдена неподтверждённая дата.", reason="unsupported_claim")
+    invalid_dates = {
+        value for value in re.findall(r"\b(?:19|20|21)\d{2}-\d{2}-\d{2}\b", text)
+        if value not in allowed_dates
+    }
+    if invalid_degrees or invalid_dates:
+        raise AstroSectionValidationError(
+            "В тексте найдены неподтверждённые астрономические утверждения.",
+            reason="unsupported_claim",
+            unsupported_degrees=tuple(sorted(invalid_degrees)[:12]),
+            unsupported_dates=tuple(sorted(invalid_dates)[:12]),
+        )
 
 
 def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> str:
@@ -421,6 +431,14 @@ async def compose_report(
                 "minimum_words": section.min_words,
                 "astronomical_facts": available,
                 "response_schema": {"section_id": section.id, "text": "<русский текст раздела>"},
+                "numerical_claim_policy": (
+                    "Не изобретайте градусы, орбисы или даты. "
+                    "Если точное число не подтверждается astronomical_facts, "
+                    "не пишите его вовсе. Градус положения внутри знака "
+                    "можно получить только как проверенную долготу mod 30. "
+                    "При сомнении оставьте интерпретацию без числа; "
+                    "нельзя подставлять правдоподобный градус."
+                ),
             }
             for attempt in range(validation_retries + 1):
                 response = await provider.analyze_text(
@@ -444,6 +462,8 @@ async def compose_report(
                         "reason": exc.reason,
                         "minimum_words": section.min_words,
                         "retry_number": attempt + 1,
+                        "unsupported_degrees": list(exc.unsupported_degrees),
+                        "unsupported_dates": list(exc.unsupported_dates),
                         "instruction": (
                             "Перепишите весь раздел. Любой указанный градус должен "
                             "совпадать с проверенными астрономическими значениями "

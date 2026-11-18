@@ -37,8 +37,13 @@ class FakeBot:
 
 async def main():
     parsed = urlsplit(os.environ.get("DATABASE_URL", ""))
-    assert parsed.scheme == "postgresql" and parsed.hostname == "127.0.0.1"
-    assert parsed.port == 55443 and parsed.path == "/astro_delivery_qa"
+    # The target must be an expressly acknowledged disposable QA database.
+    # Host/port can vary in an isolated Docker test network, but never use
+    # an unverified production DB URL or default database name.
+    assert parsed.scheme == "postgresql"
+    assert parsed.hostname == os.getenv("ASTRO_DELIVERY_PG_TEST_HOST", "127.0.0.1")
+    assert parsed.port == int(os.getenv("ASTRO_DELIVERY_PG_TEST_PORT", "55443"))
+    assert parsed.path == "/astro_delivery_qa"
     assert os.getenv("ASTRO_DELIVERY_PG_TEST_ACK") == "disposable-only"
     assert db.is_postgres()
     @asynccontextmanager
