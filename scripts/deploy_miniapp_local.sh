@@ -360,4 +360,8 @@ log "LIVE_OK ${BASE_URL}/ revision=${EXPECTED_SHA}"
 
 # Public SEO entrance: independent of the existing Mini App root and API.
 # Deploy only after its exact-SHA frontend smoke has passed.
-bash "${PROJECT_DIR}/scripts/deploy_landing_local.sh" "$EXPECTED_SHA"
+if [[ "$FRONTEND_DOMAIN" == "$DEFAULT_FRONTEND_DOMAIN" ]]; then
+  bash "${PROJECT_DIR}/scripts/deploy_landing_local.sh" "$EXPECTED_SHA"
+else
+  log "LANDING_SKIPPED non-canonical frontend domain: $FRONTEND_DOMAIN"
+fi
