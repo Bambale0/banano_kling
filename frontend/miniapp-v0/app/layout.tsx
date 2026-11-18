@@ -5,6 +5,9 @@ import './globals.css'
 
 const telegramBootstrapScript = `
 (function () {
+  // Public login is not a Telegram WebView: do not dispatch host events or
+  // request fullscreen while a visitor is choosing an authentication method.
+  if (/^\\/(?:mini-app\\/)?login\\/?$/.test(window.location.pathname)) return;
   var attempts = 0;
   var fullscreenRequested = false;
   var vkLaunch = ${JSON.stringify(process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk')} || new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');
