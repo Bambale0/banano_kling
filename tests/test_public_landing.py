@@ -44,7 +44,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#login"})
+        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#faq"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -76,13 +76,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('class="container hero-grid"', self.html)
         self.assertIn('class="container access-layout"', self.html)
         self.assertIn('id="login-title"', self.html)
-        self.assertIn("Идея —", self.html)
+        self.assertIn("Превращай идеи", self.html)
         self.assertNotIn('<script src=', self.html)
         self.assertNotIn("99.9%", self.html)
         self.assertNotIn('href="/login/email', self.html)
         self.assertNotIn('href="/login/google', self.html)
         self.assertNotIn('href="/login/yandex', self.html)
-        self.assertLess(len(self.html.encode("utf-8")), 40000)
+        self.assertLess(len(self.html.encode("utf-8")), 50000)
 
     def test_mobile_sticky_action_waits_until_primary_button_is_out_of_view(self):
         self.assertIn("IntersectionObserver", self.html)
@@ -101,6 +101,31 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("prefers-reduced-motion:reduce", self.html)
         self.assertIn('aria-label="Основная навигация"', self.html)
         self.assertIn('class="telegram-entry"', self.html)
+
+
+    def test_eight_marketing_sections_and_factual_content(self):
+        ids = ("hero-title", "problems", "benefits", "how", "examples", "pricing", "faq", "login")
+        for section_id in ids:
+            self.assertIn(f'id="{section_id}"', self.html)
+        self.assertIn("Фото, видео и тренды", self.html)
+        self.assertIn("Актуальные пакеты пополнения", self.html)
+        self.assertIn("не выдуманные отзывы", self.html)
+        self.assertNotIn("₽ за генерацию", self.html)
+        self.assertNotIn("бесплатных генераций", self.html)
+        self.assertEqual(4, self.html.count('class="story-row"'))
+        self.assertEqual(4, self.html.count('class="step-number"'))
+        self.assertEqual(5, self.html.count("<details>"))
+        self.assertEqual(5, self.html.count("<summary>"))
+        self.assertIn('id="login-title"', self.html)
+        self.assertIn('href="/mini-app/"', self.html)
+
+    def test_faq_is_native_accessible_and_trust_does_not_fabricate_testimonials(self):
+        self.assertIn('<section class="section-faq" id="faq"', self.html)
+        self.assertIn("Сейчас веб-версия использует вход через Telegram", self.html)
+        self.assertIn("картинка будущего", self.html)
+        self.assertIn("Здесь показаны реальные разделы продукта", self.html)
+        self.assertNotIn('class="fake-review"', self.html)
+        self.assertIn(".faq-items summary:focus-visible", self.html)
 
     def test_seo_metadata(self):
         self.assertIn('href="https://neuromixbot.com/"', self.html)
