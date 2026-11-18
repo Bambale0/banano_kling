@@ -44,7 +44,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#how", "#login"})
+        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -70,6 +70,28 @@ class LandingPublicContractTest(unittest.TestCase):
         ):
             self.assertIn(key + ": " + value, theme)
             self.assertIn(key + ": " + value, self.html)
+
+    def test_redesign_is_short_real_entry_portal_not_fake_app(self):
+        # Marketing root remains a small no-dependency gateway, not a second app.
+        self.assertIn('class="hero-grid"', self.html)
+        self.assertIn('class="access-layout"', self.html)
+        self.assertIn('id="login-title"', self.html)
+        self.assertIn("Идея —", self.html)
+        self.assertNotIn('<script src=', self.html)
+        self.assertNotIn("99.9%", self.html)
+        self.assertNotIn('href="/login/email', self.html)
+        self.assertNotIn('href="/login/google', self.html)
+        self.assertNotIn('href="/login/yandex', self.html)
+        self.assertLess(len(self.html.encode("utf-8")), 40000)
+
+    def test_mobile_and_accessibility_seams(self):
+        self.assertIn("@media (max-width:760px)", self.html)
+        self.assertIn("@media (max-width:380px)", self.html)
+        self.assertIn(".mobile-dock", self.html)
+        self.assertIn("a:focus-visible", self.html)
+        self.assertIn("prefers-reduced-motion:reduce", self.html)
+        self.assertIn('aria-label="Основная навигация"', self.html)
+        self.assertIn('class="telegram-entry"', self.html)
 
     def test_seo_metadata(self):
         self.assertIn('href="https://neuromixbot.com/"', self.html)
