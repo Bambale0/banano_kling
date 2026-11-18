@@ -1180,7 +1180,7 @@ try {
   await page.getByRole('button', { name: 'Построить натальную карту' }).click()
   await page.getByRole('heading', { name: 'Дома Плацидуса' }).waitFor()
   await page.getByLabel('Полная рассчитанная натальная карта').getByText(/Дом 12:/).waitFor()
-  await page.getByText(/Натальная карта, ASC\/MC и дома рассчитаны/).waitFor()
+  await page.getByText('Натальная карта готова. Оплата не требуется.').waitFor()
   const aiSection = page.getByLabel('Полный персональный ИИ-разбор')
   await aiSection.getByRole('checkbox').check()
   await aiSection.getByRole('button', { name: 'Создать полный ИИ-разбор' }).click()
