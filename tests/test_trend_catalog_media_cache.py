@@ -56,6 +56,8 @@ async def test_public_s3_posters_have_direct_fast_url_with_stable_fallback(monke
 
     monkeypatch.setattr(media, "is_s3_enabled", lambda: True)
     monkeypatch.setattr(media, "presigned_upload_url", fake_presign)
+    monkeypatch.setattr(media, "_signed_poster_cache", {})
+    monkeypatch.setattr(media, "_signed_preview_cache_seconds", lambda: 30)
     cards = [
         {"preview_url": "/uploads/feed/a.mp4", "preview_poster_url": thumb},
         {"preview_url": "/uploads/feed/b.mp4", "preview_poster_url": legacy},
@@ -77,6 +79,7 @@ async def test_public_s3_posters_have_direct_fast_url_with_stable_fallback(monke
 async def test_fast_url_signing_failure_preserves_stable_poster(monkeypatch):
     poster = "https://neuromixbot.com/uploads/trend-previews/catalog/abc.jpg"
     monkeypatch.setattr(media, "is_s3_enabled", lambda: True)
+    monkeypatch.setattr(media, "_signed_poster_cache", {})
 
     def fail(*_args, **_kwargs):
         raise RuntimeError("simulated signer outage")
@@ -86,3 +89,27 @@ async def test_fast_url_signing_failure_preserves_stable_poster(monkeypatch):
     await media.enrich_cards([card])
     assert card["preview_poster_url"] == poster
     assert "preview_poster_fast_url" not in card
+
+
+
+def test_signed_poster_cache_reuses_signature_until_its_early_expiry(monkeypatch):
+    """Do not re-sign the entire catalog on every visit, but never serve stale."""
+    clock = [100.0]
+    calls = []
+
+    def fake_sign(relative, *, method="GET"):
+        calls.append((relative, method))
+        return "https://s3.example.test/public.jpg?signature=" + str(len(calls))
+
+    monkeypatch.setattr(media, "_signed_poster_cache", {})
+    monkeypatch.setattr(media, "_signed_preview_now", lambda: clock[0])
+    monkeypatch.setattr(media, "_signed_preview_cache_seconds", lambda: 30)
+    monkeypatch.setattr(media, "presigned_upload_url", fake_sign)
+    key = "/uploads/trend-previews/catalog/abc.jpg"
+    first = media._sign_public_poster_urls([key])[key]
+    clock[0] = 110.0
+    assert media._sign_public_poster_urls([key])[key] == first
+    assert len(calls) == 1
+    clock[0] = 131.0
+    assert media._sign_public_poster_urls([key])[key] != first
+    assert len(calls) == 2
