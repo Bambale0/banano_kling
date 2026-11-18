@@ -38,9 +38,12 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   const [failed, setFailed] = useState(false)
   const [documentVisible, setDocumentVisible] = useState(true)
   const [posterFailed, setPosterFailed] = useState(false)
+  const [fastPosterFailed, setFastPosterFailed] = useState(false)
   const [originalFailed, setOriginalFailed] = useState(false)
   const video = isVideoPreview(trend)
   const poster = trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : ''
+  const fastPoster = trend.preview_poster_fast_url ? normalizeMiniAppMediaUrl(trend.preview_poster_fast_url) : ''
+  const activePoster = fastPoster && !fastPosterFailed ? fastPoster : poster && !posterFailed ? poster : ''
   const preview = trend.preview_url ? normalizeMiniAppMediaUrl(trend.preview_url) : ''
   // Only compact, pre-encoded preview MP4s may autoplay in a scrolling grid.
   // A large original video is fetched only when the user explicitly opens it.
@@ -48,8 +51,9 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
 
   useEffect(() => {
     setPosterFailed(false)
+    setFastPosterFailed(false)
     setOriginalFailed(false)
-  }, [poster, preview])
+  }, [fastPoster, poster, preview])
 
   useEffect(() => {
     if (!canAutoPlay || !ref.current) return
@@ -99,10 +103,11 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   }, [canAutoPlay, visible, documentVisible, failed])
 
   if (!video) {
-    const image = poster && !posterFailed ? poster : preview
+    const image = activePoster || preview
     return image && !originalFailed
-      ? <img src={image} alt="" loading="lazy" decoding="async"
-          onError={() => image === poster ? setPosterFailed(true) : setOriginalFailed(true)}
+      ? <img src={image} alt="" loading="eager" decoding="async"
+          onError={() => image === fastPoster ? setFastPosterFailed(true)
+            : image === poster ? setPosterFailed(true) : setOriginalFailed(true)}
           className="h-full w-full object-cover" />
       : <div className="flex h-full items-center justify-center bg-secondary/70">
           <Sparkles className="h-9 w-9 text-gold/70" />
@@ -113,9 +118,9 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   // derivative. A missing poster has an immediate, visible fallback.
   return (
     <>
-      {poster && !posterFailed ? (
-        <img src={poster} alt="" loading="lazy" decoding="async"
-          onError={() => setPosterFailed(true)}
+      {activePoster ? (
+        <img src={activePoster} alt="" loading="eager" decoding="async"
+          onError={() => activePoster === fastPoster ? setFastPosterFailed(true) : setPosterFailed(true)}
           className="absolute inset-0 h-full w-full object-cover" />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-secondary/70">
@@ -126,7 +131,7 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
         <video
           ref={ref}
           src={visible ? videoPreviewFrameUrl(preview) : undefined}
-          poster={posterFailed ? undefined : poster}
+          poster={activePoster || undefined}
           muted
           loop
           playsInline
