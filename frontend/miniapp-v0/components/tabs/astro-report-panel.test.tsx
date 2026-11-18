@@ -162,6 +162,61 @@ describe('Astro long-report Mini App integration', () => {
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
   })
 
+  it('re-enables an intentional start after inputs change during a pending request', async () => {
+    const identifier = '9'.repeat(32)
+    let resolveStart!: (response: unknown) => void
+    const pendingStart = new Promise((resolve) => { resolveStart = resolve })
+    const mock = jest.fn().mockImplementation((url: string) => url.endsWith('/start')
+      ? pendingStart
+      : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    const { rerender } = render(<MountedReport revision={0} />)
+    const start = screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(start)
+    expect(start).toBeDisabled()
+
+    rerender(<MountedReport revision={1} />)
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(start).toBeEnabled()
+
+    await act(async () => {
+      resolveStart({ ok: true, status: 202,
+        json: async () => ({ ok: true, job_id: identifier }) })
+      await pendingStart
+    })
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(screen.queryByText(/Ваш разбор готовится/)).not.toBeInTheDocument()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1)
+  })
+
+  it('re-enables history after inputs change during a pending history request', async () => {
+    let resolveHistory!: (response: unknown) => void
+    const pendingHistory = new Promise((resolve) => { resolveHistory = resolve })
+    const mock = jest.fn().mockImplementation((url: string) => url.endsWith('/history')
+      ? pendingHistory
+      : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    const { rerender } = render(<MountedReport revision={0} />)
+    const history = screen.getByRole('button', { name: 'Мои предыдущие отчёты' })
+    fireEvent.click(history)
+    expect(history).toBeDisabled()
+
+    rerender(<MountedReport revision={1} />)
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(history).toBeEnabled()
+
+    await act(async () => {
+      resolveHistory({ ok: true, status: 200,
+        json: async () => ({ ok: true, jobs: [] }) })
+      await pendingHistory
+    })
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(screen.queryByText('Ранее созданных отчётов пока нет.')).not.toBeInTheDocument()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/history'))).toHaveLength(1)
+  })
+
   it('restarts a terminally failed owned report only after fresh consent', async () => {
     const identifier = 'd'.repeat(32)
     const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({

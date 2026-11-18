@@ -114,6 +114,9 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     if (lastFormRevision.current === formRevision) return
     lastFormRevision.current = formRevision
     requestEpoch.current += 1
+    historyAbort.current?.abort()
+    setBusy(false)
+    setHistoryLoading(false)
     setConsent(false)
     setReport(null)
     setJobId('')
