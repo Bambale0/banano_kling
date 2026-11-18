@@ -21,7 +21,7 @@ SMOKE=""
 [[ -n "$EXPECTED_SHA" && "$(git -C "$PROJECT_DIR" rev-parse HEAD)" == "$EXPECTED_SHA" ]] || {
   echo "[landing] Exact checked-out SHA does not match" >&2; exit 1;
 }
-[[ -f "$LANDING/index.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" ]] || {
+[[ -f "$LANDING/index.html" && -f "$LANDING/robots.txt" && -f "$LANDING/sitemap.xml" && -f "$LANDING/grunge-collage.webp" ]] || {
   echo "[landing] Website assets missing" >&2; exit 1;
 }
 [[ -f "$NGINX" ]] || { echo "[landing] Expected Nginx vhost missing: $NGINX" >&2; exit 1; }
@@ -45,6 +45,10 @@ class Links(HTMLParser):
 
 p = Links()
 p.feed(Path(sys.argv[1]).read_text(encoding="utf8"))
+asset = Path(sys.argv[1]).parent / "grunge-collage.webp"
+data = asset.read_bytes()
+assert data[:4] == b"RIFF" and data[8:12] == b"WEBP", "Invalid hero artwork"
+assert b'src="/grunge-collage.webp"' in Path(sys.argv[1]).read_bytes(), "Hero artwork not wired"
 assert p.headings == ["h1"], "Landing must have one H1"
 assert p.links.count("/mini-app/") >= 3, "Missing direct app entrypoints"
 assert all(link.startswith(("/", "#")) for link in p.links), "Unexpected outbound link"
@@ -55,7 +59,7 @@ install -d -m 0755 "$ROOT"
 install -d -m 0700 "$BACKUP"
 cp -p -- "$NGINX" "$BACKUP/nginx.conf"
 if [[ -f "$ROOT/index.html" ]]; then cp -p -- "$ROOT/index.html" "$BACKUP/index.html"; fi
-for file in robots.txt sitemap.xml; do
+for file in robots.txt sitemap.xml grunge-collage.webp; do
   if [[ -f "$ROOT/$file" ]]; then cp -p -- "$ROOT/$file" "$BACKUP/$file"; fi
 done
 
@@ -69,7 +73,7 @@ rollback() {
   fi
   if [[ "$VERIFIED" != 1 ]]; then
     if [[ -f "$BACKUP/index.html" ]]; then cp -p -- "$BACKUP/index.html" "$ROOT/index.html"; else rm -f -- "$ROOT/index.html"; fi
-    for file in robots.txt sitemap.xml; do
+    for file in robots.txt sitemap.xml grunge-collage.webp; do
       if [[ -f "$BACKUP/$file" ]]; then cp -p -- "$BACKUP/$file" "$ROOT/$file"; else rm -f -- "$ROOT/$file"; fi
     done
   fi
@@ -77,7 +81,7 @@ rollback() {
 }
 trap rollback EXIT
 
-for file in index.html robots.txt sitemap.xml; do
+for file in index.html robots.txt sitemap.xml grunge-collage.webp; do
   tmp="$(mktemp "$ROOT/.landing-$file.XXXXXX")"
   install -m 0644 "$LANDING/$file" "$tmp"
   mv -f -- "$tmp" "$ROOT/$file"
@@ -122,6 +126,27 @@ elif new in content:
     pass
 else:
     raise SystemExit("Unknown Nginx root route; refusing mutation")
+# Add this exact static route to already-live landing configs without
+# overwriting emergency Nginx edits or existing Mini App routes.
+artwork_block = """    # Cacheable static collage from the isolated marketing root; never the Mini App root.
+    location = /grunge-collage.webp {
+        root /var/www/neuromix-landing;
+        try_files /grunge-collage.webp =404;
+        add_header Cache-Control "public, max-age=86400" always;
+    }
+"""
+if artwork_block not in content:
+    if "location = /grunge-collage.webp {" in content:
+        raise SystemExit("Unexpected artwork route; refusing mutation")
+    anchor = """    location = /sitemap.xml {
+        root /var/www/neuromix-landing;
+        try_files /sitemap.xml =404;
+        add_header Cache-Control "public, max-age=3600" always;
+    }
+"""
+    if content.count(anchor) != 1:
+        raise SystemExit("Unexpected sitemap route; refusing mutation")
+    content = content.replace(anchor, anchor + "\n" + artwork_block, 1)
 if content.count("location = / {") != 1:
     raise SystemExit("Unexpected HTTPS root location count")
 tmp = path.with_suffix(path.suffix + ".landing-tmp")
@@ -156,6 +181,14 @@ done
 for file in robots.txt sitemap.xml; do
   code="$(curl -sS --max-time 15 --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/$file")"
   [[ "$code" == 200 ]] || { echo "[landing] /$file returned $code" >&2; exit 1; }
+done
+# Verify real WebP bytes from the exact git release at origin and public edge.
+for mode in origin public; do
+  args=()
+  if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
+  status="$(curl -sS --connect-timeout 5 --max-time 20 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST/grunge-collage.webp")"
+  [[ "$status" == 200 ]] || { echo "[landing] $mode artwork returned $status" >&2; exit 1; }
+  cmp -s "$LANDING/grunge-collage.webp" "$SMOKE" || { echo "[landing] $mode artwork hash mismatch" >&2; exit 1; }
 done
 miniapp_revision="$(curl -fsS --max-time 20 --resolve "$HOST:443:127.0.0.1" "https://$HOST/mini-app/revision.txt")"
 [[ "$miniapp_revision" == "$EXPECTED_SHA" ]] || { echo "[landing] Existing Mini App revision mismatch" >&2; exit 1; }
