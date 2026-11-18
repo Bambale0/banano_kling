@@ -230,10 +230,14 @@ def report_fingerprint(
     plan: ReportPlan,
     facts: dict,
     secret: str,
+    generation_id: str | None = None,
 ) -> str:
     """HMAC prevents low-entropy dates from being trivially brute-forced."""
     if type(owner_id) is not int or owner_id <= 0 or not secret:
         raise AstroReportError("Не задан владелец или секрет для идемпотентности.")
+    if generation_id is not None and (not isinstance(generation_id, str)
+        or not re.fullmatch(r"[0-9a-f]{32}", generation_id)):
+        raise AstroReportError("Invalid Astro generation identifier")
     # The plan's text, minimums and dynamically expanded section policy
     # are part of the cache identity, even if an admin forgets to bump version.
     policy = json.dumps(
@@ -250,11 +254,15 @@ def report_fingerprint(
          )},
         ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")
+    payload = {"owner": owner_id, "service": plan.service_id, "plan": plan.version,
+               "policy_digest": hashlib.sha256(policy).hexdigest(),
+               "facts": _fact_catalog(facts)}
+    # Legacy jobs keep their original fingerprint. New reports use a per-job
+    # namespace so identical birth facts never reuse another report/checkpoint.
+    if generation_id is not None:
+        payload["generation_id"] = generation_id
     canonical = json.dumps(
-        {"owner": owner_id, "service": plan.service_id, "plan": plan.version,
-         "policy_digest": hashlib.sha256(policy).hexdigest(),
-         "facts": _fact_catalog(facts)},
-        ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ).encode("utf-8")
     return hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
 
@@ -391,6 +399,7 @@ async def compose_report(
     secret: str,
     store: CheckpointStore,
     provider: SectionTextProvider,
+    generation_id: str | None = None,
 ) -> dict:
     """Resume independent sections from durable store; never return partial as done.
 
@@ -400,7 +409,10 @@ async def compose_report(
     A failure can be resumed
     without regenerating committed sections or double billing.
     """
-    fingerprint = report_fingerprint(owner_id=owner_id, plan=plan, facts=facts, secret=secret)
+    fingerprint = report_fingerprint(
+        owner_id=owner_id, plan=plan, facts=facts, secret=secret,
+        generation_id=generation_id,
+    )
     available = _fact_catalog(facts)
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
