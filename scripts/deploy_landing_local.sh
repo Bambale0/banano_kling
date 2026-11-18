@@ -135,10 +135,24 @@ nginx -t
 systemctl reload nginx
 
 SMOKE="$(mktemp)"
-status="$(curl -sS --connect-timeout 5 --max-time 20 --resolve "$HOST:443:127.0.0.1" -o "$SMOKE" -w '%{http_code}' "https://$HOST/")"
-[[ "$status" == 200 ]] || { echo "[landing] Root returned $status, expected 200" >&2; exit 1; }
-grep -q 'id="hero-title"' "$SMOKE" || { echo "[landing] Root did not serve landing" >&2; exit 1; }
-grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] Missing app entry" >&2; exit 1; }
+# Nginx reload is asynchronous: a still-active worker can briefly return the
+# previous 302. Verify both origin and public Cloudflare route with a bounded
+# retry loop; never treat a 302 as success, even if curl exits with status 0.
+for mode in origin public; do
+  args=()
+  if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
+  status=""
+  for (( attempt=1; attempt<=30; attempt++ )); do
+    status="$(curl -sS --connect-timeout 5 --max-time 15 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST/" || true)"
+    if [[ "$status" == 200 ]] && grep -q 'id="hero-title"' "$SMOKE" && grep -q 'href="/mini-app/"' "$SMOKE"; then
+      break
+    fi
+    sleep 1
+  done
+  [[ "$status" == 200 ]] || { echo "[landing] $mode root returned $status, expected 200" >&2; exit 1; }
+  grep -q 'id="hero-title"' "$SMOKE" || { echo "[landing] $mode root does not serve landing" >&2; exit 1; }
+  grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] $mode root missing app entry" >&2; exit 1; }
+done
 for file in robots.txt sitemap.xml; do
   code="$(curl -sS --max-time 15 --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/$file")"
   [[ "$code" == 200 ]] || { echo "[landing] /$file returned $code" >&2; exit 1; }

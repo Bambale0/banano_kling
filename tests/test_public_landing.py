@@ -89,6 +89,12 @@ class LandingPublicContractTest(unittest.TestCase):
         for fragment in ("git -C", "nginx -t", "systemctl reload nginx", "rollback", "miniapp_revision"):
             self.assertIn(fragment, self.publisher)
 
+    def test_publisher_waits_for_real_200_after_async_nginx_reload(self):
+        self.assertIn("for mode in origin public; do", self.publisher)
+        self.assertIn("attempt<=30", self.publisher)
+        self.assertIn('[[ "$status" == 200 ]]', self.publisher)
+        self.assertIn('grep -q \'id="hero-title"\'', self.publisher)
+
     def test_landing_isolated_from_shared_miniapp_document_root(self):
         self.assertIn('root /var/www/neuromix-landing;', self.nginx)
         self.assertIn('ROOT="/var/www/neuromix-landing"', self.publisher)

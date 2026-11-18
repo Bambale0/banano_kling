@@ -33,3 +33,7 @@
 ## Исправление preflight — изоляция корневого сайта
 
 18.11.2026 выяснено на production: `/var/www/neuromixbot.com` — симлинк на `/var/www/tanyapp.xn--e1aikcel5c5a.online`, а далее на `/var/www/tanyapp.chillcreative.ru`. Развёртывание HTML в этот путь затронуло бы резервное имя. Корневой публичный лендинг теперь публикуется **только в `/var/www/neuromix-landing`**, с правами `0755`, а точные Nginx-маршруты `/`, `/robots.txt`, `/sitemap.xml` задают локальный `root` отдельно от общей Mini App. Предусмотрен отказ при симлинке на приватном каталоге. Добавлен регрессионный тест; Mini App и резервные имена остаются неизменными.
+
+## Восстановление публичного корня и гонка Nginx reload
+
+18.11.2026 публичный `/` восстановлен обратимым ручным hotfix через SentinelX (без изменения backend/Mini App), поскольку protected CI был заблокирован ошибкой экранирования apt fixture. Первые запросы после успешного `systemctl reload nginx` ещё возвращали `302` от прежних Nginx worker; позднее origin и Cloudflare отвечают `200`. Publisher теперь делает bounded retry по origin и Cloudflare и проверяет реальный HTML. Окончательная фиксация в релизном SHA требует PR #613 → `tanyapi` и production smoke.
