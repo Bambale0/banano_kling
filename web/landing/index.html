@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#10131b">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="NEUROMIX — AI-студия для создания фото, видео и работы с референсами. Открывайте в браузере без установки и воплощайте идеи с помощью нейросетей.">
+  <meta name="robots" content="index,follow,max-image-preview:large">
+  <link rel="canonical" href="https://neuromixbot.com/">
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="ru_RU">
+  <meta property="og:site_name" content="NEUROMIX">
+  <meta property="og:title" content="NEUROMIX — AI-студия в твоём браузере">
+  <meta property="og:description" content="Фото, видео и AI-тренды. Откройте студию в браузере — без установки.">
+  <meta property="og:url" content="https://neuromixbot.com/">
+  <meta name="twitter:card" content="summary">
+  <title>NEUROMIX — генерация фото и видео с AI | Веб-студия</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      /* Exact design token family from frontend/miniapp-v0/app/globals.css */
+      --background: oklch(0.12 0.015 260);
+      --foreground: oklch(0.95 0.01 80);
+      --card: oklch(0.16 0.012 260);
+      --primary: oklch(0.78 0.14 75);
+      --accent: oklch(0.65 0.12 220);
+      --muted: oklch(0.65 0.02 260);
+      --border: oklch(0.28 0.015 260);
+      --surface: #151922;
+      --radius: 24px;
+      --max: 1180px;
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html{scroll-behavior:smooth;scroll-padding-top:90px}
+    body{margin:0;background:#0e121a;background:var(--background);color:#f6f1e8;color:var(--foreground);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.5;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+    body::before{content:"";position:absolute;inset:0 0 auto;height:850px;z-index:-1;pointer-events:none;background:radial-gradient(ellipse 45% 48% at 83% 35%,oklch(0.65 0.12 220 / .11),transparent 80%),radial-gradient(ellipse 44% 52% at 33% 19%,oklch(0.78 0.14 75 / .085),transparent 78%)}
+    a{color:inherit;text-decoration:none}button{font:inherit}a:focus-visible,summary:focus-visible{outline:3px solid var(--accent);outline-offset:4px;border-radius:8px}
+    .wrap{width:min(calc(100% - 48px),var(--max));margin-inline:auto}
+    .header{height:78px;position:relative;z-index:10;border-bottom:1px solid oklch(0.95 0.01 80 / .07);background:oklch(0.12 0.015 260 / .88);backdrop-filter:blur(20px)}
+    .header-row,.nav-links,.brand,.header-actions{display:flex;align-items:center}.header-row{height:100%;justify-content:space-between;gap:20px}.brand{gap:12px;min-width:0}
+    .brand-mark{height:42px;width:42px;flex:none;display:grid;place-items:center;border-radius:13px;background:linear-gradient(145deg,oklch(0.78 0.14 75 / .22),oklch(0.16 0.012 260));border:1px solid oklch(0.78 0.14 75 / .36);box-shadow:inset 0 1px 0 #ffffff10}
+    .brand-mark svg{width:29px;height:29px}
+    .brand-word{font-size:18px;font-weight:850;letter-spacing:.17em;line-height:1.2}.brand-sub{font-size:10px;font-weight:600;letter-spacing:.19em;color:var(--muted);display:block;margin-top:3px;text-transform:uppercase}
+    .nav-links{gap:35px;margin-left:auto}.nav-links a{font-size:13px;font-weight:550;color:oklch(0.8 0.012 260);transition:color .2s}.nav-links a:hover,.text-link:hover{color:var(--primary)}
+    .header-actions{gap:12px;margin-left:30px}.header-enter{display:flex;align-items:center;justify-content:center;min-height:42px;padding:0 20px;border:1px solid oklch(0.78 0.14 75 / .40);border-radius:14px;color:var(--primary);font-size:13px;font-weight:700;background:oklch(0.78 0.14 75 / .07);transition:background .2s,transform .2s}.header-enter:hover{background:oklch(0.78 0.14 75 / .15);transform:translateY(-1px)}
+    .mobile-menu{display:none}
+    .hero{display:grid;grid-template-columns:minmax(0,1.02fr) minmax(0,.98fr);align-items:center;gap:56px;padding-block:93px 95px}
+    .eyebrow{display:inline-flex;align-items:center;gap:10px;border:1px solid oklch(0.78 0.14 75 / .22);border-radius:100px;background:oklch(0.78 0.14 75 / .07);padding:9px 13px;font-size:11px;letter-spacing:.11em;font-weight:750;color:var(--primary);text-transform:uppercase}
+    .eyebrow .pulse{width:6px;height:6px;border-radius:50%;background:var(--primary);box-shadow:0 0 0 4px oklch(0.78 0.14 75 / .10)}
+    h1,h2,h3,p{margin-top:0}.hero h1{font-size:clamp(44px,5.1vw,73px);letter-spacing:-.069em;line-height:1.035;font-weight:790;max-width:620px;margin:26px 0}
+    .gradient-text{background:linear-gradient(115deg,#fff6db 0%,#f1c56b 45%,#db8e4b 88%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .hero-description{font-size:16px;line-height:1.78;color:oklch(0.76 0.018 260);max-width:475px;margin:0 0 30px}
+    .hero-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+    .button{min-height:55px;display:inline-flex;justify-content:center;align-items:center;gap:13px;padding:13px 23px;border-radius:15px;font-weight:750;font-size:14px;transition:transform .2s,filter .2s,border-color .2s}
+    .button:hover{transform:translateY(-2px)}.button svg{flex:none;width:19px;height:19px}
+    .button-primary{color:#211a11;background:linear-gradient(105deg,#f9df9e,#e3b75d 55%,#f5d78e);box-shadow:0 9px 38px #c993412c,inset 0 1px 0 #fff9;white-space:nowrap}
+    .button-primary:hover{filter:brightness(1.07)}.button-secondary{border:1px solid var(--border);background:oklch(0.19 0.018 260 / .8);color:var(--foreground)}
+    .button-secondary:hover{border-color:oklch(0.78 0.14 75 / .55)}
+    .microcopy{display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:22px 0 0}
+    .microcopy span{display:flex;gap:7px;align-items:center}.microcopy svg{color:var(--accent);width:15px;height:15px}
+    .hero-visual{position:relative;min-height:535px;display:flex;align-items:center;justify-content:center;isolation:isolate}
+    .hero-visual::before{content:"";z-index:-1;position:absolute;width:95%;aspect-ratio:1;inset:7% 0 0 4%;background:radial-gradient(circle,oklch(0.78 0.14 75 / .13) 0%,oklch(0.65 0.12 220 / .07) 39%,transparent 68%);filter:blur(15px)}
+    .app-frame{position:relative;width:min(100%,385px);overflow:hidden;border:1px solid oklch(0.95 0.01 80 / .15);border-radius:34px;padding:15px;background:linear-gradient(158deg,#222935,#11151e 49%,#11131a);box-shadow:0 28px 86px #0008,inset 0 1px 0 #fff2;transform:rotate(1.5deg)}
+    .app-toolbar{height:43px;display:flex;justify-content:space-between;align-items:center;padding:0 8px 12px;color:#fff;font-size:10px}
+    .app-toolbar strong{letter-spacing:.13em;font-size:13px}.app-toolbar .coin{color:var(--primary);border:1px solid oklch(0.78 0.14 75 / .22);border-radius:12px;padding:6px 10px;background:oklch(0.78 0.14 75 / .06)}
+    .artwork{position:relative;overflow:hidden;border-radius:22px;aspect-ratio:1 / 1.05;background:#18283a;box-shadow:inset 0 0 0 1px #fff2}
+    .artwork svg{width:100%;height:100%;display:block}
+    .artwork .art-label{position:absolute;left:13px;bottom:13px;display:flex;align-items:center;gap:7px;letter-spacing:.09em;font-size:10px;font-weight:800;color:#fff;background:#101823ac;padding:8px 11px;border-radius:10px;border:1px solid #ffffff25;backdrop-filter:blur(10px)}
+    .app-chips{display:flex;gap:8px;margin-top:13px}.app-chip{padding:8px 12px;background:#232b36;color:#e7e3dc;border:1px solid #ffffff12;border-radius:10px;font-size:11px;flex:1;text-align:center}
+    .app-chip:first-child{background:oklch(0.78 0.14 75 / .17);color:var(--primary);border-color:oklch(0.78 0.14 75 / .27)}
+    .app-prompt{padding:12px 14px;display:flex;justify-content:space-between;align-items:center;color:#b9bac3;background:#0f141d;border:1px solid #ffffff13;border-radius:12px;font-size:10px;margin-top:12px}
+    .app-prompt i{display:block;width:23px;height:23px;border-radius:8px;background:linear-gradient(145deg,#ffdd8b,#bf812e);flex:none}
+    .floating{position:absolute;z-index:2;border-radius:17px;border:1px solid #ffffff2c;padding:13px 15px;backdrop-filter:blur(20px);background:#18222bde;box-shadow:0 16px 35px #0007}
+    .floating span{display:block;color:#a4b2bd;text-transform:uppercase;letter-spacing:.1em;font-size:9px;font-weight:750}.floating strong{display:block;margin-top:5px;color:#f9f3e8;font-size:13px}
+    .floating.one{top:14%;left:-4%;transform:rotate(-8deg)}.floating.two{bottom:12%;right:-5%;transform:rotate(7deg)}
+    .floating .spark{color:var(--primary);font-size:25px;float:left;margin-right:10px;line-height:1.45}
+    .divider-line{border-top:1px solid oklch(0.95 0.01 80 / .08)}
+    .trustbar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding-block:23px;color:oklch(0.7 0.018 260);font-size:12px;letter-spacing:.04em}
+    .trustbar .trust-copy{font-weight:750;color:#fff;letter-spacing:0;font-size:13px}
+    .trust-items{display:flex;gap:29px;align-items:center;flex-wrap:wrap}.trust-items span{display:flex;gap:8px;align-items:center}.trust-items b{color:var(--primary);font-weight:800}
+    .section{padding-block:95px}.section-heading{max-width:680px;margin-bottom:38px}.kicker{font-weight:800;letter-spacing:.19em;color:var(--primary);text-transform:uppercase;font-size:10px;margin:0 0 17px}
+    h2{font-size:clamp(31px,4vw,49px);letter-spacing:-.054em;line-height:1.1;font-weight:790;margin:0 0 15px}.section-heading p:not(.kicker){color:var(--muted);line-height:1.7;font-size:14px;margin:0}
+    .feature-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:17px}
+    .feature{position:relative;min-height:330px;border-radius:25px;overflow:hidden;border:1px solid oklch(0.95 0.01 80 / .09);background:linear-gradient(155deg,#1a2230,#11151e);padding:25px;display:flex;flex-direction:column;justify-content:space-between}
+    .feature::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 80% 68%,oklch(0.65 0.12 220 / .13),transparent 63%)}
+    .feature:nth-child(2){background:linear-gradient(150deg,#1c1b21,#151821)}.feature:nth-child(2)::before{background:radial-gradient(circle at 78% 54%,oklch(0.78 0.14 75 / .14),transparent 65%)}
+    .feature:nth-child(3){background:linear-gradient(150deg,#1b2229,#14151e)}
+    .feature-icon{width:46px;height:46px;display:grid;place-items:center;background:oklch(0.78 0.14 75 / .10);border:1px solid oklch(0.78 0.14 75 / .17);border-radius:14px;color:var(--primary);position:relative;z-index:1}
+    .feature-icon svg{width:23px;height:23px}.feature-content{position:relative;z-index:1}.feature h3{font-size:20px;letter-spacing:-.028em;margin:0 0 7px}.feature p{font-size:13px;color:oklch(0.70 0.02 260);line-height:1.65;margin:0;max-width:260px}
+    .feature-art{height:130px;display:grid;place-items:center;position:relative;isolation:isolate}
+    .feature-art::before{content:"";position:absolute;border-radius:24px;width:144px;height:103px;transform:rotate(-13deg);background:linear-gradient(136deg,#314559,#c49d6d 75%,#1d2838);box-shadow:0 18px 30px #0007;border:1px solid #ffffff45;z-index:-1}
+    .feature-art::after{content:"";position:absolute;border-radius:24px;width:144px;height:103px;transform:translate(16px,8px) rotate(6deg);border:1px solid #ffffff38;z-index:-2}
+    .feature-art svg{width:68px;height:68px;color:#fff5d1;filter:drop-shadow(0 5px 12px #0008)}
+    .feature:nth-child(2) .feature-art::before{background:linear-gradient(135deg,#142a43,#456983 50%,#d6a35d)}
+    .feature:nth-child(3) .feature-art::before{background:linear-gradient(135deg,#6a4b38,#2a4655 60%,#1b293b)}
+    .how{display:grid;grid-template-columns:.95fr 1.05fr;gap:55px;align-items:center;padding-block:100px}
+    .how-visual{border:1px solid oklch(0.95 0.01 80 / .12);border-radius:31px;background:radial-gradient(circle at 75% 25%,oklch(0.65 0.12 220 / .14),transparent 45%),linear-gradient(135deg,#191d28,#11151c);padding:32px;min-height:360px;display:flex;flex-direction:column;justify-content:center;gap:17px}
+    .flow-step{display:flex;align-items:center;gap:15px;padding:15px;border:1px solid #ffffff14;background:#111821aa;border-radius:17px}
+    .flow-index{width:42px;height:42px;display:grid;place-items:center;border-radius:13px;color:var(--primary);border:1px solid oklch(0.78 0.14 75 / .30);background:oklch(0.78 0.14 75 / .09);font-weight:850;flex:none}
+    .flow-step strong{font-size:13px;display:block}.flow-step span{color:var(--muted);font-size:11px}
+    .how h2{max-width:465px}.how p{color:var(--muted);font-size:14px;line-height:1.75;max-width:465px;margin:0 0 20px}
+    .check-list{list-style:none;padding:0;margin:0;display:grid;gap:15px}.check-list li{display:flex;gap:11px;color:oklch(0.82 0.012 260);font-size:13px;align-items:flex-start}
+    .check-list .check{color:var(--primary);font-weight:900}
+    .access{position:relative;display:grid;grid-template-columns:1.15fr .85fr;gap:52px;align-items:center;padding:45px 49px;border:1px solid oklch(0.78 0.14 75 / .25);border-radius:32px;background:radial-gradient(circle at 12% 25%,oklch(0.78 0.14 75 / .11),transparent 50%),radial-gradient(circle at 92% 86%,oklch(0.65 0.12 220 / .10),transparent 50%),#151a23;overflow:hidden}
+    .access h2{font-size:clamp(29px,3.6vw,43px)}.access-copy{color:oklch(0.76 0.018 260);font-size:14px;line-height:1.75;margin:0 0 25px;max-width:480px}
+    .access-note{font-size:11px;color:var(--muted);line-height:1.6;max-width:450px;margin:16px 0 0}
+    .login-panel{border:1px solid #ffffff1a;background:#0e141ecc;padding:22px;border-radius:24px;box-shadow:0 20px 45px #0004}
+    .login-panel h3{font-size:15px;margin:0 0 15px;letter-spacing:-.02em}.login-link{min-height:54px;display:flex;gap:13px;align-items:center;border-radius:13px;padding:12px 15px;border:1px solid #54a4c65c;background:#22303e;font-size:14px;font-weight:700;transition:background .2s}
+    .login-link:hover{background:#2c4050}.login-link svg{width:21px;height:21px;color:#58bbec}.login-link .arrow{margin-left:auto;color:#eaf8ff;font-size:19px}
+    .future-methods{margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+    .future-method{border:1px solid #ffffff16;min-height:60px;border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;text-align:center;color:#b6bbc4;background:#ffffff04}
+    .future-method strong{font-size:11px;color:#ddd}.future-method small{font-size:9px;color:#9ea1ad}
+    .linking{display:flex;align-items:center;gap:11px;margin-top:13px;border-radius:12px;padding:12px 13px;color:#c7cbd0;font-size:11px;line-height:1.5;background:oklch(0.78 0.14 75 / .055);border:1px solid oklch(0.78 0.14 75 / .12)}
+    .linking svg{width:22px;height:22px;color:var(--primary);flex:none}
+    .bottom-cta{text-align:center;padding:120px 0 100px}.bottom-cta h2{max-width:680px;margin-inline:auto;margin-bottom:15px}.bottom-cta p{color:var(--muted);margin:0 auto 27px;max-width:500px;font-size:14px;line-height:1.7}
+    .footer{border-top:1px solid oklch(0.95 0.01 80 / .09);padding:26px 0 45px}
+    .footer-row{display:flex;align-items:center;justify-content:space-between;gap:18px}.footer .brand-word{font-size:14px}.footer p{font-size:11px;color:var(--muted);margin:0}.footer a{font-size:12px;color:var(--primary)}
+    .mobile-dock{display:none}
+    @media(max-width:1050px){
+      .hero{gap:26px;grid-template-columns:1fr 1fr}.hero h1{font-size:clamp(42px,5.3vw,61px)}.floating.one{left:-1%}.floating.two{right:-2%}
+      .nav-links{gap:19px}.header-actions{margin-left:0}
+    }
+    @media(max-width:760px){
+      .wrap{width:min(calc(100% - 36px),620px)}.header{height:70px}.brand-word{font-size:15px}.brand-mark{width:38px;height:38px}.brand-sub{font-size:9px}
+      .nav-links{display:none}.header-actions{margin-left:auto}.header-enter{min-height:40px;padding-inline:14px;font-size:12px}
+      .hero{display:flex;flex-direction:column;align-items:stretch;gap:36px;padding-block:65px 45px}.hero h1{font-size:clamp(40px,9.2vw,60px);margin:23px 0 19px}.hero-description{font-size:15px;margin-bottom:25px}
+      .hero-actions{display:grid;grid-template-columns:1fr 1fr}.hero-actions .button{padding:12px 9px;font-size:12px;min-height:52px}.hero-actions .button svg{width:16px}
+      .hero-visual{min-height:auto;padding:16px 26px 30px}.app-frame{max-width:345px}.floating.one{top:16%;left:1%}.floating.two{bottom:13%;right:0}
+      .trustbar{display:block;padding-block:25px}.trust-items{gap:13px 24px;margin-top:13px}
+      .section{padding-block:68px}.feature-grid{grid-template-columns:1fr;gap:13px}
+      .feature{min-height:210px;display:grid;grid-template-columns:1fr 125px;grid-template-rows:auto 1fr;gap:10px;padding:23px}
+      .feature-icon{grid-row:1;grid-column:1}.feature-content{grid-row:2;grid-column:1}.feature-art{grid-row:1/3;grid-column:2;height:150px;align-self:center}
+      .feature-art::before,.feature-art::after{width:100px;height:105px}
+      .how{grid-template-columns:1fr;gap:25px;padding-block:77px}.how-visual{order:2;min-height:0;padding:19px}
+      .access{grid-template-columns:1fr;gap:20px;padding:33px 24px}.access h2{max-width:500px}.bottom-cta{padding-block:80px 105px}
+      .mobile-dock{display:flex;position:fixed;z-index:20;bottom:calc(12px + env(safe-area-inset-bottom));left:18px;right:18px;align-items:center;justify-content:center;gap:12px;min-height:54px;border-radius:16px;font-size:14px;font-weight:800;color:#1f1b16;background:linear-gradient(100deg,#ffe2a0,#e2b866);box-shadow:0 8px 40px #0009,0 0 18px #d9a75030}
+      .mobile-dock svg{width:17px}.footer{padding-bottom:calc(100px + env(safe-area-inset-bottom))}
+    }
+    @media(max-width:390px){
+      .wrap{width:calc(100% - 30px)}.brand-word{font-size:13px;letter-spacing:.11em}.header-enter{padding:0 11px}.hero{padding-top:45px}.hero h1{font-size:39px}.hero-actions{grid-template-columns:1fr}.button{width:100%}
+      .hero-visual{padding-inline:17px}.app-frame{width:94%}.floating{padding:10px}.floating strong{font-size:11px}.feature{grid-template-columns:1fr 95px;padding:19px}.feature-art::before,.feature-art::after{width:80px;height:85px}
+      .access{padding:25px 18px}.future-method strong{font-size:10px}
+    }
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="wrap header-row">
+      <a class="brand" href="/" aria-label="NEUROMIX — на главную">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 40 40" fill="none"><path d="M5 23h6l4-13 7 21 4-14 3 6h6" stroke="#e6b75f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="35" cy="23" r="2" fill="#e6b75f"/></svg>
+        </span>
+        <span><span class="brand-word">NEUROMIX</span><span class="brand-sub">AI Creative Studio</span></span>
+      </a>
+      <nav class="nav-links" aria-label="Навигация">
+        <a href="#possibilities">Возможности</a>
+        <a href="#how">Как это работает</a>
+        <a href="#login">Вход в студию</a>
+      </nav>
+      <div class="header-actions"><a class="header-enter" href="/mini-app/">Войти <span aria-hidden="true">&nbsp;↗</span></a></div>
+    </div>
+  </header>
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="pulse"></span> Твоя AI-студия — в браузере</div>
+        <h1 id="hero-title">Создавай то, <span class="gradient-text">что раньше казалось невозможным.</span></h1>
+        <p class="hero-description">Фото, видео, тренды и работа с референсами — в одной креативной студии. Придумывай, экспериментируй и получай результат прямо в браузере.</p>
+        <div class="hero-actions">
+          <a class="button button-primary" href="/mini-app/">
+            Открыть AI-студию
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 12h16m-7-7 7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a class="button button-secondary" href="#possibilities">
+            Посмотреть возможности
+            <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M12 5v14m-6-6 6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+        <div class="microcopy">
+          <span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 5 5L20 6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Без установки</span>
+          <span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 5 5L20 6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Работает на телефоне</span>
+          <span><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m4 12 5 5L20 6" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg> Telegram-вход</span>
+        </div>
+      </div>
+      <div class="hero-visual" aria-label="Иллюстрация интерфейса креативной студии NEUROMIX">
+        <div class="floating one"><span class="spark" aria-hidden="true">✦</span><span>AI Generation</span><strong>Идея → изображение</strong></div>
+        <div class="app-frame">
+          <div class="app-toolbar"><strong>✧ NEUROMIX</strong><span class="coin">✦ AI STUDIO</span></div>
+          <div class="artwork">
+            <svg viewBox="0 0 380 400" preserveAspectRatio="xMidYMid slice" aria-hidden="true" role="img">
+              <defs>
+                <linearGradient id="sky" x1="0" y1="0" x2=".2" y2="1"><stop stop-color="#0d1e37"/><stop offset=".45" stop-color="#345672"/><stop offset=".72" stop-color="#c68e68"/><stop offset="1" stop-color="#233147"/></linearGradient>
+                <radialGradient id="sun"><stop stop-color="#fff4bf"/><stop offset=".45" stop-color="#eab66c"/><stop offset=".8" stop-color="#c89961" stop-opacity=".5"/><stop offset="1" stop-color="#ebb87e" stop-opacity="0"/></radialGradient>
+                <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#31485f"/><stop offset="1" stop-color="#0a1728"/></linearGradient>
+                <linearGradient id="water" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#c89e77"/><stop offset=".2" stop-color="#456077"/><stop offset="1" stop-color="#081523"/></linearGradient>
+                <filter id="blur"><feGaussianBlur stdDeviation="15"/></filter>
+              </defs>
+              <rect width="380" height="400" fill="url(#sky)"/>
+              <circle cx="244" cy="149" r="112" fill="url(#sun)"/>
+              <circle cx="244" cy="149" r="49" fill="#f7d3a0" opacity=".86"/>
+              <circle cx="244" cy="149" r="64" fill="none" stroke="#f5dbab" stroke-width="1.4" opacity=".55"/>
+              <path d="M-10 258 56 165l36 46 69-99 79 120 38-63 113 103V401H-10Z" fill="#1d2f46"/>
+              <path d="m75 233 86-121 79 120-37-18-42-65-51 76Z" fill="#577087" opacity=".9"/>
+              <path d="m148 147 13-35 25 38-23-8Z" fill="#d8cbb2"/>
+              <path d="M-10 296 82 215l52 44 50-37 57 42 68-56 81 78v116H-10Z" fill="url(#hill)"/>
+              <path d="M-10 312q95-17 191 6t210-6v100H-10Z" fill="url(#water)"/>
+              <ellipse cx="229" cy="318" rx="78" ry="7" fill="#e8b483" opacity=".5" filter="url(#blur)"/>
+              <path d="M225 313q5 34-14 78m33-76q5 32 0 77m-21-61q17 26 10 61" stroke="#eeb87e" stroke-width="6" opacity=".4" filter="url(#blur)"/>
+              <path d="M0 349q65-22 105-8t88 0 93 7 94-6" fill="none" stroke="#96bdc3" opacity=".16" stroke-width="2"/>
+              <path d="M0 366q80-18 125-6t88 1 89 4 78-6" fill="none" stroke="#f0c093" opacity=".15" stroke-width="2"/>
+              <g fill="#fff" opacity=".72"><circle cx="35" cy="50" r="1.5"/><circle cx="96" cy="76" r="1"/><circle cx="317" cy="49" r="1.5"/><circle cx="347" cy="112" r="1"/><circle cx="142" cy="41" r="1"/></g>
+            </svg>
+            <span class="art-label"><span aria-hidden="true">✦</span> AI VISUAL / CONCEPT</span>
+          </div>
+          <div class="app-chips"><div class="app-chip">✦ Фото</div><div class="app-chip">▷ Видео</div><div class="app-chip">↗ Тренды</div></div>
+          <div class="app-prompt"><span>Каждая идея заслуживает воплощения...</span><i aria-hidden="true"></i></div>
+        </div>
+        <div class="floating two"><span class="spark" aria-hidden="true">◈</span><span>Creative tools</span><strong>Фото • Видео • Тренды</strong></div>
+      </div>
+    </section>
+    <div class="divider-line">
+      <div class="wrap trustbar"><span class="trust-copy">Всё для творческих экспериментов</span><div class="trust-items"><span><b>✦</b> AI-фото</span><span><b>▷</b> AI-видео</span><span><b>◈</b> Референсы</span><span><b>↗</b> Тренды</span></div></div>
+    </div>
+    <section id="possibilities" class="wrap section" aria-labelledby="feature-title">
+      <div class="section-heading"><p class="kicker">Твоя креативная территория</p><h2 id="feature-title">От идеи до результата.<br><span class="gradient-text">Без лишних шагов.</span></h2><p>Не нужно устанавливать отдельные программы: знакомые инструменты NEUROMIX доступны в веб-студии.</p></div>
+      <div class="feature-grid">
+        <article class="feature">
+          <span class="feature-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="9" r="1.5" fill="currentColor"/><path d="m5 17 5-5 3 3 3-4 3 4" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></span>
+          <div class="feature-art" aria-hidden="true"><svg viewBox="0 0 80 80" fill="none"><circle cx="40" cy="35" r="22" fill="#f2d7a4" fill-opacity=".25"/><path d="M24 57c4-13 28-13 32 0" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="40" cy="30" r="11" stroke="currentColor" stroke-width="3"/></svg></div>
+          <div class="feature-content"><h3>AI-изображения</h3><p>Создавай визуалы по своему описанию и редактируй с помощью референсов.</p></div>
+        </article>
+        <article class="feature">
+          <span class="feature-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="14" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="m10 9 5 3-5 3V9Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span>
+          <div class="feature-art" aria-hidden="true"><svg viewBox="0 0 80 80" fill="none"><circle cx="40" cy="40" r="29" stroke="currentColor" stroke-opacity=".45" stroke-width="2"/><path d="m32 25 23 15-23 15V25Z" fill="currentColor"/></svg></div>
+          <div class="feature-content"><h3>AI-видео</h3><p>Оживляй идеи, экспериментируй с движением и создавай видеосцены.</p></div>
+        </article>
+        <article class="feature">
+          <span class="feature-icon"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="m4 16 5-5 4 3 7-8M14 6h6v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          <div class="feature-art" aria-hidden="true"><svg viewBox="0 0 80 80" fill="none"><path d="M40 9 47 33 71 40 47 47 40 71 33 47 9 40 33 33 40 9Z" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><circle cx="40" cy="40" r="5" fill="currentColor"/></svg></div>
+          <div class="feature-content"><h3>Тренды и сценарии</h3><p>Выбирай готовые идеи для генерации и адаптируй их под свои задачи.</p></div>
+        </article>
+      </div>
+    </section>
+    <div class="divider-line">
+      <section id="how" class="wrap how" aria-labelledby="how-title">
+        <div class="how-visual" aria-label="Три шага к началу работы">
+          <div class="flow-step"><span class="flow-index">01</span><div><strong>Открой студию</strong><span>С телефона, планшета или компьютера</span></div></div>
+          <div class="flow-step"><span class="flow-index">02</span><div><strong>Войди через Telegram</strong><span>Привычная авторизация в веб-версии</span></div></div>
+          <div class="flow-step"><span class="flow-index">03</span><div><strong>Начни создавать</strong><span>Все инструменты в действующей Mini App</span></div></div>
+        </div>
+        <div><p class="kicker">Легко начать</p><h2 id="how-title">Твоя студия там, <span class="gradient-text">где ты.</span></h2><p>NEUROMIX уже работает в браузере. Эта страница — удобная точка входа, а не отдельная версия приложения. Твои инструменты остаются в одной студии.</p>
+          <ul class="check-list">
+            <li><span class="check" aria-hidden="true">✓</span> Один переход до действующего приложения</li>
+            <li><span class="check" aria-hidden="true">✓</span> Адаптировано для мобильного браузера</li>
+            <li><span class="check" aria-hidden="true">✓</span> Существующая Telegram-авторизация сохранена</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+    <section id="login" class="wrap section" aria-labelledby="login-title">
+      <div class="access">
+        <div><p class="kicker">Вход в NEUROMIX</p><h2 id="login-title">Одна студия.<br><span class="gradient-text">Твой способ входа.</span></h2><p class="access-copy">Уже пользуешься NEUROMIX через Telegram? Открой веб-студию с существующим аккаунтом. Дополнительные способы входа и привязка профилей появятся здесь после подключения безопасной серверной авторизации.</p>
+          <a class="button button-primary" href="/mini-app/">Перейти в приложение <svg aria-hidden="true" viewBox="0 0 24 24" fill="none"><path d="M4 12h16m-7-7 7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+          <p class="access-note">При переходе откроется существующая Mini App. Если ты ещё не вошёл, приложение предложит действующий вход через Telegram.</p>
+        </div>
+        <div class="login-panel">
+          <h3>Доступ к студии</h3>
+          <a class="login-link" href="/mini-app/" aria-label="Войти через Telegram в веб-студию">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#28A8EA"/><path d="m5 11.5 14-5-3 12-4.2-3.7-2.3 2.2.6-4.2 6.3-4.5-8 5.2Z" fill="white"/></svg>
+            Продолжить с Telegram <span class="arrow" aria-hidden="true">↗</span>
+          </a>
+          <div class="future-methods" aria-label="Дополнительные способы авторизации находятся в разработке">
+            <div class="future-method"><strong>Почта</strong><small>скоро</small></div>
+            <div class="future-method"><strong>Google</strong><small>скоро</small></div>
+            <div class="future-method"><strong>Яндекс ID</strong><small>скоро</small></div>
+          </div>
+          <div class="linking"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 15a4 4 0 0 0 6 .5l3.4-3.4a4 4 0 1 0-5.6-5.6l-1.9 1.9m2.2 7.2-1.9 1.9a4 4 0 0 1-5.6-5.6L9 8.5a4 4 0 0 1 6 .5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg><span>В планах — привязка нескольких способов входа к одному профилю без потери истории и баланса.</span></div>
+        </div>
+      </div>
+    </section>
+    <div class="divider-line"><section class="wrap bottom-cta"><p class="kicker">Твоя следующая идея начинается здесь</p><h2>Готов <span class="gradient-text">создавать больше?</span></h2><p>Не откладывай вдохновение. NEUROMIX уже ждёт тебя в браузере — без установки и лишних шагов.</p><a class="button button-primary" href="/mini-app/">Открыть NEUROMIX <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h16m-7-7 7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a></section></div>
+  </main>
+  <footer class="footer"><div class="wrap footer-row"><div><div class="brand-word">NEUROMIX</div><p>AI Creative Studio · 2026</p></div><a href="/mini-app/">Перейти в студию ↗</a></div></footer>
+  <a class="mobile-dock" href="/mini-app/" aria-label="Открыть студию NEUROMIX">✦ Открыть AI-студию <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 12h16m-7-7 7 7-7 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+</body>
+</html>
