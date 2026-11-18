@@ -53,6 +53,12 @@ class LandingPublicContractTest(unittest.TestCase):
             if link.startswith("#"):
                 self.assertIn(link[1:], self.page.ids)
 
+    def test_legacy_telegram_webview_launch_bypasses_public_landing(self):
+        self.assertIn("tgWebAppData", self.html)
+        self.assertIn("tgWebAppVersion", self.html)
+        self.assertIn("window.location.replace('/mini-app/'", self.html)
+        self.assertIn("window.location.hash", self.html)
+
     def test_uses_existing_miniapp_color_tokens(self):
         theme = (ROOT / "frontend/miniapp-v0/app/globals.css").read_text(encoding="utf-8")
         for key, value in (
