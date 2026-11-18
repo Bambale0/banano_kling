@@ -140,7 +140,7 @@ async function setup(){
   connected=Array.isArray(data.connected)?data.connected:[];
   for(const [provider,button] of Object.entries(providerButtons)){
     button.disabled=!data.providers?.[provider];
-    if(connected.includes(provider)){button.querySelector(".provider-label").textContent="Google"===provider?"Google подключён":provider+" подключён";}
+    if(connected.includes(provider)){button.querySelector(".provider-label").textContent=provider==="google"?"Google подключён":"Яндекс подключён";}
   }
   document.getElementById("email-button").disabled=!data.providers?.email;
   if(authenticated){
@@ -177,8 +177,10 @@ async function setupTelegram(){
         window.location.assign(response.url);
         return;
       }
-      await readJson(response);
-      window.location.assign(next);
+      const payload=await readJson(response);
+      const destination=new URL(payload.redirect||next,window.location.origin);
+      if(destination.origin!==window.location.origin)throw new Error("Неверный адрес возврата");
+      window.location.assign(destination.pathname+destination.search+destination.hash);
     }catch{message("Не удалось войти через Telegram. Повтори попытку.");}
   };
   const script=document.createElement("script");
