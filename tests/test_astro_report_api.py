@@ -76,6 +76,12 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                     job_id=job_id, worker_id="admin-worker", retry=False,
                     error_code="temporary_provider_failure",
                 )
+                # A repeat start of the exact failed report must not lie about queued state.
+                replay = await client.post(path, json=body)
+                replay_body = await replay.json()
+                assert replay.status == 200
+                assert replay_body["job_id"] == job_id
+                assert replay_body["status"] == "failed"
                 retry_path = "/mini-app/api/astro/reports/retry"
                 no_consent = await client.post(retry_path, json={
                     "init_data": "fixture-actor-one", "job_id": job_id,

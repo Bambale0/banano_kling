@@ -147,10 +147,15 @@ async def astro_report_start(request: web.Request) -> web.Response:
         job_id = await jobs.enqueue(
             owner_id=owner_id, plan=plan, facts=facts, consent=True,
         )
-        logger.info("astro_report_queued request_id=%s job_id=%s owner_id=%s kind=%s",
-                    request_id, job_id, owner_id, kind)
-        return _response({"ok": True, "job_id": job_id, "status": "queued",
-                          "request_id": request_id}, 202)
+        current = await jobs.status(owner_id=owner_id, job_id=job_id)
+        if current is None:
+            raise RuntimeError("Astro job disappeared after enqueue")
+        status = current["status"]
+        logger.info("astro_report_start_resolved request_id=%s job_id=%s owner_id=%s "
+                    "kind=%s status=%s", request_id, job_id, owner_id, kind, status)
+        return _response({"ok": True, "job_id": job_id, "status": status,
+                          "request_id": request_id},
+                         202 if status in ("queued", "running") else 200)
     except web.HTTPException:
         raise
     except (ValueError, TypeError, AstroReportError):

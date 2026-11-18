@@ -50,10 +50,13 @@ try {
         assert.deepEqual(request.input, { date: '29.02.2000', time: '13:45', place_id: 498817 })
         if (starts === 1) return route.fulfill({ status: 503, contentType: 'application/json',
           body: JSON.stringify({ ok: false, error: 'temporarily_unavailable' }) })
+        if (starts === 3) return route.fulfill({ status: 200, contentType: 'application/json',
+          body: JSON.stringify({ ok: true, job_id: jobId, status: 'failed' }) })
         return route.fulfill({ status: 202, contentType: 'application/json',
           body: JSON.stringify({ ok: true, job_id: jobId, status: 'queued' }) })
       } else if (url.pathname.endsWith('/reports/status')) body = { ok: true,
-        status: complete ? 'completed' : 'running', ...(complete ? { report } : {}) }
+        status: starts === 3 ? 'failed' : complete ? 'completed' : 'running',
+        ...(complete && starts !== 3 ? { report } : {}) }
       else if (url.pathname.endsWith('/reports/history')) body = { ok: true,
         jobs: [{ job_id: jobId, service_id: 'natal', status: 'completed', created_at: 1794931200 }] }
       else if (url.pathname.endsWith('/trends/catalog')) body = { ok: true, categories: [] }
@@ -96,6 +99,11 @@ try {
   await panel.getByRole('button', { name: 'Открыть', exact: true }).click()
   await finished.getByText('Последний раздел сохранён полностью.').waitFor()
   assert.equal(starts, 2, 'History never generates again')
+  await consent.check()
+  await create.click()
+  await panel.getByRole('button', { name: 'Повторить отчёт', exact: true }).waitFor()
+  assert.equal(await progress.count(), 0, 'Old failed job never pretends to be running')
+  assert.equal(starts, 3, 'Existing failed ID is not a new generation')
   assert.deepEqual(errors, [])
   console.log('ASTRO_REPORT_MOBILE_E2E_OK consent=yes provider_copy=absent 503_recovery=yes animation=yes all_sections=yes history=yes')
 } finally {

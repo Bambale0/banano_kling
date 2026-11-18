@@ -240,7 +240,8 @@ class AstroReportJobs:
                 WHERE job_id=? AND owner_id=? AND status='failed'
                     AND expires_at > ?
                     AND error_code IN (
-                        'temporary_provider_failure', 'internal_retry', 'lease_exhausted'
+                        'temporary_provider_failure', 'internal_retry', 'lease_exhausted',
+                        'section_validation_failed', 'invalid_report_content'
                     )
                     AND NOT EXISTS (
                         SELECT 1 FROM astro_report_manual_retry

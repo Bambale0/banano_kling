@@ -167,6 +167,7 @@ def test_invalid_unverified_degree_requests_rewrite_without_weakening_fact_gate(
     report = compose(store=checkpoint, provider=provider)
     assert report['status'] == 'completed'
     assert provider.calls[1]['validation_feedback']['reason'] == 'unsupported_claim'
+    assert 'градус' in provider.calls[1]['validation_feedback']['instruction']
     assert all('12°' not in text for text in checkpoint.saved.values())
 
 
