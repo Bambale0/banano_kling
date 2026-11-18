@@ -5,18 +5,18 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#10131b">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="NEUROMIX — нейросети для создания фото и видео, работа с референсами и AI-трендами. Откройте творческую студию прямо в браузере.">
+  <meta name="description" content="NEUROMIX: фото и видео по твоей идее, референсы и AI-тренды в одной веб-студии. Создавай в браузере, без установки приложений.">
   <meta name="robots" content="index,follow,max-image-preview:large">
   <link rel="canonical" href="https://neuromixbot.com/">
   <link rel="icon" type="image/svg+xml" href="/icon.svg">
   <meta property="og:type" content="website">
   <meta property="og:locale" content="ru_RU">
   <meta property="og:site_name" content="NEUROMIX">
-  <meta property="og:title" content="NEUROMIX — твоя творческая AI-студия">
-  <meta property="og:description" content="Изображения, видео, референсы и тренды. Открывайте студию в браузере без установки.">
+  <meta property="og:title" content="NEUROMIX — превращай идеи в фото и видео">
+  <meta property="og:description" content="Фото, видео, референсы и тренды в одной студии. Открой NEUROMIX в браузере.">
   <meta property="og:url" content="https://neuromixbot.com/">
   <meta name="twitter:card" content="summary">
-  <title>NEUROMIX — AI-студия для фото и видео</title>
+  <title>NEUROMIX — создавай AI-фото и видео прямо в браузере</title>
   <script>
     // Preserve older Telegram root deep links and launch parameters verbatim.
     (function () {
@@ -192,6 +192,92 @@
       html{scroll-behavior:auto}
       *,*::before,*::after{transition:none!important;animation:none!important}
     }
+
+    /* Editorial marketing sections use the exact Mini App palette; no external assets. */
+    .section-story,.section-benefits,.section-how,.section-proof,.section-terms,.section-faq{padding:90px 0;border-bottom:1px solid var(--hairline)}
+    .section-context{margin:0 0 20px;font-size:13px;font-weight:650;color:var(--primary)}
+    .story-grid,.proof-grid,.terms-grid,.faq-grid{display:grid;grid-template-columns:minmax(0,.92fr) minmax(0,1.08fr);gap:clamp(30px,7vw,105px)}
+    .story-lead h2,.section-heading h2,.proof-lead h2,.terms-grid h2,.faq-grid h2{font-size:clamp(34px,4vw,55px);letter-spacing:-.056em;line-height:1.09;margin:0 0 21px;font-weight:720}
+    .story-lead p:not(.section-context),.section-heading p:not(.section-context),.proof-lead>p:not(.section-context),.terms-copy p,.faq-intro{font-size:14px;color:#acb1bc;line-height:1.75;max-width:475px}
+    .subtle-link{display:inline-flex;align-items:center;gap:12px;margin-top:21px;font-size:13px;font-weight:740;color:var(--primary);border-bottom:1px solid rgba(230,185,96,.4);padding:0 0 7px;transition:border-color .2s var(--ease)}
+    .subtle-link:hover{border-color:var(--primary)}
+    .story-rows{border-top:1px solid var(--hairline)}
+    .story-row{display:grid;grid-template-columns:41px 1fr;gap:13px;border-bottom:1px solid var(--hairline);padding:19px 0}
+    .story-row>span{font-size:12px;color:var(--primary);padding-top:3px}
+    .story-row h3{font-size:16px;font-weight:680;letter-spacing:-.024em;margin:0 0 6px}
+    .story-row p{font-size:13px;color:#a7abb6;line-height:1.58;margin:0}
+    .section-heading{max-width:730px;margin-bottom:37px}
+    .benefits-grid{display:grid;grid-template-columns:1.15fr .85fr;grid-template-rows:repeat(2,225px);gap:16px}
+    .benefit{border:1px solid var(--hairline);border-radius:19px;padding:25px;position:relative;overflow:hidden;background:#181d26;display:flex;flex-direction:column;justify-content:space-between;isolation:isolate}
+    .benefit-primary{grid-row:1/3;background:radial-gradient(circle at 78% 38%,rgba(96,126,129,.14),transparent 44%),#181d26}
+    .benefit-primary h3{font-size:clamp(24px,2.7vw,35px);max-width:380px}
+    .benefit-video{background:radial-gradient(circle at 95% 20%,rgba(225,167,85,.10),transparent 50%),#171d28}
+    .benefit-trends{background:radial-gradient(circle at 85% 65%,rgba(74,154,167,.10),transparent 50%),#171c25}
+    .benefit-tag{color:var(--primary);font-size:12px;font-weight:700}
+    .benefit h3{letter-spacing:-.03em;font-size:22px;line-height:1.17;margin:0 0 8px}
+    .benefit p{font-size:13px;line-height:1.59;color:#b1b7c0;margin:0;max-width:390px}
+    .benefit-visual{position:relative;flex:1;min-height:135px}
+    .visual-frame{position:absolute;border:1px solid rgba(220,197,150,.33);border-radius:88px 88px 13px 13px;transform:rotate(-12deg)}
+    .visual-frame-one{width:150px;height:157px;top:4%;left:35%;background:linear-gradient(155deg,#a0c9c2 0%,#325c68 36%,#ac845b 62%,#132f3f)}
+    .visual-frame-two{width:118px;height:135px;top:18%;left:59%;background:linear-gradient(155deg,#233953,#cc9c67 45%,#172737 50%)}
+    .visual-orb{position:absolute;top:19%;left:62%;width:65px;height:65px;border-radius:50%;background:#f0c884;box-shadow:0 0 35px #cf9e6570}
+    .benefit-glyph{position:absolute;right:25px;top:27px;font-size:35px;font-weight:300;color:rgba(239,203,135,.65)}
+    .section-tail{margin-top:28px}
+    .section-how{background:rgba(255,255,255,.017)}
+    .steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;list-style:none;padding:0;margin:0;border-top:1px solid rgba(220,189,124,.35)}
+    .steps li{position:relative;padding:27px 21px 0 0;margin-right:16px}
+    .steps li:not(:last-child)::after{content:"";position:absolute;right:0;top:-2px;width:6px;height:6px;border-radius:50%;background:var(--primary)}
+    .step-number{display:block;color:var(--primary);font-size:12px;margin-bottom:28px}
+    .steps h3{font-size:18px;letter-spacing:-.025em;margin:0 0 8px}
+    .steps p{font-size:13px;color:#a9aeba;line-height:1.6;margin:0}
+    .section-proof{background:radial-gradient(ellipse at 65% 55%,rgba(200,145,80,.06),transparent 56%)}
+    .proof-sheet{display:grid;border:1px solid rgba(228,190,115,.24);border-radius:19px;background:#1b202a;overflow:hidden}
+    .proof-sheet>div{padding:18px 24px;border-bottom:1px solid var(--hairline);display:grid;grid-template-columns:90px 1fr auto;align-items:center;gap:14px}
+    .proof-sheet strong{font-size:15px}
+    .proof-index{font-size:12px;color:var(--primary)}
+    .proof-sheet small{font-size:11px;color:#9ca4af;text-align:right}
+    .proof-sheet>p{margin:0;padding:15px 24px;font-size:11px;line-height:1.6;color:#8993a0}
+    .terms-grid{align-items:start}
+    .terms-copy p:first-child{margin-top:0}
+    .section-faq{padding-bottom:94px}
+    .faq-items{border-top:1px solid var(--hairline)}
+    .faq-items details{border-bottom:1px solid var(--hairline);padding:19px 0}
+    .faq-items summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:18px;font-size:15px;font-weight:680;line-height:1.4}
+    .faq-items summary::-webkit-details-marker{display:none}
+    .faq-items summary::after{content:"+";font-weight:450;font-size:22px;color:var(--primary);flex:none}
+    .faq-items details[open] summary::after{content:"−"}
+    .faq-items details p{color:#aeb5c0;line-height:1.7;margin:12px 36px 0 0;font-size:13px}
+    .faq-items summary:focus-visible{outline:2px solid var(--primary);outline-offset:6px}
+    .intro h1{font-size:clamp(48px,5.55vw,78px)}
+    @media (max-width:760px) {
+      .section-story,.section-benefits,.section-how,.section-proof,.section-terms,.section-faq{padding:58px 0}
+      .story-grid,.proof-grid,.terms-grid,.faq-grid{grid-template-columns:1fr;gap:29px}
+      .story-lead h2,.section-heading h2,.proof-lead h2,.terms-grid h2,.faq-grid h2{font-size:clamp(30px,7.9vw,42px)}
+      .story-row{grid-template-columns:33px 1fr;padding:16px 0}
+      .story-row h3{font-size:15px}
+      .benefits-grid{grid-template-columns:1fr;grid-template-rows:285px 208px 208px;gap:12px}
+      .benefit-primary{grid-row:auto}
+      .benefit{padding:21px}
+      .benefit-primary h3{font-size:25px}
+      .benefit-visual{min-height:55px}
+      .visual-frame-one{width:85px;height:80px;left:46%;top:-14%}
+      .visual-frame-two{width:68px;height:78px;left:65%;top:0}
+      .visual-orb{width:37px;height:37px;top:3%;left:68%}
+      .steps{grid-template-columns:1fr;gap:0;border-top:0;border-left:1px solid rgba(220,189,124,.35);margin-left:4px}
+      .steps li{margin:0 0 0 21px;padding:0 0 24px;min-height:88px}
+      .steps li::before{content:"";position:absolute;left:-26px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--primary)}
+      .steps li:not(:last-child)::after{display:none}
+      .step-number{margin-bottom:5px;font-size:11px}
+      .steps h3{font-size:17px}
+      .proof-sheet>div{grid-template-columns:75px 1fr;gap:4px 9px;padding:15px}
+      .proof-sheet small{grid-column:2;text-align:left}
+      .proof-sheet>p{padding:14px 15px}
+      .intro h1{font-size:clamp(39px,9.2vw,57px)}
+    }
+    @media (max-width:380px) {
+      .intro h1{font-size:clamp(36px,10vw,43px)}
+      .benefits-grid{grid-template-rows:280px 220px 220px}
+    }
   </style>
 </head>
 <body>
@@ -205,8 +291,9 @@
         <span class="brand-text"><strong class="brand-name">NEUROMIX</strong><span class="brand-caption">Creative AI Studio</span></span>
       </a>
       <nav class="mast-links" aria-label="Основная навигация">
-        <a href="#possibilities">Инструменты</a>
-        <a href="#login">Как войти</a>
+        <a href="#benefits">Возможности</a>
+        <a href="#how">Как работает</a>
+        <a href="#faq">Вопросы</a>
       </nav>
       <a class="nav-enter" href="/mini-app/">В студию
         <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -217,18 +304,18 @@
     <section class="hero" aria-labelledby="hero-title">
       <div class="container hero-grid">
         <div class="intro">
-          <span class="eyebrow">Создавай без границ</span>
-          <h1 id="hero-title">Идея —<span>уже начало.</span></h1>
-          <p>Создавай изображения, оживляй видео и пробуй новые тренды. Все инструменты NEUROMIX — в одной студии прямо в браузере.</p>
+          <span class="eyebrow">Твоя идея. Твои инструменты.</span>
+          <h1 id="hero-title">Превращай идеи <span>в фото и видео.</span></h1>
+          <p>Создавай изображения, работай с референсами, пробуй видеогенерацию и повторяй тренды. В одной AI-студии — прямо в браузере.</p>
           <div class="hero-cta">
             <a class="btn-primary" href="/mini-app/">Открыть AI-студию
               <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M3 10h14m-6-6 6 6-6 6" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-            <a class="btn-text" href="#login">Варианты входа <span aria-hidden="true">↓</span></a>
+            <a class="btn-text" href="#possibilities">Посмотреть возможности <span aria-hidden="true">↓</span></a>
           </div>
           <div class="hero-hint">
             <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="m3 10 5 5L17 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Без установки · Работает на телефоне и компьютере
+            Без установки. На телефоне и компьютере.
           </div>
         </div>
         <div class="index" aria-label="Авторская иллюстрация возможностей фото и видео в NEUROMIX">
@@ -284,7 +371,7 @@
     </section>
     <section class="strip" id="possibilities" aria-label="Возможности студии">
       <div class="container strip-grid">
-        <span class="strip-lead">Инструменты<br>для твоих идей</span>
+        <span class="strip-lead">От идеи<br>до результата</span>
         <span class="strip-item">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/><circle cx="8" cy="9" r="1.7" fill="currentColor"/><path d="m5 17 5-5 3 3 3-4 3 4" stroke="currentColor" stroke-width="1.5"/></svg>AI-фото
         </span>
@@ -296,15 +383,84 @@
         </span>
       </div>
     </section>
+
+    <section class="section-story" id="problems" aria-labelledby="problems-title">
+      <div class="container story-grid">
+        <div class="story-lead">
+          <p class="section-context">Когда хочется создавать</p>
+          <h2 id="problems-title">Идей много.<br>Лишних шагов — тоже.</h2>
+          <p>От первого промпта до повтора понравившегося формата. Убери лишние переключения и сосредоточься на результате.</p>
+          <a class="subtle-link" href="#benefits">Что можно сделать <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="story-rows">
+          <article class="story-row"><span aria-hidden="true">01</span><div><h3>Для фото одно приложение, для видео — другое?</h3><p>Фото, видео и тренды собраны в одной студии.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">02</span><div><h3>Есть пример, но трудно описать его словами?</h3><p>Добавляй референсы в режимах, которые их поддерживают.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">03</span><div><h3>Хочется повторить формат, а не собирать всё заново?</h3><p>В трендах есть сценарии, от которых можно оттолкнуться.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">04</span><div><h3>Нужно найти прошлый результат?</h3><p>Возвращайся к работам и статусам задач в приложении.</p></div></article>
+        </div>
+      </div>
+    </section>
+    <section class="section-benefits" id="benefits" aria-labelledby="benefits-title">
+      <div class="container">
+        <div class="section-heading"><p class="section-context">Выбирай свой сценарий</p><h2 id="benefits-title">Меньше рутины.<br>Больше места для идеи.</h2><p>NEUROMIX помогает перейти от замысла к конкретной задаче — для контента, видео или эксперимента.</p></div>
+        <div class="benefits-grid">
+          <article class="benefit benefit-primary"><span class="benefit-tag">Фото</span><div class="benefit-visual" aria-hidden="true"><span class="visual-frame visual-frame-one"></span><span class="visual-frame visual-frame-two"></span><span class="visual-orb"></span></div><div><h3>Преврати описание в изображение</h3><p>Собирай идеи для публикаций, пробуй стили и уточняй результат референсами.</p></div></article>
+          <article class="benefit benefit-video"><span class="benefit-tag">Видео</span><div><h3>Дай идее движение</h3><p>Выбирай видеорежим, настраивай сцену и добавляй доступные референсы.</p></div><span class="benefit-glyph" aria-hidden="true">▶</span></article>
+          <article class="benefit benefit-trends"><span class="benefit-tag">Тренды</span><div><h3>Не начинай каждый раз с нуля</h3><p>Пробуй готовые сценарии, повторяй форматы и возвращайся к своим работам.</p></div><span class="benefit-glyph" aria-hidden="true">↗</span></article>
+        </div>
+        <a class="subtle-link section-tail" href="/mini-app/">Открыть инструменты <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+    <section class="section-how" id="how" aria-labelledby="how-title">
+      <div class="container">
+        <div class="section-heading"><p class="section-context">Четыре шага</p><h2 id="how-title">От замысла к готовой работе.</h2><p>Можно начать с текста, а можно добавить изображение-пример.</p></div>
+        <ol class="steps">
+          <li><span class="step-number">01</span><h3>Открой студию</h3><p>Войди в браузере через Telegram.</p></li>
+          <li><span class="step-number">02</span><h3>Выбери задачу</h3><p>Фото, видео или подходящий тренд.</p></li>
+          <li><span class="step-number">03</span><h3>Настрой генерацию</h3><p>Опиши идею, выбери параметры и добавь референс, если он поддерживается.</p></li>
+          <li><span class="step-number">04</span><h3>Забери результат</h3><p>Следи за статусом и возвращайся к своим задачам в истории.</p></li>
+        </ol>
+        <a class="subtle-link section-tail" href="/mini-app/">Начать создавать <span aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+    <section class="section-proof" id="examples" aria-labelledby="examples-title">
+      <div class="container proof-grid">
+        <div class="proof-lead"><p class="section-context">Вместо обещаний</p><h2 id="examples-title">Работающая студия, а не картинка будущего.</h2><p>Фото, видео, тренды, лента и история задач уже находятся внутри NEUROMIX. Можешь открыть интерфейс и посмотреть сам.</p><a class="subtle-link" href="/mini-app/">Заглянуть в студию <span aria-hidden="true">↗</span></a></div>
+        <div class="proof-sheet" aria-label="Реальные разделы приложения NEUROMIX">
+          <div><span class="proof-index">Форматы</span><strong>Фото и видео</strong><small>Генерация и настройки</small></div>
+          <div><span class="proof-index">Повтор</span><strong>Тренды</strong><small>Готовые сценарии</small></div>
+          <div><span class="proof-index">Возврат</span><strong>История задач</strong><small>Статусы и результаты</small></div>
+          <p>Здесь показаны реальные разделы продукта, а не выдуманные отзывы или результаты пользователей.</p>
+        </div>
+      </div>
+    </section>
+    <section class="section-terms" id="pricing" aria-labelledby="pricing-title">
+      <div class="container terms-grid">
+        <div><p class="section-context">Условия</p><h2 id="pricing-title">Сначала выбери задачу. Стоимость — в студии.</h2></div>
+        <div class="terms-copy"><p>У разных моделей и режимов отличаются параметры и стоимость генерации. Актуальные пакеты пополнения, баланс и способы оплаты находятся в приложении.</p><p>Мы не дублируем суммы здесь, чтобы устаревшая цена не повлияла на твой выбор.</p><a class="subtle-link" href="/mini-app/">Посмотреть условия в студии <span aria-hidden="true">↗</span></a></div>
+      </div>
+    </section>
+    <section class="section-faq" id="faq" aria-labelledby="faq-title">
+      <div class="container faq-grid">
+        <div><p class="section-context">Без мелкого шрифта</p><h2 id="faq-title">Коротко о главном.</h2><p class="faq-intro">Ответы перед первым запуском.</p></div>
+        <div class="faq-items">
+          <details><summary>Нужно устанавливать приложение?</summary><p>Нет. NEUROMIX работает в браузере — на телефоне и компьютере.</p></details>
+          <details><summary>Можно войти без Telegram?</summary><p>Сейчас веб-версия использует вход через Telegram. Почта, Google и Яндекс ID пока не подключены.</p></details>
+          <details><summary>Нужен опыт работы с нейросетями?</summary><p>Можно начать с простого описания или готового тренда. Выбери раздел и следуй подсказкам интерфейса.</p></details>
+          <details><summary>Могу использовать свои фото и видео?</summary><p>Да, в тех моделях и сценариях, где предусмотрены референсы. Доступные форматы указаны в настройках генерации.</p></details>
+          <details><summary>Где посмотреть стоимость и готовые работы?</summary><p>Актуальные условия, пополнение и история задач находятся в приложении. Параметры зависят от выбранного режима.</p></details>
+        </div>
+      </div>
+    </section>
     <section class="access-section" id="login" aria-labelledby="login-title">
       <div class="container access-layout">
         <div class="access-lead">
-          <span class="overline">Твоя студия всегда рядом</span>
-          <h2 id="login-title">Зайди и<br><em>продолжай создавать.</em></h2>
-          <p>Веб-студия уже работает: авторизуйся через Telegram, чтобы использовать свои инструменты NEUROMIX. Всё открывается в браузере — ничего устанавливать не нужно.</p>
+          <span class="overline">Одна идея — один шаг до студии</span>
+          <h2 id="login-title">Есть идея? <em>Начни с неё.</em></h2>
+          <p>Открой NEUROMIX в браузере и выбери нужный инструмент. Сейчас вход в веб-студию работает через Telegram; почту, Google и Яндекс ID подключим отдельно.</p>
         </div>
         <div class="auth-box">
-          <div class="auth-head"><strong>Вход в NEUROMIX</strong><span>01 / ACCESS</span></div>
+          <div class="auth-head"><strong>Вход в NEUROMIX</strong><span>Веб-студия</span></div>
           <a class="telegram-entry" href="/mini-app/" aria-label="Продолжить с Telegram в NEUROMIX">
             <span class="telegram-icon">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.7 4.3c.4-.2.8.2.7.7l-3.2 14.9c-.1.6-.7.8-1.1.5l-4.7-3.5-2.3 2.2c-.3.3-.8.1-.8-.3v-4.2l8.7-7.8-10.7 6.7-4.3-1.3c-.6-.2-.6-1 0-1.2L20.7 4.3Z"/></svg>
