@@ -30,8 +30,10 @@ apply_mirror() {
     "${root}"/etc/apt/sources.list.d/*.list; do
     [[ -f $file ]] || continue
     "${sudo_cmd[@]}" sed -i -E \
-      -e "s@https?://(azure\.)?archive\.ubuntu\.com/ubuntu@${mirror}@g" \
+      -e "s@https?://([a-z0-9-]+\.)*archive\.ubuntu\.com/ubuntu@${mirror}@g" \
       -e "s@https?://security\.ubuntu\.com/ubuntu@${mirror}@g" \
+      -e "s@https?://ubuntu\.osuosl\.org/ubuntu@${mirror}@g" \
+      -e "s@https?://mirrors\.ocf\.berkeley\.edu/ubuntu@${mirror}@g" \
       -e "s@https?://mirrors\.edge\.kernel\.org/ubuntu@${mirror}@g" \
       -e "s@https?://mirror\.hetzner\.com/ubuntu/packages@${mirror}@g" \
       "$file"

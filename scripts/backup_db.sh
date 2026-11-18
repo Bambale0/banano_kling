@@ -66,7 +66,9 @@ send_document() {
     local caption="$5"
     local response_file="$BACKUP_DIR/.telegram-response-${chat_id}.json"
 
-    if curl -fsS --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 600 \
+    # Preserve Telegram's JSON error body on HTTP 400. Plain -f discards it,
+    # leaving operators with curl (22) but no actionable error description.
+    if curl --fail-with-body -sS --retry 3 --retry-delay 5 --connect-timeout 20 --max-time 600 \
         -X POST "https://api.telegram.org/bot${bot_token}/sendDocument" \
         -F "chat_id=${chat_id}" \
         -F "document=@${file_path};filename=${file_name}" \

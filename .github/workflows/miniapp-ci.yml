@@ -73,6 +73,7 @@ jobs:
           components/__tests__/astro-admin-access.test.tsx
           components/__tests__/vk-motion-optional.test.tsx
           components/tabs/astro-tab.test.tsx
+          components/tabs/astro-report-panel.test.tsx
           components/__tests__/shared-account-link-preview.test.tsx
           components/__tests__/shared-account-preview.test.tsx
           components/__tests__/vk-chat-delivery.test.tsx

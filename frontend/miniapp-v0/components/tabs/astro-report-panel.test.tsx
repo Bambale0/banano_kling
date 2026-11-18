@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { useRef } from 'react'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AstroReportPanel, buildAstroReportInput } from './astro-report-panel'
 
 jest.mock('../../lib/api', () => ({ getInitData: () => 'synthetic-telegram-signed' }))
@@ -162,6 +162,61 @@ describe('Astro long-report Mini App integration', () => {
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
   })
 
+  it('re-enables an intentional start after inputs change during a pending request', async () => {
+    const identifier = '9'.repeat(32)
+    let resolveStart!: (response: unknown) => void
+    const pendingStart = new Promise((resolve) => { resolveStart = resolve })
+    const mock = jest.fn().mockImplementation((url: string) => url.endsWith('/start')
+      ? pendingStart
+      : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    const { rerender } = render(<MountedReport revision={0} />)
+    const start = screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(start)
+    expect(start).toBeDisabled()
+
+    rerender(<MountedReport revision={1} />)
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(start).toBeEnabled()
+
+    await act(async () => {
+      resolveStart({ ok: true, status: 202,
+        json: async () => ({ ok: true, job_id: identifier }) })
+      await pendingStart
+    })
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(screen.queryByText(/Ваш разбор готовится/)).not.toBeInTheDocument()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1)
+  })
+
+  it('re-enables history after inputs change during a pending history request', async () => {
+    let resolveHistory!: (response: unknown) => void
+    const pendingHistory = new Promise((resolve) => { resolveHistory = resolve })
+    const mock = jest.fn().mockImplementation((url: string) => url.endsWith('/history')
+      ? pendingHistory
+      : Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true }) }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    const { rerender } = render(<MountedReport revision={0} />)
+    const history = screen.getByRole('button', { name: 'Мои предыдущие отчёты' })
+    fireEvent.click(history)
+    expect(history).toBeDisabled()
+
+    rerender(<MountedReport revision={1} />)
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(history).toBeEnabled()
+
+    await act(async () => {
+      resolveHistory({ ok: true, status: 200,
+        json: async () => ({ ok: true, jobs: [] }) })
+      await pendingHistory
+    })
+    expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
+    expect(screen.queryByText('Ранее созданных отчётов пока нет.')).not.toBeInTheDocument()
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/history'))).toHaveLength(1)
+  })
+
   it('restarts a terminally failed owned report only after fresh consent', async () => {
     const identifier = 'd'.repeat(32)
     const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
@@ -190,13 +245,142 @@ describe('Astro long-report Mini App integration', () => {
     expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(0)
   })
 
+  it('can retry report creation after a temporary 503 without navigating away', async () => {
+    const identifier = 'e'.repeat(32)
+    let startCalls = 0
+    const mock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/start')) {
+        startCalls += 1
+        return Promise.resolve(startCalls === 1
+          ? { ok: false, status: 503 }
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        ok: true, status: 'completed', report: {
+          schema_version: 'astro.report.v1', service_id: 'natal', word_count: 100,
+          sections: [{ id: 'intro', title: 'Восстановленный разбор', text: 'Сервер снова доступен.' }],
+          disclaimer: 'Тестовая интерпретация.',
+        },
+      }) })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+    await waitFor(() => expect(screen.getByText(/Сейчас не удаётся создать разбор/)).toBeInTheDocument())
+    // A previously unavailable server can be enabled without remounting the Mini App.
+    const retry = screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })
+    expect(retry).toBeEnabled()
+    fireEvent.click(retry)
+    expect(await screen.findByLabelText('Готовый полный ИИ-разбор')).toHaveTextContent('Сервер снова доступен.')
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(2)
+  })
+
+  it('does not hide report creation when report history temporarily returns 503', async () => {
+    const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByText(/Отчёты временно недоступны/)).toBeInTheDocument())
+    // Reading history is optional; a transient error must not lock report creation.
+    expect(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' })).toBeInTheDocument()
+  })
+
+  it('can explicitly retry a failed report after a temporary 503', async () => {
+    const identifier = 'f'.repeat(32)
+    let retryCalls = 0
+    const mock = jest.fn().mockImplementation((url: string) => {
+      if (url.endsWith('/history')) return Promise.resolve({
+        ok: true, status: 200, json: async () => ({ ok: true, jobs: [
+          { job_id: identifier, service_id: 'natal', status: 'failed',
+            attempts: 2, created_at: 1794931200 },
+        ] }),
+      })
+      if (url.endsWith('/retry')) {
+        retryCalls += 1
+        return Promise.resolve(retryCalls === 1
+          ? { ok: false, status: 503 }
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({
+        ok: true, status: 'failed', error_code: 'temporary_provider_failure',
+      }) })
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('button', { name: 'Мои предыдущие отчёты' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Открыть' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть' }))
+    const retry = await screen.findByRole('button', { name: 'Повторить отчёт' })
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(retry)
+    await waitFor(() => expect(screen.getByText(/Подготовка отчётов временно недоступна/)).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Повторить отчёт' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить отчёт' }))
+    await waitFor(() => expect(retryCalls).toBe(2))
+  })
+
+  it('shows live animated processing while server confirms a running Astro report', async () => {
+    const identifier = 'e'.repeat(32)
+    const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
+      ok: true, status: url.endsWith('/start') ? 202 : 200,
+      json: async () => url.endsWith('/start')
+        ? { ok: true, job_id: identifier, status: 'queued' }
+        : { ok: true, job_id: identifier, status: 'running' },
+    }))
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    render(<MountedReport />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+    const progress = await screen.findByTestId('astro-live-processing')
+    expect(progress).toHaveTextContent('Можно закрыть приложение')
+    await waitFor(() => expect(progress).toHaveTextContent('Готовим ваш персональный разбор'))
+    expect(progress.querySelector('[aria-hidden="true"]')).not.toBeNull()
+    expect(progress).not.toHaveTextContent('%')  // No invented progress percentage.
+    expect(mock.mock.calls.filter(([url]) => url.endsWith('/start'))).toHaveLength(1)
+  })
+
   it('keeps paid generation disabled when server has no stable secret configuration', async () => {
     const mock = jest.fn().mockResolvedValue({ ok: false, status: 503 })
     Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
     render(<MountedReport />)
     fireEvent.click(screen.getByRole('checkbox'))
     fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
-    await waitFor(() => expect(screen.getByText(/ещё не включены на сервере/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/Сейчас не удаётся создать разбор/)).toBeInTheDocument())
     expect(screen.queryByLabelText('Готовый полный ИИ-разбор')).not.toBeInTheDocument()
+  })
+
+  it.each([401, 403, 404])('stops running progress and polling after terminal status %s', async (status) => {
+    jest.useFakeTimers()
+    try {
+      let polls = 0
+      const mock = jest.fn().mockImplementation((url: string) => {
+        if (url.endsWith('/start')) return Promise.resolve({ ok: true, status: 202,
+          json: async () => ({ ok: true, job_id: 'b'.repeat(32) }) })
+        polls++
+        return Promise.resolve(polls === 1
+          ? { ok: true, status: 200, json: async () => ({ ok: true, status: 'running' }) }
+          : { ok: false, status })
+      })
+      Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+      render(<MountedReport />)
+      fireEvent.click(screen.getByRole('checkbox'))
+      fireEvent.click(screen.getByRole('button', { name: 'Создать полный ИИ-разбор' }))
+      await waitFor(() => expect(screen.getByTestId('astro-live-processing'))
+        .toHaveTextContent('Готовим ваш персональный разбор'))
+      await act(async () => { await jest.advanceTimersByTimeAsync(6000) })
+      expect(screen.queryByTestId('astro-live-processing')).not.toBeInTheDocument()
+      expect(screen.getByText(status === 404
+        ? 'Отчёт не найден или срок его хранения истёк.'
+        : 'Доступ к отчёту отозван. Откройте приложение заново.')).toBeInTheDocument()
+      if (status !== 404) {
+        expect(screen.queryByRole('button', { name: 'Создать полный ИИ-разбор' })).not.toBeInTheDocument()
+      }
+      const stopped = polls
+      await act(async () => { await jest.advanceTimersByTimeAsync(12000) })
+      expect(polls).toBe(stopped)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

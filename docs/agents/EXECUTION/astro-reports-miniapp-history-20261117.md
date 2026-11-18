@@ -15,7 +15,7 @@ and all protected CI checks are green; never bypass branch protection.
    participants, and select the requested calendar period. For lunar
    calendar, a separate optional city picker updates the IANA timezone.
 3. Under the astronomical form, they explicitly opt in to send the calculated
-   astronomical facts to KIE and store an encrypted result. The checkbox
+   astronomical facts for interpretation and store an encrypted result. The checkbox
    defaults unchecked; third-party data requires explicit consent.
 4. A separate action posts only canonical IDs, date/time, period and signed
    Telegram initData to `/mini-app/api/astro/reports/start`; untrusted client
@@ -92,3 +92,20 @@ The protected #588 PostgreSQL schema fix has merged into `tanyapi`;
 the worktree remains stacked on #583 until both #582 and #583 merge.
 Do not enable `ASTRO_REPORTS_ENABLED` without operator-managed Fernet
 secrets and KIE budget approval.
+
+## 2026-11-17 follow-up — PR #599
+
+- User requested removing technical/provider/model details from the Astro UI. Consent now describes processing for the personal report and temporary storage; compatibility still explicitly requires consent from both people. Consent remains unchecked and the server-side authorization/payload contract is unchanged.
+- Removed provider/model names, server configuration, queue implementation, and task wording from report descriptions, loading/error/success states and privacy copy. Keep useful user actions, owner privacy, storage consent and factual no-debit wording. Existing spinner and reduced-motion CSS remain; no fabricated completion percentage.
+- Existing 503 recovery/start/history/retry and running-animation tests updated to the new user-facing wording. This PR remains independent of PDF outbox #600 and section-quality retries.
+- Acceptance: all Astro UI tests, TypeScript, focused ESLint, locked production build, browser flow and protected CI; then verify exact `tanyapi` deployed revision and frontend asset content. Do not bypass audit gates.
+
+- Copy revision validation: 42/42 Astro frontend tests passed; TypeScript and focused ESLint passed. Final changed Astro tab/panel subset: 34/34 passed. Updated old copy assertion in the existing natal integration test. Removed stale coming-soon descriptions from natal/compatibility cards. Production build/browser and protected CI remain release requirements.
+- Linux final QA at 955eb319: 42/42 tests, TypeScript, focused ESLint and production static build passed. Real mobile Chromium synthetic browser journey passed: unchecked consent/no automatic generation, no provider/model/queue/server copy, 503 manual recovery without reload, animated running state, complete final section and owner history reopen without new generation. Added this journey to the protected CI browser suite and the report-panel regression to Mini App CI. No live user data, provider calls or payments in the fixture.
+
+- Readiness review fix: terminal status 401/403/404 now clears active processing state, and authorization rejection disables report actions. Three real running-to-terminal regressions fail on prior 955eb319 (confirmed in isolated Linux QA) and pass with the fix; no polling continues afterward. Final local Astro UI suite: 45/45, TypeScript and focused ESLint passed. Publish UI only alongside/after PDF #600 so its Telegram-delivery promise is truthful.
+
+- Mobile visual follow-up: removed remaining IANA label suffixes and shortened city-selection, birth-input and solar-location hints into plain language. Detailed calculated astrological results and required licensed geodata attribution are preserved. The final tab/panel subset passes 37 tests. A combined Linux candidate with dependency #603 also passed clean installation, security gate, full frontend suite, types/lint/build and the mobile report journey; final protected checks must run after syncing the actual production target.
+- Final copy sweep removed the last user-facing fallback that named an API. It now says only that the calculation is temporarily unavailable and confirms that data was not sent and the balance was not charged. Internal route names, implementation comments and required attribution are not shown as product copy.
+- Final independent review found two stale loading flags when birth inputs changed during an in-flight start/retry or history request. Two deferred-request regressions reproduced RED: fresh consent could not re-enable creation, and history stayed disabled. Form invalidation now aborts the history request and clears both loading flags while the request-epoch fence still ignores late 202/503/history responses. Both regressions are GREEN; no automatic generation or retry was added.
+- Protected browser CI then exposed one stale assertion for the former technical natal-success sentence. The rendered facts, houses and report flow already passed; the assertion now requires the current plain success copy (`Натальная карта готова. Оплата не требуется.`). This corrects the acceptance test to the shipped wording without weakening any calculated-result checks.

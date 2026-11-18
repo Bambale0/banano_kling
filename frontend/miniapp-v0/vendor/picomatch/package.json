@@ -1,0 +1,11 @@
+{
+  "name": "@neuromix/picomatch-hardened",
+  "version": "4.0.7+neuromix.1",
+  "private": true,
+  "description": "Private project fork of picomatch 4.0.7 with conservative repeated-extglob hardening",
+  "license": "MIT",
+  "main": "index.js",
+  "files": ["index.js", "posix.js", "lib", "LICENSE", "PROVENANCE.json", "SECURITY.md"],
+  "sideEffects": false,
+  "engines": { "node": ">=12" }
+}

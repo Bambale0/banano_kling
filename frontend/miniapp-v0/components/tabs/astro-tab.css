@@ -375,6 +375,14 @@
 .astro-ai-history li { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 9px 0; font-size: 12px; }
 .astro-ai-history li button { margin-left: auto; border: 1px solid #c49155; border-radius: 8px; background: transparent; color: #ffd68a; padding: 6px 11px; }
 .astro-ai-state { font-size: 13px; color: #ffd68a; }
+.astro-ai-progress { display: flex; align-items: center; gap: 14px; margin: 14px 0; padding: 16px; border: 1px solid rgba(248,197,108,.48); border-radius: 14px; background: linear-gradient(120deg,rgba(248,197,108,.09),rgba(77,54,103,.16),rgba(248,197,108,.09)); background-size: 220% 100%; animation: astro-progress-shimmer 2.6s ease-in-out infinite; color: #f8d497; }
+.astro-ai-progress-spinner { display: block; flex: 0 0 28px; width: 28px; height: 28px; border: 3px solid rgba(248,197,108,.22); border-top-color: #f8c56c; border-radius: 50%; animation: astro-progress-spin 1.1s linear infinite; }
+.astro-ai-progress > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.astro-ai-progress strong { font-size: 14px; font-weight: 650; }
+.astro-ai-progress div > span { font-size: 12px; color: #d7c7b0; }
+@keyframes astro-progress-spin { to { transform: rotate(360deg); } }
+@keyframes astro-progress-shimmer { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+@media (prefers-reduced-motion: reduce) { .astro-ai-progress, .astro-ai-progress-spinner { animation: none; } }
 .astro-ai-report { margin-top: 18px; }
 .astro-ai-report > h2 { color: #ffd68a; font-size: 1.05rem; }
 .astro-ai-report-section { padding: 12px 0; border-top: 1px solid rgba(226,162,67,.3); }
