@@ -151,8 +151,8 @@ interface AstroService {
 }
 
 export const ASTRO_SERVICES: readonly AstroService[] = [
-  { id: 'natal', title: 'Натальная карта', description: 'Фактические положения планет и аспекты. Развёрнутый разбор готовится' },
-  { id: 'compatibility', title: 'Совместимость', description: 'Реальные межкартные аспекты двух людей. Развёрнутый разбор отношений готовится' },
+  { id: 'natal', title: 'Натальная карта', description: 'Личные особенности, сильные стороны и жизненные темы' },
+  { id: 'compatibility', title: 'Совместимость', description: 'Динамика отношений, точки притяжения и возможные сложности' },
   { id: 'karma', title: 'Кармический разбор', description: 'Лунные узлы, жизненные темы и символические уроки' },
   { id: 'year', title: 'Годовой прогноз', description: 'Астрологические транзиты и тенденции на выбранный год' },
   { id: 'month', title: 'Гороскоп на месяц', description: 'Персональные астрологические тенденции месяца' },
@@ -379,7 +379,7 @@ function PlacePicker({
     setCity(place.name + ', ' + countryLabel(place.country_code))
     setOptions([])
     setBusy(false)
-    setMessage('Выбран часовой пояс: ' + place.timezone)
+    setMessage('Город выбран.')
     onSelect?.(place)
   }
 
@@ -487,7 +487,7 @@ function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }
           <label className="astro-field">
             <MapPin className="astro-field-icon" aria-hidden="true" />
             <span className="astro-field-body">
-              <span className="astro-field-label">Часовой пояс при рождении (IANA)</span>
+              <span className="astro-field-label">Часовой пояс при рождении</span>
               <input aria-label={prefix + ': часовой пояс'} name={prefix + '-timezone'}
                 placeholder="Выберите город из списка" autoComplete="off"
                 readOnly value={birthZone} />
@@ -557,7 +557,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setLunarReport(data.result as LunarReport)
         setMessage('Лунный календарь рассчитан. Оплата не требуется.')
       } catch {
-        setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+        setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
       } finally {
         setCalculating(false)
       }
@@ -617,7 +617,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setMessage('Две натальные карты, межкартные аспекты и доступные дома рассчитаны. Оплата не требуется.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
@@ -664,11 +664,11 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         }
         setFullNatalReport(data.result as FullNatalReport)
         setMessage(data.result.accuracy.houses_available
-          ? 'Натальная карта, ASC/MC и дома рассчитаны. Оплата не требуется.'
-          : 'Планеты рассчитаны. Для ASC и домов необходимо точное время рождения.')
+          ? 'Натальная карта готова. Оплата не требуется.'
+          : 'Карта готова. Для некоторых деталей нужно точное время рождения.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
@@ -678,7 +678,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
     if (['karma', 'year', 'month', 'solar'].includes(service.id)) {
       const placeId = Number(form.get('person-place-id'))
       if (!Number.isInteger(placeId) || placeId <= 0) {
-        setMessage('Выберите город рождения из списка, чтобы определить координаты и часовой пояс.')
+        setMessage('Выберите город рождения из списка.')
         return
       }
       const returnPlaceId = Number(form.get('solar-place-id'))
@@ -730,14 +730,14 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         setMessage('Астрономические показатели рассчитаны. Оплата не требуется.')
       } catch {
         if (epoch === calculationEpoch.current) {
-          setMessage('Не удалось связаться с сервером. Попробуйте ещё раз.')
+          setMessage('Не удалось установить соединение. Попробуйте ещё раз.')
         }
       } finally {
         if (epoch === calculationEpoch.current) setCalculating(false)
       }
       return
     }
-    setMessage('Интерфейс подготовлен. Для расчёта требуется подключение астрономического API — данные не отправлены, баланс не списан.')
+    setMessage('Этот расчёт пока недоступен. Данные не отправлены, баланс не списан.')
   }
 
   return (
@@ -778,7 +778,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
           <label className="astro-field">
             <MapPin className="astro-field-icon" aria-hidden="true" />
             <span className="astro-field-body">
-              <span className="astro-field-label">Часовой пояс (IANA)</span>
+              <span className="astro-field-label">Часовой пояс</span>
               <input aria-label="Часовой пояс" name="timezone" value={timezoneName}
                 readOnly={lunarCitySelected}
                 onChange={(event) => setTimezoneName(event.target.value)} placeholder="Europe/Moscow" />
@@ -835,7 +835,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                 <label className="astro-field">
                   <MapPin className="astro-field-icon" aria-hidden="true" />
                   <span className="astro-field-body">
-                    <span className="astro-field-label">Часовой пояс определён по месту рождения (IANA)</span>
+                    <span className="astro-field-label">Часовой пояс определён по месту рождения</span>
                     <input aria-label="Часовой пояс рождения" name="birth-timezone"
                       value={birthTimezone} readOnly placeholder="Выберите город из списка" />
                   </span>
@@ -852,9 +852,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                   </span>
                 </label>
                 <p className="astro-form-message">
-                  Выберите город из подсказок: координаты и исторический часовой пояс определятся автоматически.
-                  ASC, MC и 12 домов рассчитываются по Плацидусу при известном времени рождения.
-                  Если время неизвестно, неопределённые показатели не показываются.
+                  Выберите город из списка. Если время рождения неизвестно,
+                  некоторые подробности карты будут недоступны.
                 </p>
               </>
             )}
@@ -869,8 +868,8 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
                   setMessage('')
                 }} />
                 <p className="astro-form-message">
-                  Место соляра выбирается отдельно от места рождения: координаты и часовой пояс
-                  возвращения Солнца будут взяты из справочника.
+                  Укажите город, в котором будете в день рождения.
+                  Он может отличаться от города рождения.
                 </p>
               </div>
             )}
@@ -1059,8 +1058,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
               ))}
             </ul>
           ) : <p>Подходящие аспекты не обнаружены.</p>}
-          <p>Планеты, дома и аспекты рассчитаны математически. Подробная GPT-6-интерпретация
-            создаётся прямо здесь, в разделе Astro, по кнопке «Создать полный ИИ-разбор».</p>
+          <p>Чтобы узнать больше о своей карте, нажмите «Создать полный ИИ-разбор».</p>
         </div>
       )}
       {natalReport && (

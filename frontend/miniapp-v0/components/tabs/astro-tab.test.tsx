@@ -145,7 +145,7 @@ describe('Astro concept screens', () => {
       fireEvent.click(screen.getByRole('button', { name: /Построить натальную карту/ }))
       await waitFor(() => expect(screen.getByRole('heading', { name: 'Дома Плацидуса' })).toBeInTheDocument())
       expect(screen.getByRole('img', { name: 'Рассчитанное натальное колесо' })).toBeInTheDocument()
-      expect(screen.getByText(/создаётся прямо здесь, в разделе Astro/)).toBeInTheDocument()
+      expect(screen.getByText(/Чтобы узнать больше о своей карте/)).toBeInTheDocument()
       expect(screen.queryByText(/формируется отдельным сервисом/)).not.toBeInTheDocument()
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('ASC')
       expect(screen.getByLabelText('Полная рассчитанная натальная карта')).toHaveTextContent('MC')
