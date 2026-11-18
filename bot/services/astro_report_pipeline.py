@@ -366,7 +366,12 @@ def _repair_unsupported_sentences(raw: str, spec: SectionSpec, facts: dict) -> s
     if (not repaired or _word_count(repaired) < spec.min_words
         or removed_words * 5 > _word_count(original)):
         return None
-    _validate_written_facts(repaired, facts)
+    try:
+        _validate_written_facts(repaired, facts)
+    except AstroSectionValidationError:
+        # Joining individually valid fragments can restore a line-wrapped
+        # unsupported claim. Reject this repair and retain the normal rewrite.
+        return None
     return repaired
 
 
