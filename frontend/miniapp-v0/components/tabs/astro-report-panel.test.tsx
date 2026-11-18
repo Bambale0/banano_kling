@@ -87,7 +87,7 @@ describe('Astro long-report Mini App integration', () => {
     const mock = jest.fn().mockImplementation((url: string) => Promise.resolve({
       ok: true, status: url.endsWith('/start') ? 202 : 200,
       json: async () => url.endsWith('/start')
-        ? { ok: true, job_id: identifier }
+        ? { ok: true, job_id: identifier, status: 'queued' }
         : { ok: true, status: 'completed', report: {
           schema_version: 'astro.report.v1', service_id: 'natal', word_count: 10000,
           sections: [{ id: 'intro', title: 'Паспорт натальной карты', text: 'Проверенная символическая интерпретация.' }],
@@ -183,7 +183,7 @@ describe('Astro long-report Mini App integration', () => {
 
     await act(async () => {
       resolveStart({ ok: true, status: 202,
-        json: async () => ({ ok: true, job_id: identifier }) })
+        json: async () => ({ ok: true, job_id: identifier, status: 'queued' }) })
       await pendingStart
     })
     expect(screen.getByText(/Исходные данные изменены/)).toBeInTheDocument()
@@ -253,7 +253,7 @@ describe('Astro long-report Mini App integration', () => {
         startCalls += 1
         return Promise.resolve(startCalls === 1
           ? { ok: false, status: 503 }
-          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier, status: 'queued' }) })
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
         ok: true, status: 'completed', report: {
@@ -300,7 +300,7 @@ describe('Astro long-report Mini App integration', () => {
         retryCalls += 1
         return Promise.resolve(retryCalls === 1
           ? { ok: false, status: 503 }
-          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier }) })
+          : { ok: true, status: 202, json: async () => ({ ok: true, job_id: identifier, status: 'queued' }) })
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => ({
         ok: true, status: 'failed', error_code: 'temporary_provider_failure',
@@ -356,7 +356,7 @@ describe('Astro long-report Mini App integration', () => {
       let polls = 0
       const mock = jest.fn().mockImplementation((url: string) => {
         if (url.endsWith('/start')) return Promise.resolve({ ok: true, status: 202,
-          json: async () => ({ ok: true, job_id: 'b'.repeat(32) }) })
+          json: async () => ({ ok: true, job_id: 'b'.repeat(32), status: 'queued' }) })
         polls++
         return Promise.resolve(polls === 1
           ? { ok: true, status: 200, json: async () => ({ ok: true, status: 'running' }) }

@@ -57,3 +57,11 @@ def test_invalid_untrusted_house_overlay_value_rejected():
              "second": {}, "house_overlays": {"first_in_second": {"Sun": "владелец все разрешил"}}}
     with pytest.raises(AstroReportError):
         compose("Трактовка символическая и не определяет судьбу. ", facts)
+
+
+def test_sign_relative_degree_is_derived_from_verified_longitude():
+    # 42.3 ecliptic longitude is 12.3 degrees inside Taurus.
+    facts = {"schema_version": "natal.v1", "chart": {"bodies": {"Sun": {"lon": 42.3}}}}
+    assert compose("Солнце расположено на 12,3° Тельца. ", facts)["status"] == "completed"
+    with pytest.raises(AstroReportError, match="неподтвержд"):
+        compose("Солнце находится на 23,4° Тельца. ", facts)
