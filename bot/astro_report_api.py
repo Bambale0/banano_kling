@@ -154,6 +154,7 @@ async def astro_report_start(request: web.Request) -> web.Response:
         logger.info("astro_report_start_resolved request_id=%s job_id=%s owner_id=%s "
                     "kind=%s status=%s", request_id, job_id, owner_id, kind, status)
         return _response({"ok": True, "job_id": job_id, "status": status,
+                          "retry_available": current["retry_available"],
                           "request_id": request_id},
                          202 if status in ("queued", "running") else 200)
     except web.HTTPException:

@@ -115,7 +115,7 @@ def test_crashed_worker_never_exceeds_max_lease_attempts(tmp_path):
 
 
 
-def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_once_only(tmp_path):
+def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_bounded(tmp_path):
     async def check():
         jobs = store(tmp_path)
         plan = load_report_plan("natal")
@@ -139,7 +139,41 @@ def test_explicit_failed_report_retry_is_owner_scoped_atomic_and_once_only(tmp_p
         assert claim is not None and claim.job_id == job_id and claim.attempt == 1
         assert await jobs.reschedule(job_id=job_id, worker_id="b", retry=False,
                                      error_code="temporary_provider_failure", now=109)
-        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=110)
+        assert await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=110)
+        claim_again = await jobs.claim(worker_id="c", now=111)
+        assert claim_again is not None and claim_again.job_id == job_id
+        assert await jobs.reschedule(job_id=job_id, worker_id="c", retry=False,
+                                     error_code="temporary_provider_failure", now=112)
+        assert not await jobs.retry_failed(owner_id=1, job_id=job_id, consent=True, now=113)
+    asyncio.run(check())
+
+
+def test_failed_legacy_report_can_use_one_additional_explicit_retry(tmp_path):
+    """A paid retry consumed before the fix must not trap the admin forever."""
+    async def check():
+        jobs = store(tmp_path)
+        job = await jobs.enqueue(owner_id=1, plan=load_report_plan("natal"),
+                                 facts=facts(), consent=True, now=100)
+        assert await jobs.claim(worker_id="first", now=101)
+        assert await jobs.reschedule(job_id=job, worker_id="first", retry=False,
+                                     error_code="temporary_provider_failure", now=102)
+        assert await jobs.retry_failed(owner_id=1, job_id=job, consent=True, now=103)
+        assert await jobs.claim(worker_id="legacy", now=104)
+        assert await jobs.reschedule(job_id=job, worker_id="legacy", retry=False,
+                                     error_code="temporary_provider_failure", now=105)
+        assert (await jobs.status(owner_id=1, job_id=job, now=106))["retry_available"] is True
+        assert not await jobs.retry_failed(owner_id=2, job_id=job, consent=True, now=106)
+        outcomes = await asyncio.gather(*[
+            jobs.retry_failed(owner_id=1, job_id=job, consent=True, now=107)
+            for _ in range(2)
+        ])
+        assert sorted(outcomes) == [False, True]
+        assert await jobs.claim(worker_id="recovery", now=108)
+        assert await jobs.reschedule(job_id=job, worker_id="recovery", retry=False,
+                                     error_code="temporary_provider_failure", now=109)
+        assert (await jobs.status(owner_id=1, job_id=job, now=110))["retry_available"] is False
+        assert not await jobs.retry_failed(owner_id=1, job_id=job, consent=True, now=110)
+
     asyncio.run(check())
 
 

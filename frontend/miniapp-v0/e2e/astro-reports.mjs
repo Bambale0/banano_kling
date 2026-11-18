@@ -51,11 +51,12 @@ try {
         if (starts === 1) return route.fulfill({ status: 503, contentType: 'application/json',
           body: JSON.stringify({ ok: false, error: 'temporarily_unavailable' }) })
         if (starts === 3) return route.fulfill({ status: 200, contentType: 'application/json',
-          body: JSON.stringify({ ok: true, job_id: jobId, status: 'failed' }) })
+          body: JSON.stringify({ ok: true, job_id: jobId, status: 'failed', retry_available: true }) })
         return route.fulfill({ status: 202, contentType: 'application/json',
           body: JSON.stringify({ ok: true, job_id: jobId, status: 'queued' }) })
       } else if (url.pathname.endsWith('/reports/status')) body = { ok: true,
         status: starts === 3 ? 'failed' : complete ? 'completed' : 'running',
+        retry_available: starts === 3,
         ...(complete && starts !== 3 ? { report } : {}) }
       else if (url.pathname.endsWith('/reports/history')) body = { ok: true,
         jobs: [{ job_id: jobId, service_id: 'natal', status: 'completed', created_at: 1794931200 }] }

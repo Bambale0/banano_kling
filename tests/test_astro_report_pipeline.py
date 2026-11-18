@@ -209,6 +209,27 @@ def test_invalid_rewrite_policy_fails_before_any_external_request(monkeypatch, p
     assert not provider.calls
 
 
+def test_invalid_degree_rewrite_identifies_exact_disallowed_values_without_logging_text(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1")
+
+    class InventedDegreesOnce(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            request = json.loads(user_instruction)
+            self.calls.append(request)
+            if len(self.calls) == 1:
+                value = "Солнце на 299° — неподтверждённое положение. " * 12
+            else:
+                if request["section_id"] == "one":
+                    assert request["validation_feedback"]["unsupported_degrees"] == [299.0]
+                value = "Солнце на 12,5° в знаке, подтверждено расчётами. " * 12
+            return json.dumps({"section_id": request["section_id"], "text": value})
+
+    provider = InventedDegreesOnce()
+    result = compose(provider=provider, given_facts=facts())
+    assert result["status"] == "completed"
+    assert "299°" not in result["sections"][0]["text"]
+
+
 def test_corrupt_existing_checkpoint_fails_closed():
     store = Checkpoints()
     fp = report_fingerprint(owner_id=19, plan=plan(), facts=facts(), secret="fake-secret-for-test-only")

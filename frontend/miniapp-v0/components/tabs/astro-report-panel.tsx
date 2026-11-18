@@ -14,6 +14,7 @@ interface HistoryItem {
   attempts: number
   created_at: number
   error_code?: string | null
+  retry_available?: boolean
 }
 
 interface LongReport {
@@ -101,6 +102,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [jobId, setJobId] = useState('')
   const [jobStatus, setJobStatus] = useState('')
+  const [retryAvailable, setRetryAvailable] = useState(false)
   const [pollEpoch, setPollEpoch] = useState(0)
   const [report, setReport] = useState<LongReport | null>(null)
   const [message, setMessage] = useState('')
@@ -121,6 +123,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     setReport(null)
     setJobId('')
     setJobStatus('')
+    setRetryAvailable(false)
     setMessage('Исходные данные изменены. Предыдущий разбор можно открыть через историю.')
   }, [formRevision])
 
@@ -131,6 +134,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
     setReport(null)
     setJobId('')
     setJobStatus('')
+    setRetryAvailable(false)
     setMessage('')
     setAvailability('ready')
     setHistoryLoading(false)
@@ -215,6 +219,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
             setMessage('Не удалось получить статус отчёта. Повторим запрос.')
           } else {
             setJobStatus(data.status)
+            setRetryAvailable(data.retry_available === true)
             if (data.status === 'completed' && data.report?.schema_version === 'astro.report.v1'
               && data.report.service_id === service && Array.isArray(data.report.sections)) {
               setReport(data.report as LongReport)
@@ -222,7 +227,9 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
               finished = true
             } else if (data.status === 'failed') {
               setReport(null)
-              setMessage('Не удалось завершить разбор. Баланс не списан.')
+              setMessage(data.retry_available === true
+                ? 'Не удалось завершить разбор. Можно повторить попытку. Баланс не списан.'
+                : 'Не удалось завершить разбор. Лимит безопасных повторов исчерпан. Обратитесь в поддержку.')
               finished = true
             }
           }
@@ -290,6 +297,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       }
       setJobId(data.job_id)
       setJobStatus(data.status)
+      setRetryAvailable(data.retry_available === true)
       setReport(null)
       setConsent(false)
       setHistory((previous) => previous.some((item) => item.job_id === data.job_id)
@@ -299,7 +307,9 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
              attempts: 0, created_at: Math.floor(Date.now() / 1000) }, ...previous])
       setPollEpoch((value) => value + 1)
       setMessage(data.status === 'failed'
-        ? 'Предыдущий разбор завершился ошибкой. Для повтора подтвердите согласие и нажмите «Повторить отчёт».'
+        ? (data.retry_available === true
+          ? 'Предыдущий разбор завершился ошибкой. Для повтора подтвердите согласие и нажмите «Повторить отчёт».'
+          : 'Предыдущий разбор завершился ошибкой. Лимит повторов исчерпан; обратитесь в поддержку.')
         : data.status === 'completed'
           ? 'Разбор уже готов — открываем сохранённый отчёт.'
           : 'Ваш разбор готовится. Можно закрыть приложение и вернуться к нему через историю.')
@@ -334,7 +344,8 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         return
       }
       if (response.status === 409) {
-        setMessage('Сейчас нельзя повторить разбор. Попробуйте позже или обратитесь в поддержку.')
+        setRetryAvailable(false)
+        setMessage('Повтор не принят: попытки исчерпаны или отчёт уже обрабатывается. Проверьте историю или обратитесь в поддержку.')
         return
       }
       const data = await response.json()
@@ -344,6 +355,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
         return
       }
       setJobStatus('queued')
+      setRetryAvailable(false)
       setReport(null)
       setConsent(false)
       setHistory((previous) => previous.map((item) =>
@@ -398,6 +410,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
                   setReport(null)
                   setJobId(item.job_id)
                   setJobStatus(item.status)
+                  setRetryAvailable(item.retry_available === true)
                   setPollEpoch((value) => value + 1)
                 }}>Открыть</button>
               </li>
@@ -405,7 +418,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
           </ul>
         </div>
       )}
-      {jobId && jobStatus === 'failed' && availability === 'ready' && (
+      {jobId && jobStatus === 'failed' && retryAvailable && availability === 'ready' && (
         <button type="button" className="astro-ai-action"
           disabled={busy || !consent} onClick={() => { void retryReport() }}>
           {busy ? 'Возобновляем отчёт…' : 'Повторить отчёт'}
