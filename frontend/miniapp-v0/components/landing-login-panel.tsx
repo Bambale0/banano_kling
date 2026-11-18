@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowRight, Check, ExternalLink, LoaderCircle, LockKeyhole, Send, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, ArrowRight, ExternalLink, LoaderCircle, LockKeyhole, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
