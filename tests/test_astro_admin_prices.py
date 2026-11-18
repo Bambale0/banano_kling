@@ -95,7 +95,7 @@ async def test_price_update_rolls_back_if_reload_fails(tmp_path, monkeypatch):
     assert path.read_bytes() == old_bytes
 
 
-@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), True, "100", 0.001])
+@pytest.mark.parametrize("bad", [0, -1, float("nan"), float("inf"), 1e100, True, "100", 0.001])
 def test_invalid_price_rejected_without_mutating_config(bad):
     payload = {"service_prices": {"astro": {"natal": bad}}}
     with pytest.raises(ValueError):
