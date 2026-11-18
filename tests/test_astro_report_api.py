@@ -11,7 +11,7 @@ from bot.config import config
 from bot.services.astro_report_jobs import AstroReportJobs
 
 
-def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_path):
+def test_report_start_requires_consent_and_creates_fresh_jobs_per_click(tmp_path):
     async def run():
         async def synthetic_actor(_app, init_data):
             if init_data == "fixture-actor-one":
@@ -37,7 +37,8 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
             async with TestClient(TestServer(app)) as client:
                 path = "/mini-app/api/astro/reports/start"
                 body = {"init_data": "fixture-actor-one", "service_id": "natal",
-                        "input": {"place_id": 498817, "date": "29.02.2000"}, "consent": True}
+                        "input": {"place_id": 498817, "date": "29.02.2000"}, "consent": True,
+                        "request_id": "a" * 32}
                 missing_consent = await client.post(path, json={**body, "consent": False})
                 assert missing_consent.status == 400
                 first = await client.post(path, json=body)
@@ -45,6 +46,10 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                 job_id = (await first.json())["job_id"]
                 second = await client.post(path, json=body)
                 assert second.status == 202 and (await second.json())["job_id"] == job_id
+                fresh = await client.post(path, json={**body, "request_id": "b" * 32})
+                assert fresh.status == 202 and (await fresh.json())["job_id"] != job_id
+                invalid_key = await client.post(path, json={**body, "request_id": "broken"})
+                assert invalid_key.status == 400
                 status = "/mini-app/api/astro/reports/status"
                 own = await client.post(status, json={"init_data": "fixture-actor-one", "job_id": job_id})
                 assert own.status == 200 and (await own.json())["status"] == "queued"
@@ -58,7 +63,7 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                 })
                 assert history.status == 200
                 items = (await history.json())["jobs"]
-                assert len(items) == 1 and items[0]["job_id"] == job_id
+                assert len(items) == 2 and any(item["job_id"] == job_id for item in items)
                 assert "facts" not in items[0] and "report" not in items[0]
                 other_history = await client.post(history_path, json={
                     "init_data": "fixture-actor-two", "service_id": "natal",
@@ -76,12 +81,16 @@ def test_report_start_requires_consent_and_deduplicates_by_verified_facts(tmp_pa
                     job_id=job_id, worker_id="admin-worker", retry=False,
                     error_code="temporary_provider_failure",
                 )
-                # A repeat start of the exact failed report must not lie about queued state.
+                # New click must never return the previous failed report.
+                new_request = await client.post(path, json={**body, "request_id": "c" * 32})
+                new_payload = await new_request.json()
+                assert new_request.status == 202
+                assert new_payload["job_id"] != job_id
+                assert new_payload["status"] == "queued"
+                # A transport replay of the ORIGINAL click stays idempotent.
                 replay = await client.post(path, json=body)
-                replay_body = await replay.json()
                 assert replay.status == 200
-                assert replay_body["job_id"] == job_id
-                assert replay_body["status"] == "failed"
+                assert (await replay.json())["job_id"] == job_id
                 retry_path = "/mini-app/api/astro/reports/retry"
                 no_consent = await client.post(retry_path, json={
                     "init_data": "fixture-actor-one", "job_id": job_id,
