@@ -44,7 +44,7 @@ def test_all_seven_astro_services_visible_in_admin_price_menu():
 
 @pytest.mark.asyncio
 async def test_admin_astro_editor_sets_state_without_charging(tmp_path, monkeypatch):
-    manager, path, _ = manager_fixture(tmp_path, monkeypatch)
+    _, path, _ = manager_fixture(tmp_path, monkeypatch)
     state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock())
     callback = SimpleNamespace(from_user=SimpleNamespace(id=1234),
                                data="admin_price_astro_natal",
@@ -59,7 +59,7 @@ async def test_admin_astro_editor_sets_state_without_charging(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_admin_price_message_persists_seven_service_tariff_and_preserves_others(tmp_path, monkeypatch):
-    manager, path, original = manager_fixture(tmp_path, monkeypatch)
+    manager, path, _ = manager_fixture(tmp_path, monkeypatch)
     state = SimpleNamespace(get_data=AsyncMock(return_value={
         "price_target": "astro", "price_key": "natal", "price_field": "cost",
         "current_price_value": None, "return_to": "admin_prices_astro",
@@ -110,7 +110,7 @@ def test_unknown_service_and_unset_price_are_not_billed_or_silently_defaulted():
 
 @pytest.mark.asyncio
 async def test_non_admin_cannot_edit_astro_price(tmp_path, monkeypatch):
-    manager, path, _ = manager_fixture(tmp_path, monkeypatch)
+    _, path, _ = manager_fixture(tmp_path, monkeypatch)
     state = SimpleNamespace(clear=AsyncMock(), set_state=AsyncMock(), update_data=AsyncMock())
     callback = SimpleNamespace(from_user=SimpleNamespace(id=987), data="admin_price_astro_natal",
                                message=SimpleNamespace(edit_text=AsyncMock()), answer=AsyncMock())
@@ -125,7 +125,7 @@ def test_signed_admin_tariff_publish_rejects_invalid_astro_prices(tmp_path, monk
     from bot import internal_admin_tariffs as tariffs
     from bot.internal_admin_user_commands import CommandValidationError
 
-    manager, path, initial = manager_fixture(tmp_path, monkeypatch)
+    manager, _, initial = manager_fixture(tmp_path, monkeypatch)
     tariffs._validate_tariff_config(initial)  # existing legacy file stays valid
     with_bad_astro = {
         **initial,
