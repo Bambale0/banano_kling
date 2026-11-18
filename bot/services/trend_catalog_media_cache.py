@@ -5,11 +5,13 @@ stored in the same public upload bucket as their immutable originals.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from urllib.parse import unquote, urlsplit
 
 from bot import db as db_backend
+from bot.services.media_storage import is_s3_enabled, presigned_upload_url
 
 logger = logging.getLogger(__name__)
 _ALLOWED_HOSTS = frozenset({
@@ -116,3 +118,38 @@ async def enrich_cards(cards: list[dict]) -> None:
         key = source_key(card.get("preview_url"))
         if key and key in by_key:
             card["preview_poster_url"] = by_key[key]
+
+    # The durable URL stays unchanged. For the gallery we also expose a
+    # short-lived direct S3 URL, avoiding an extra no-store 307 per thumbnail.
+    # The client falls back to the durable URL if the signer's TTL expires
+    # while a Mini App session is open. Never sign original photos/videos.
+    if not is_s3_enabled():
+        return
+    keys = list(dict.fromkeys(
+        key for card in cards
+        if (key := source_key(card.get("preview_poster_url")))
+        and key.startswith("/uploads/trend-previews/")
+        and key.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".avif"))
+    ))
+    if not keys:
+        return
+    signed = await asyncio.to_thread(_sign_public_poster_urls, keys)
+    for card in cards:
+        key = source_key(card.get("preview_poster_url"))
+        if key in signed:
+            card["preview_poster_fast_url"] = signed[key]
+
+
+
+def _sign_public_poster_urls(keys: list[str]) -> dict[str, str]:
+    """Only sign existing public catalog preview images, never original media.
+
+    No HEAD/GET or file materialization is needed; S3 presigning is local.
+    """
+    result: dict[str, str] = {}
+    for key in keys:
+        try:
+            result[key] = presigned_upload_url(key.removeprefix("/uploads/"), method="GET")
+        except Exception:  # noqa: BLE001 -- stable /uploads poster remains usable
+            logger.warning("Could not sign one public trend preview; stable URL retained")
+    return result
