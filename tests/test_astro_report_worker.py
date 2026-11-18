@@ -114,7 +114,7 @@ def test_invalid_section_does_not_open_provider_circuit(tmp_path):
             db_path=str(tmp_path / "astro.db"),
             fingerprint_secret="fixture-for-validation-guard",
             data_key=Fernet.generate_key(),
-            policy=AstroJobPolicy(max_attempts=2, circuit_failures=1,
+            policy=AstroJobPolicy(max_attempts=2, circuit_failures=2,
                                   retry_base_seconds=1, lease_seconds=20),
         )
         ident = await jobs.enqueue(owner_id=99, plan=load_report_plan("natal"),
@@ -124,7 +124,12 @@ def test_invalid_section_does_not_open_provider_circuit(tmp_path):
         worker = AstroReportWorker(jobs=jobs, provider=InvalidContent(),
                                    checkpoints=AstroReportSqlStore(db_path=jobs.db_path),
                                    is_admin=lambda owner: owner == 99)
+        # A previous provider transport failure must be cleared by a successful
+        # provider response, even if a later local text proof rejects its content.
+        await jobs.circuit_failure()
+        assert await jobs.circuit_allows()
         assert await worker.run_once()
         assert (await jobs.status(owner_id=99, job_id=ident))["error_code"] == "section_validation_failed"
-        assert await jobs.circuit_allows()  # KIE returned successfully.
+        await jobs.circuit_failure()
+        assert await jobs.circuit_allows()  # KIE had responded successfully.
     asyncio.run(check())

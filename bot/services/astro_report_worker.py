@@ -90,6 +90,10 @@ class AstroReportWorker:
                     raise PermissionError("Astro owner role revoked")
                 if not await self.jobs.heartbeat(job_id=job.job_id, worker_id=self.worker_id):
                     raise PermissionError("Astro job lease unavailable")
+                # Provider health is independent of the local content proof gate.
+                # A successful transport probe closes a stale circuit even if
+                # the generated section later fails deterministic validation.
+                await self.jobs.circuit_success()
                 return response
 
         try:
