@@ -555,5 +555,18 @@
       observer.observe(heroButton);
     })();
   </script>
+<script>
+  // Preserve a WEB referral on entry into login; direct TG launch is handled
+  // by the early head redirect above. Never drop attribution on landing CTA.
+  (function () {
+    const query = new URLSearchParams(window.location.search);
+    const ref = String(query.get('ref') || '').trim().toUpperCase();
+    const next = ref && /^[A-Z0-9_-]{1,60}$/.test(ref)
+      ? '/login?ref=' + encodeURIComponent(ref) : '/login';
+    for (const link of document.querySelectorAll('a[href="/mini-app/"]')) {
+      link.setAttribute('href', next);
+    }
+  })();
+</script>
 </body>
 </html>
