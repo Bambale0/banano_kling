@@ -53,12 +53,11 @@
   clip-path: polygon(0 15%, 8% 2%, 22% 7%, 68% 0, 100% 11%, 96% 82%, 74% 99%, 2% 92%);
   transform: rotate(-2deg);
 }
-.neuromix-login .login-illustration { padding-bottom: clamp(12rem, 29vw, 19rem); }
+.neuromix-login .login-illustration { padding-bottom: 0; }
 .neuromix-login .login-artwork {
-  position: absolute;
-  left: 5%;
-  right: 2%;
-  bottom: 0;
+  position: relative;
+  margin-top: 1.25rem;
+  width: 100%;
   height: clamp(13rem, 30vw, 21rem);
   background: url("/grunge-mobile-art-v1.webp") left center / contain no-repeat;
   filter: contrast(1.08);
@@ -71,17 +70,18 @@
 .neuromix-login .login-footer { position: relative; }
 @media (max-width: 1023px) {
   .neuromix-login .login-stage { max-width: 650px; }
-  .neuromix-login .login-illustration { padding-bottom: clamp(7rem, 25vw, 11rem); }
+  .neuromix-login .login-illustration { padding-bottom: 0; }
   .neuromix-login .login-headline { font-size: clamp(4.2rem, 13vw, 7.5rem); }
-  .neuromix-login .login-artwork { left: 18%; right: 1%; height: clamp(9rem, 26vw, 13rem); background-position: center; }
+  .neuromix-login .login-artwork { height: clamp(9rem, 26vw, 13rem); background-position: center; }
   .neuromix-login .login-card { max-width: none; margin-left: 0; }
 }
 @media (max-width: 480px) {
   .neuromix-login .login-header { padding-top: 14px; padding-bottom: 14px; }
-  .neuromix-login .login-headline { font-size: clamp(3.6rem, 19vw, 5.8rem); }
-  .neuromix-login .login-illustration { padding-bottom: 6.5rem; }
-  .neuromix-login .login-artwork { height: 9rem; left: 22%; right: 0; background-position: center; }
-  .neuromix-login .login-stage { gap: 1rem; }
+  .neuromix-login .login-headline { font-size: clamp(2.7rem, 13.8vw, 4rem); }
+  .neuromix-login .login-illustration { padding-bottom: 0; }
+  .neuromix-login .login-artwork { display: none; }
+  .neuromix-login .login-stage { gap: 1rem; padding-top: 1rem; }
+  .neuromix-login .login-illustration p { font-size: .875rem; margin-top: 1rem; line-height: 1.5; }
 }
 @media (prefers-reduced-motion: reduce) {
   .neuromix-login *, .neuromix-login *::before, .neuromix-login *::after {
