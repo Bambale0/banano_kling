@@ -90,6 +90,8 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("dock.classList.toggle('is-visible'", self.html)
         self.assertIn(".mobile-dock.is-visible", self.html)
         self.assertIn("pointer-events:none", self.html)
+        self.assertIn('aria-hidden="true" inert', self.html)
+        self.assertIn("dock.toggleAttribute('inert', !visible)", self.html)
 
     def test_mobile_and_accessibility_seams(self):
         self.assertIn("@media (max-width:760px)", self.html)
