@@ -12,7 +12,6 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot import internal_admin_api as base_api
-from bot.services.astro_pricing import validate_astro_service_prices
 from bot.internal_admin_user_commands import (
     CommandConflictError,
     CommandValidationError,
@@ -21,6 +20,7 @@ from bot.internal_admin_user_commands import (
     _reserve_command,
     internal_user_endpoint,
 )
+from bot.services.astro_pricing import validate_astro_service_prices
 from bot.services.preset_manager import preset_manager
 
 _TARIFF_KEYS = (
