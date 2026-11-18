@@ -5625,7 +5625,7 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         from bot.services.trend_poster_origin import serve_public_trend_poster
 
         app.router.add_get(
-            "/uploads/trend-previews/{poster_path:.*}",
+            r"/uploads/trend-previews/{poster_path:.*\.jpg}",
             serve_public_trend_poster,
             name="public-trend-poster",
         )
