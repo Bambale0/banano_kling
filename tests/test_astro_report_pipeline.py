@@ -502,8 +502,8 @@ def test_sentence_repair_splits_newline_without_deleting_verified_narrative(monk
             self.calls.append(req)
             body = (
                 "Вычисленная долгота допускает 12,5° внутри знака.\n"
-                "Солнце в 299° — это неподтверждённое утверждение\n"
-                "Разбор символических особенностей не требует выдуманных градусов. " * 8
+                + "Солнце в 299° — это неподтверждённое утверждение\n"
+                + "Разбор символических особенностей не требует выдуманных градусов. " * 12
             )
             return json.dumps({"section_id": req["section_id"], "text": body})
 
