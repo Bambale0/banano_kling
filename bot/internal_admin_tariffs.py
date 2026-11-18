@@ -12,6 +12,7 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot import internal_admin_api as base_api
+from bot.services.astro_pricing import validate_astro_service_prices
 from bot.internal_admin_user_commands import (
     CommandConflictError,
     CommandValidationError,
@@ -183,6 +184,14 @@ def _validate_tariff_config(config: dict[str, Any]) -> None:
             )
         except (TypeError, ValueError) as exc:
             raise CommandValidationError(str(exc)) from exc
+
+
+    # Astro prices are optional until user billing is enabled. Every published
+    # value must still be valid: no NaN, negative or invented service IDs.
+    try:
+        validate_astro_service_prices(config)
+    except ValueError as exc:
+        raise CommandValidationError(str(exc)) from exc
 
 
 def _merge_tariff_view(current: dict[str, Any], view: dict[str, Any]) -> dict[str, Any]:
