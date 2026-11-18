@@ -5619,6 +5619,13 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
 
     validate_media_storage_configuration()
     if is_s3_enabled():
+        # Public Trend thumbnails are tiny JPEGs. Keep browsers on our origin
+        # instead of redirecting to the private S3 host; registration must
+        # precede the generic /uploads catch-all redirect route.
+        from bot.services.trend_poster_origin import register_public_trend_poster_route
+
+        register_public_trend_poster_route(app)
+
         async def s3_upload_handler(request: web.Request) -> web.StreamResponse:
             relative = str(request.match_info.get("path") or "")
             try:
