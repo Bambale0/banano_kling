@@ -6,8 +6,10 @@ semantics after a process crash; use checkpointed sections to reduce repeats.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import re
 import time
 from contextlib import suppress
 from uuid import uuid4
@@ -70,22 +72,36 @@ class AstroReportWorker:
                 provider_call_count += 1
                 call_no = provider_call_count
                 call_started = time.monotonic()
-                # Correlate KIE requests with durable jobs, not sensitive birth facts.
-                logger.info("astro_provider_call_started job_id=%s service=%s attempt=%s call_no=%s",
-                            job.job_id, job.service_id, job.attempt, call_no)
+                # Extract only the trusted section identifier; never log prompts,
+                # user birth data, or response text.
+                section_id = "unknown"
+                try:
+                    section = json.loads(kwargs.get("user_instruction", "{}")).get("section_id")
+                    if isinstance(section, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,60}", section):
+                        section_id = section
+                except (TypeError, ValueError, AttributeError):
+                    pass
+                logger.info(
+                    "astro_provider_call_started job_id=%s service=%s attempt=%s "
+                    "call_no=%s section=%s",
+                    job.job_id, job.service_id, job.attempt, call_no, section_id,
+                )
                 try:
                     response = await self.provider.analyze_text(**kwargs)
                 except KieRetryableError:
-                    logger.warning("astro_provider_call_retryable job_id=%s service=%s call_no=%s",
-                                   job.job_id, job.service_id, call_no)
+                    logger.warning("astro_provider_call_retryable job_id=%s service=%s call_no=%s section=%s",
+                                   job.job_id, job.service_id, call_no, section_id)
                     raise
                 except KiePermanentError:
-                    logger.warning("astro_provider_call_permanent job_id=%s service=%s call_no=%s",
-                                   job.job_id, job.service_id, call_no)
+                    logger.warning("astro_provider_call_permanent job_id=%s service=%s call_no=%s section=%s",
+                                   job.job_id, job.service_id, call_no, section_id)
                     raise
-                logger.info("astro_provider_call_succeeded job_id=%s service=%s call_no=%s latency_ms=%d",
-                            job.job_id, job.service_id, call_no,
-                            round((time.monotonic() - call_started) * 1000))
+                logger.info(
+                    "astro_provider_call_succeeded job_id=%s service=%s call_no=%s "
+                    "section=%s latency_ms=%d",
+                    job.job_id, job.service_id, call_no, section_id,
+                    round((time.monotonic() - call_started) * 1000),
+                )
                 if not self.is_admin(job.owner_id):
                     raise PermissionError("Astro owner role revoked")
                 if not await self.jobs.heartbeat(job_id=job.job_id, worker_id=self.worker_id):

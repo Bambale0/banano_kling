@@ -329,3 +329,186 @@ def test_house_overlays_must_be_verified_house_numbers_not_model_instructions(un
     with pytest.raises(AstroReportError, match="наложени"):
         compose(given_facts=payload, provider=provider)
     assert not provider.calls
+
+
+def test_three_sections_run_concurrently_with_configured_cap(monkeypatch):
+    """A slow KIE call must not serialize independent sections of one report."""
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "3")
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "0")
+
+    class WaitingProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.peak = 0
+            self.release = asyncio.Event()
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            request = json.loads(user_instruction)
+            self.calls.append(request)
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            if self.active == 3:
+                self.release.set()
+            try:
+                await self.release.wait()
+                return json.dumps({"section_id": request["section_id"],
+                                   "text": "Проверенная осторожная интерпретация. " * 12})
+            finally:
+                self.active -= 1
+
+    async def check():
+        provider = WaitingProvider()
+        specs = tuple(SectionSpec(f"part_{n}", f"Раздел {n}", "Анализ", 5)
+                      for n in range(3))
+        result = await asyncio.wait_for(compose_report(
+            owner_id=19, plan=replace(plan(), sections=specs, min_total_words=15),
+            facts=facts(), secret="test-concurrency-hmac", store=Checkpoints(),
+            provider=provider,
+        ), timeout=2)
+        assert provider.peak == 3
+        assert len(provider.calls) == 3
+        assert [x["id"] for x in result["sections"]] == [x.id for x in specs]
+
+    asyncio.run(check())
+
+
+def test_parallel_failure_saves_successful_checkpoints_before_retry(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "3")
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "0")
+
+    class PartiallyFailingProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.fail_once = True
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            await asyncio.sleep(0)
+            if req["section_id"] == "part_2" and self.fail_once:
+                self.fail_once = False
+                raise TimeoutError("injected KIE failure")
+            return json.dumps({"section_id": req["section_id"],
+                               "text": "Проверенная осторожная интерпретация. " * 12})
+
+    async def check():
+        provider, checkpoint = PartiallyFailingProvider(), Checkpoints()
+        specs = tuple(SectionSpec(f"part_{n}", f"Раздел {n}", "Анализ", 5)
+                      for n in range(3))
+        config = replace(plan(), sections=specs, min_total_words=15)
+        kwargs = {"owner_id": 19, "plan": config, "facts": facts(),
+                  "secret": "test-concurrency-hmac", "store": checkpoint,
+                  "provider": provider}
+        with pytest.raises(TimeoutError, match="injected"):
+            await compose_report(**kwargs)
+        assert len(checkpoint.saved) == 2
+        result = await compose_report(**kwargs)
+        assert len(provider.calls) == 4
+        assert [x["id"] for x in result["sections"]] == [x.id for x in specs]
+        assert len(checkpoint.saved) == 3
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("limit", ["0", "5", "-1", "not-an-int"])
+def test_invalid_concurrency_limit_fails_before_paid_provider_call(monkeypatch, limit):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", limit)
+    provider = Provider()
+    with pytest.raises(ValueError, match="concurrency"):
+        compose(provider=provider)
+    assert not provider.calls
+
+
+def test_strips_only_unsupported_numeric_sentences_when_report_stays_complete(monkeypatch):
+    """Keep the proof gate: reject or remove unsupported claims, never save them."""
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1")
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1")
+
+    class AlmostCorrectProvider(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            return json.dumps({"section_id": req["section_id"], "text":
+                "Продуманный анализ символической динамики без точных чисел. " * 12
+                + "Солнце якобы находится на 299° в личной карте. "
+                + "Завершение интерпретации отражает общие тенденции."})
+
+    provider = AlmostCorrectProvider()
+    result = compose(provider=provider)
+    assert len(provider.calls) == 2  # one paid call per section; no rewrite calls
+    assert all("299°" not in row["text"] for row in result["sections"])
+    assert all("Продуманный анализ" in row["text"] for row in result["sections"])
+    assert all("Завершение интерпретации" in row["text"] for row in result["sections"])
+
+
+def test_sentence_repair_never_weakens_minimum_words_or_trust_boundary(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1")
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "0")
+
+    class OnlyInvalidSentence(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            return json.dumps({"section_id": req["section_id"],
+                               "text": "Солнце на 299° не подтверждается. " * 5})
+
+    provider = OnlyInvalidSentence()
+    with pytest.raises(AstroReportError):
+        compose(provider=provider)
+    assert len(provider.calls) == 1
+
+
+def test_bounded_concurrency_does_not_start_more_than_configured(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "3")
+
+    class MeasuringProvider(Provider):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.peak = 0
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return json.dumps({"section_id": req["section_id"],
+                               "text": "Осторожная символическая интерпретация. " * 12})
+
+    async def check():
+        provider = MeasuringProvider()
+        specs = tuple(SectionSpec(f"part_{n}", f"Раздел {n}", "Анализ", 5)
+                      for n in range(9))
+        result = await compose_report(
+            owner_id=19, plan=replace(plan(), sections=specs, min_total_words=45),
+            facts=facts(), secret="test-concurrency-hmac", store=Checkpoints(),
+            provider=provider,
+        )
+        assert len(provider.calls) == 9
+        assert provider.peak == 3
+        assert [s["id"] for s in result["sections"]] == [x.id for x in specs]
+    asyncio.run(check())
+
+
+def test_sentence_repair_splits_newline_without_deleting_verified_narrative(monkeypatch):
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "0")
+
+    class NewlineClaimProvider(Provider):
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            req = json.loads(user_instruction)
+            self.calls.append(req)
+            body = (
+                "Вычисленная долгота допускает 12,5° внутри знака.\n"
+                + "Солнце в 299° — это неподтверждённое утверждение\n"
+                + "Разбор символических особенностей не требует выдуманных градусов. " * 12
+            )
+            return json.dumps({"section_id": req["section_id"], "text": body})
+
+    provider = NewlineClaimProvider()
+    result = compose(provider=provider)
+    assert len(provider.calls) == 2
+    assert all("299°" not in row["text"] for row in result["sections"])
+    assert all("12,5°" in row["text"] for row in result["sections"])
