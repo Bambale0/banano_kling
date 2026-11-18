@@ -263,12 +263,18 @@ def _validate_written_facts(text: str, facts: dict) -> None:
     """
     values: list[float] = []
 
-    def visit(item):
+    def visit(item, *, field: str = ""):
         if type(item) in (float, int):
-            values.append(float(item))
+            actual = float(item)
+            values.append(actual)
+            # Ephemerides store absolute ecliptic longitude (0–360 degrees),
+            # while a natural-language chart uses degrees *inside the sign*.
+            # The sign-relative number is an exact derivation, not a new claim.
+            if field in ("lon", "longitude_deg") and 0 <= actual < 360:
+                values.append(actual % 30)
         elif isinstance(item, dict):
-            for value in item.values():
-                visit(value)
+            for key, value in item.items():
+                visit(value, field=key)
         elif isinstance(item, list):
             for value in item:
                 visit(value)
@@ -438,6 +444,18 @@ async def compose_report(
                         "reason": exc.reason,
                         "minimum_words": section.min_words,
                         "retry_number": attempt + 1,
+                        "instruction": (
+                            "Перепишите весь раздел. Любой указанный градус должен "
+                            "совпадать с проверенными астрономическими значениями "
+                            "(или градусом внутри знака, полученным из долготы mod 30). "
+                            "Любая дата YYYY-MM-DD должна присутствовать в фактах. "
+                            "Если подтверждения нет, уберите точное число или дату, "
+                            "но сохраните содержательность и минимальный объём. "
+                            "Не додумывайте значения."
+                        ) if exc.reason == "unsupported_claim" else (
+                            "Перепишите этот раздел по исходным фактам с соблюдением "
+                            "структуры JSON и минимальной длины."
+                        ),
                     }
             text = await store.save_if_absent(
                 owner_id=owner_id, fingerprint=fingerprint,

@@ -280,22 +280,29 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
       }
       const data = await response.json()
       if (epoch !== requestEpoch.current) return
-      if (response.status !== 202 || !data.ok || typeof data.job_id !== 'string'
-        || !/^[0-9a-f]{32}$/.test(data.job_id)) {
+      if (![200, 202].includes(response.status) || !data.ok
+        || !['queued', 'running', 'failed', 'completed'].includes(data.status)
+        || typeof data.job_id !== 'string' || !/^[0-9a-f]{32}$/.test(data.job_id)) {
         setMessage(data.error === 'storage_consent_required'
           ? 'Необходимо согласие на хранение данных.'
           : 'Не удалось начать разбор. Баланс не списан.')
         return
       }
       setJobId(data.job_id)
-      setJobStatus('queued')
+      setJobStatus(data.status)
       setReport(null)
       setConsent(false)
       setHistory((previous) => previous.some((item) => item.job_id === data.job_id)
-        ? previous : [{ job_id: data.job_id, service_id: service, status: 'queued',
-                        attempts: 0, created_at: Math.floor(Date.now() / 1000) }, ...previous])
+        ? previous.map((item) => item.job_id === data.job_id
+          ? { ...item, status: data.status } : item)
+        : [{ job_id: data.job_id, service_id: service, status: data.status,
+             attempts: 0, created_at: Math.floor(Date.now() / 1000) }, ...previous])
       setPollEpoch((value) => value + 1)
-      setMessage('Ваш разбор готовится. Можно закрыть приложение и вернуться к нему через историю.')
+      setMessage(data.status === 'failed'
+        ? 'Предыдущий разбор завершился ошибкой. Для повтора подтвердите согласие и нажмите «Повторить отчёт».'
+        : data.status === 'completed'
+          ? 'Разбор уже готов — открываем сохранённый отчёт.'
+          : 'Ваш разбор готовится. Можно закрыть приложение и вернуться к нему через историю.')
     } catch {
       if (epoch === requestEpoch.current) {
         setMessage('Связь прервалась. Попробуйте ещё раз или проверьте историю отчётов.')

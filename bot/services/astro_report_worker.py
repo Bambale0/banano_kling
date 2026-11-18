@@ -16,6 +16,7 @@ from bot.services.astro_kie_gpt6 import KiePermanentError, KieRetryableError
 from bot.services.astro_report_jobs import AstroReportJobs, ClaimedAstroJob
 from bot.services.astro_report_pipeline import (
     AstroReportError,
+    AstroSectionValidationError,
     compose_report,
     load_report_plan,
     report_fingerprint,
@@ -116,11 +117,23 @@ class AstroReportWorker:
                         "sections=%s latency_ms=%d", job.job_id, job.owner_id,
                         job.service_id, len(report["sections"]),
                         round((time.monotonic() - started) * 1000))
-        except (KieRetryableError, TimeoutError, AstroReportError):
+        except AstroSectionValidationError:
+            # KIE responded successfully: a rejected local section must not
+            # trip the provider-wide circuit breaker or stall other admins.
+            await self.jobs.reschedule(job_id=job.job_id, worker_id=self.worker_id,
+                                       retry=True, error_code="section_validation_failed", now=now)
+            logger.warning("astro_report_content_retry job_id=%s owner_id=%s service=%s attempt=%s",
+                           job.job_id, job.owner_id, job.service_id, job.attempt)
+        except (KieRetryableError, TimeoutError):
             await self.jobs.circuit_failure(now=now)
             await self.jobs.reschedule(job_id=job.job_id, worker_id=self.worker_id,
                                        retry=True, error_code="temporary_provider_failure", now=now)
             logger.warning("astro_report_retry job_id=%s owner_id=%s service=%s attempt=%s",
+                           job.job_id, job.owner_id, job.service_id, job.attempt)
+        except AstroReportError:
+            await self.jobs.reschedule(job_id=job.job_id, worker_id=self.worker_id,
+                                       retry=True, error_code="invalid_report_content", now=now)
+            logger.warning("astro_report_invalid_content job_id=%s owner_id=%s service=%s attempt=%s",
                            job.job_id, job.owner_id, job.service_id, job.attempt)
         except (KiePermanentError, ValueError, PermissionError):
             await self.jobs.reschedule(job_id=job.job_id, worker_id=self.worker_id,

@@ -100,3 +100,31 @@ def test_worker_loop_survives_temporary_queue_database_outage(monkeypatch):
         await asyncio.wait_for(worker.run_forever(stop), timeout=2)
         assert len(called) == 2
     asyncio.run(run())
+
+
+def test_invalid_section_does_not_open_provider_circuit(tmp_path):
+    class InvalidContent:
+        async def analyze_text(self, *, user_instruction, **kwargs):
+            section = json.loads(user_instruction)
+            return json.dumps({"section_id": section["section_id"],
+                               "text": "Неподтверждённая позиция 299°. " * (section["minimum_words"] + 10)})
+
+    async def check():
+        jobs = AstroReportJobs(
+            db_path=str(tmp_path / "astro.db"),
+            fingerprint_secret="fixture-for-validation-guard",
+            data_key=Fernet.generate_key(),
+            policy=AstroJobPolicy(max_attempts=2, circuit_failures=1,
+                                  retry_base_seconds=1, lease_seconds=20),
+        )
+        ident = await jobs.enqueue(owner_id=99, plan=load_report_plan("natal"),
+                                   facts={"schema_version": "natal.v1",
+                                          "chart": {"bodies": {"Sun": {"lon": 42.3}}}},
+                                   consent=True)
+        worker = AstroReportWorker(jobs=jobs, provider=InvalidContent(),
+                                   checkpoints=AstroReportSqlStore(db_path=jobs.db_path),
+                                   is_admin=lambda owner: owner == 99)
+        assert await worker.run_once()
+        assert (await jobs.status(owner_id=99, job_id=ident))["error_code"] == "section_validation_failed"
+        assert await jobs.circuit_allows()  # KIE returned successfully.
+    asyncio.run(check())
