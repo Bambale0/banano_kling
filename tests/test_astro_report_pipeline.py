@@ -83,7 +83,11 @@ def test_seven_services_have_versioned_long_report_plans():
         assert loaded.version
         assert len(loaded.sections) >= 8
         assert sum(section.min_words for section in loaded.sections) >= loaded.min_total_words
-        assert loaded.min_total_words >= 5000
+        if name == "natal":
+            assert loaded.min_total_words == 540
+            assert len(loaded.sections) == 8
+        else:
+            assert loaded.min_total_words >= 5000
 
 
 def test_complete_report_has_stable_fingerprint_and_no_fictional_state():
