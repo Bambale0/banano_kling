@@ -18,7 +18,7 @@
 - 61 focused + seven-service E2E / full report tests passed on this code.
 - Extended Astro + tariffs suite: 374 passed, 9 skipped, two pre-existing aiohttp warnings.
 - `ruff` and changed-line Ruff gate passed for city API, curated facts, tests.
-- Unit/regression for Wan audio sandbox: pinned verified FFmpeg/FFprobe wheel hashes, diagnostic synthetic OGG, and added `-filter_threads 1` to keep cgroup threads bounded without weakening existing RLIMIT_AS 512 MiB, CPU 12s, duration and file-size limits.
+- Unit/regression for Wan audio sandbox: SHA-256-pinned immutable ffmpeg-static b6.1.1 release assets (the bundled ffmpeg/ffprobe identify as 7.0.2-static), diagnostic synthetic OGG, and explicit `-filter_threads 1`; unchanged RLIMIT_AS 512 MiB, CPU 12s, duration and file-size limits. Portable FFmpeg 9.0.2 was reproduced to fail with `pthread_create(): Resource temporarily unavailable` on GitHub's 512 MiB sandbox and replaced by 7.0.2; successful isolated smoke was confirmed with the exact new binary pair on the production host.
 - CI GH issue reproduced: prior apt FFmpeg install exceeded 95s and 300s due to Ubuntu/Azure mirror delays; pinned FFmpeg 9 installed but GitHub runner failed with `pthread_create() failed: Resource temporarily unavailable` for audio filter threads. New bounded filter-graph option addresses this cause; after-run logs must verify it under GitHub.
 - Not a license to bypass required GitHub CI; protected branch auto-merge, backend/frontend exact-SHA deploy, and smoke required.
 
