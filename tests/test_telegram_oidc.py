@@ -125,3 +125,36 @@ async def test_browser_oidc_login_requires_matching_nonce_cookie(monkeypatch, si
     assert accepted.status == 200
     assert json.loads(accepted.text)["init_data"]
     assert accepted.cookies[browser_auth._OIDC_NONCE_COOKIE]["max-age"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replace_it(monkeypatch):
+    class Bot:
+        calls = 0
+
+        async def get_me(self):
+            from types import SimpleNamespace
+
+            self.calls += 1
+            return SimpleNamespace(username="ExampleBot")
+
+    class Request:
+        def __init__(self, bot, legacy=False):
+            self.app = {"bot": bot}
+            self.query = {"legacy": "1"} if legacy else {}
+
+    browser_auth._BOT_USERNAME_CACHE.update(value="", until=0.0)
+    bot = Bot()
+    first = await browser_auth.browser_telegram_auth_config(Request(bot))
+    assert first.status == 200
+    assert first.headers["Cache-Control"] == "no-store"
+    cookie = first.cookies[browser_auth._OIDC_NONCE_COOKIE]
+    assert cookie["secure"] and cookie["httponly"]
+    assert cookie["samesite"] == "Lax"
+    assert len(json.loads(first.text)["oidc_nonce"]) >= 24
+
+    fallback = await browser_auth.browser_telegram_auth_config(Request(bot, legacy=True))
+    assert fallback.status == 200
+    assert browser_auth._OIDC_NONCE_COOKIE not in fallback.cookies
+    assert json.loads(fallback.text)["oidc_nonce"] == ""
+    assert bot.calls == 1, "Bot identity should be cached when config is no-store"
