@@ -129,7 +129,8 @@ async def test_browser_oidc_login_requires_matching_nonce_cookie(monkeypatch, si
 
 
 @pytest.mark.asyncio
-async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replace_it():
+async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replace_it(monkeypatch):
+    monkeypatch.setattr(browser_auth.config, "TELEGRAM_OIDC_CLIENT_ID", CLIENT_ID)
     class Bot:
         calls = 0
 
@@ -157,3 +158,24 @@ async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replac
     assert browser_auth._OIDC_NONCE_COOKIE not in fallback.cookies
     assert json.loads(fallback.text)["oidc_nonce"] == ""
     assert bot.calls == 1, "Bot identity should be cached when config is no-store"
+
+
+@pytest.mark.asyncio
+async def test_unconfigured_client_id_preserves_legacy_login(monkeypatch):
+    monkeypatch.setattr(browser_auth.config, "TELEGRAM_OIDC_CLIENT_ID", "")
+    monkeypatch.setattr(browser_auth.config, "BOT_TOKEN", "123456:TEST_BOT_TOKEN")
+    browser_auth._BOT_USERNAME_CACHE.update(value="", until=0.0)
+
+    class Bot:
+        async def get_me(self):
+            return SimpleNamespace(username="ExampleBot")
+
+    request = SimpleNamespace(app={"bot": Bot()}, query={})
+    response = await browser_auth.browser_telegram_auth_config(request)
+    payload = json.loads(response.text)
+    assert response.status == 200
+    assert payload["bot_username"] == "ExampleBot"
+    assert payload["oidc_client_id"] == ""
+    assert payload["oidc_nonce"] == ""
+    assert browser_auth._OIDC_NONCE_COOKIE not in response.cookies
+    assert browser_auth._telegram_oidc_client_id() == ""
