@@ -44,7 +44,7 @@ jobs:
         run: |
           bash scripts/ci/test-prepare-ubuntu-apt.sh
           bash scripts/ci/prepare-ubuntu-apt.sh
-          sudo timeout 95 apt-get -o Acquire::Retries=1 install -y ffmpeg
+          sudo timeout 300 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends ffmpeg
           ffprobe -version | head -1
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
