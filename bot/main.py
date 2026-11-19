@@ -5924,7 +5924,8 @@ async def main():
     )
     from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
 
-    bot.session.middleware(TelegramPaymentRequestMiddleware())
+    telegram_payment_request_middleware = TelegramPaymentRequestMiddleware()
+    bot.session.middleware(telegram_payment_request_middleware)
 
     # Watchdog is a recovery path for provider tasks that escaped normal
     # webhook/poller handling. A recovered failure must not refund silently.
@@ -5952,6 +5953,7 @@ async def main():
 
     # Настраиваем диспатчер
     dp = setup_dispatcher()
+    telegram_payment_request_middleware.fsm = dp.fsm
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
