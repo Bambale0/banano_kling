@@ -3027,6 +3027,11 @@ def setup_dispatcher() -> Dispatcher:
     access_guard = AccessGuardMiddleware()
     dp.message.outer_middleware(access_guard)
     dp.callback_query.outer_middleware(access_guard)
+    from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
+
+    payment_surface = TelegramPaymentSurfaceMiddleware()
+    dp.callback_query.outer_middleware(payment_surface)
+    dp.message.outer_middleware(payment_surface)
 
     # ⭐ КРИТИЧЕСКИ ВАЖНО: Порядок роутеров в aiogram 3.x
     # Первый зарегистрированный роутер имеет НАИВЫСШИЙ приоритет!
@@ -5915,6 +5920,9 @@ async def main():
     bot = Bot(
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+    from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
+
+    bot.session.middleware(TelegramPaymentRequestMiddleware())
 
     # Watchdog is a recovery path for provider tasks that escaped normal
     # webhook/poller handling. A recovered failure must not refund silently.

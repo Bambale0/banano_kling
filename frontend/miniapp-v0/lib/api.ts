@@ -497,16 +497,7 @@ export async function createPayment(payload: {
   provider: PaymentProvider
   promoCode?: string
 }): Promise<CreatePaymentResponse> {
-  const initData = getInitData()
-  if (!initData) {
-    throw new Error('Откройте mini app из Telegram и попробуйте снова.')
-  }
-  return postJson<CreatePaymentResponse>('create-payment', {
-    init_data: initData,
-    package_id: payload.packageId,
-    provider: payload.provider,
-    promo_code: payload.promoCode || '',
-  })
+  return (await import('./payment-api')).createPayment(payload)
 }
 
 export async function fetchTaskHistory(cursor?: string, signal?: AbortSignal): Promise<{ recent_tasks: Task[]; next_cursor: string | null }> {

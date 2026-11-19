@@ -4,12 +4,19 @@
 
 ### Telegram bot
 
+- Wallet/balance/top-up/fiat entry buttons open external `/login?return_to=/mini-app/?intent=topup...` via `bot/telegram_payment_surface.py`.
+- Native invoices are Telegram Stars (XTR) only; stale fiat callbacks and Lava email states are intercepted before provider handlers.
+
 - package and provider selection in `bot/handlers/freekassa_payments.py`
 - legacy Stars/CryptoBot/Lava callbacks in `bot/handlers/payments.py`
 - promo code input
 - Telegram Stars pre-checkout + successful payment events
 
 ### Mini App
+
+- Telegram wallet entry opens the website, preserving selected package/payment intent. An explicit Stars entry retains native XTR checkout.
+- After browser Login Widget verification the existing signed `browser_` session permits web payment providers. All API provider dispatches enforce this boundary server-side, including compatibility routes.
+- Login accepts only local `/mini-app/` return destinations. Successful web bootstrap resumes package selection without automatically creating a payment.
 
 - `POST /mini-app/api/create-payment`
 - old internal provider value `yookassa` is a compatibility alias that executes FreeKassa only

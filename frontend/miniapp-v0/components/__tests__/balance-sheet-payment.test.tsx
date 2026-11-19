@@ -3,13 +3,13 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { BalanceSheet } from '@/components/balance-sheet'
 import { useApp } from '@/lib/app-context'
 import { createPayment } from '@/lib/payment-api'
-import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
+import { bootstrapApp, sendMiniAppClientLog, getInitData } from '@/lib/api'
 import { fetchVkNativeCommerce } from '@/lib/shared-account-api'
 import { toast } from 'sonner'
 
 jest.mock('@/lib/app-context', () => ({ useApp: jest.fn() }))
 jest.mock('@/lib/payment-api', () => ({ createPayment: jest.fn() }))
-jest.mock('@/lib/api', () => ({ bootstrapApp: jest.fn(), sendMiniAppClientLog: jest.fn() }))
+jest.mock('@/lib/api', () => ({ bootstrapApp: jest.fn(), sendMiniAppClientLog: jest.fn(), getInitData: jest.fn() }))
 jest.mock('@/lib/shared-account-api', () => ({ fetchVkNativeCommerce: jest.fn() }))
 
 const exactUrl = 'https://gate.lava.top/pay/fixture-9007199254740993123?order=fixture&signature=synthetic'
@@ -22,10 +22,20 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/')
   jest.clearAllMocks()
   openLink.mockReset()
+  ;(getInitData as jest.Mock).mockReturnValue('query_id=browser_fixture')
   ;(useApp as jest.Mock).mockReturnValue(fixture)
   ;(bootstrapApp as jest.Mock).mockResolvedValue({})
   ;(createPayment as jest.Mock).mockResolvedValue({ ok: true, provider: 'lava_card', order_id: '9007199254740993123', credits: 50, payment_url: exactUrl })
   Object.assign(window.Telegram!.WebApp!, { platform: 'ios', openLink })
+})
+
+it('exposes only Stars in Telegram even when fiat packages are configured', () => {
+  ;(getInitData as jest.Mock).mockReturnValue('query_id=telegram_fixture')
+  render(<BalanceSheet />)
+  expect(screen.queryByRole('button', { name: 'Карта' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Почта для оплаты через Lava.top')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: /Stars/ })).toBeInTheDocument()
 })
 
 it('opens an iPhone checkout externally on a fresh tap and reuses the exact signed URL', async () => {

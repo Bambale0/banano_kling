@@ -1,17 +1,26 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { createServer } from 'node:http'
+import { readFileSync } from 'node:fs'
+import { extname, join, resolve, sep } from 'node:path'
 import { chromium, devices, webkit } from 'playwright'
 
 // All APIs and payment destinations are intercepted; no live account or charge.
-const root = mkdtempSync(join(tmpdir(), 'payment-browser-e2e-'))
+const root = resolve('out')
 const origin = 'http://127.0.0.1:4203'
 const baseUrl = `${origin}/mini-app/`
 const exactUrl = 'https://gate.lava.top/pay/fixture-9007199254740993123?order=fixture&signature=synthetic'
-symlinkSync(resolve('out'), join(root, 'mini-app'), 'dir')
-const server = spawn('python3', ['-m', 'http.server', '4203', '--bind', '127.0.0.1', '--directory', root], { stdio: 'ignore' })
+const mime = { '.js': 'application/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }
+const server = createServer((req, res) => {
+  try {
+    const path = decodeURIComponent(new URL(req.url || '/', origin).pathname)
+    if (!path.startsWith('/mini-app/')) throw new Error('Not found')
+    const file = resolve(join(root, path.slice('/mini-app/'.length), path.endsWith('/') ? 'index.html' : ''))
+    if (!file.startsWith(root + sep)) throw new Error('Not found')
+    res.setHeader('Content-Type', mime[extname(file)] || 'application/octet-stream')
+    res.end(readFileSync(file))
+  } catch { res.writeHead(404); res.end() }
+})
+server.listen(4203, '127.0.0.1')
 let browser
 try {
   const deadline = Date.now() + 20_000
@@ -31,7 +40,7 @@ try {
     const context = await browser.newContext({ ...devices[device] })
     const page = await context.newPage()
     page.setDefaultTimeout(20_000)
-    let paymentRequests = 0
+    let paymentRequests = 0, starsRequests = 0
     let creditedBalance = 1
     let showTrend = false
     const errors = [], externalRequests = []
@@ -48,8 +57,9 @@ try {
         return true
       } })
       document.addEventListener('click', () => { window.__lastTap = performance.now() }, true)
-      window.Telegram = { WebApp: { platform, initData: 'query_id=synthetic-payment', initDataUnsafe: {},
+      window.Telegram = { WebApp: { platform, initData: 'query_id=browser_synthetic-payment', initDataUnsafe: {},
         ready() {}, expand() {}, onEvent() {}, offEvent() {},
+        openInvoice(url, callback) { window.__openedStarInvoice = url; callback('cancelled') },
         openLink(url) {
           if (bridge === 'throws') throw new Error('Synthetic bridge unavailable')
           // Telegram ignores native link events >1 second after interaction.
@@ -80,8 +90,12 @@ try {
           }], recent_tasks: [], saved_references: [],
         }
         else if (url.pathname.endsWith('/create-payment')) {
-          paymentRequests++
           const body = request.postDataJSON()
+          if (body.provider === 'telegram_stars') {
+            starsRequests++
+            return route.fulfill({ json: { ok: true, provider: 'telegram_stars', credits: 50, invoice_url: 'https://t.me/$synthetic_stars' } })
+          }
+          paymentRequests++
           assert.equal(body.provider, 'lava_card'); assert.equal(body.package_id, 'start')
           await new Promise(resolve => setTimeout(resolve, 1250))
           data = { ok: true, provider: 'lava_card', order_id: '9007199254740993123', payment_id: 'fixture', payment_url: exactUrl, credits: 50 }
@@ -107,6 +121,25 @@ try {
       return route.abort()
     })
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
+    // Actual TG wallet entry leaves the Mini App for the website; no fiat API.
+    await page.evaluate(() => { window.Telegram.WebApp.initData = 'query_id=tg_native' })
+    await page.locator('header button').last().click()
+    const website = await page.evaluate(() => window.__openedPayments[0])
+    assert.equal(new URL(website).pathname, '/login')
+    assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
+    assert.equal(paymentRequests, 0)
+    await page.getByRole('button', { name: 'Оплатить Stars', exact: true }).click()
+    assert.equal(await page.getByRole('button', { name: 'Карта', exact: true }).count(), 0)
+    assert.equal(await page.getByLabel('Почта для оплаты через Lava.top').count(), 0)
+    await page.getByRole('button', { name: /Stars ·/ }).click()
+    await page.waitForFunction(() => window.__openedStarInvoice === 'https://t.me/$synthetic_stars')
+    assert.equal(starsRequests, 1)
+    assert.equal(paymentRequests, 0)
+    await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
+    await page.evaluate(() => {
+      window.Telegram.WebApp.initData = 'query_id=browser_synthetic-payment'
+      window.__openedPayments = []
+    })
     await page.locator('header button').last().click()
     await page.getByRole('button', { name: 'Карта', exact: true }).click()
     const proceed = page.getByRole('link', { name: 'Перейти к оплате', exact: true })
@@ -197,5 +230,5 @@ try {
   }
 } finally {
   if (browser) await browser.close()
-  server.kill('SIGTERM'); rmSync(root, { recursive: true, force: true })
+  server.close()
 }

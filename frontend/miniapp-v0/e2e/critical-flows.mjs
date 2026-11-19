@@ -227,7 +227,7 @@ try {
     window.__telegramEventHandlers = {}
     window.Telegram = {
       WebApp: {
-        initData: 'query_id=e2e',
+        initData: 'query_id=browser_e2e',
         initDataUnsafe: {},
         ready() {},
         expand() {},

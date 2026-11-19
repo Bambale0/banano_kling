@@ -47,6 +47,7 @@ backups/
 tests/
 !tests/
 tests/*
+!tests/test_telegram_web_payments.py
 !tests/test_shared_wallet_openings.py
 !tests/test_seedance25_direct_edit.py
 !tests/test_astro_report_pdf.py

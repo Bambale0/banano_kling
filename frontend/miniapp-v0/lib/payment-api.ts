@@ -1,5 +1,6 @@
 import type { CreatePaymentResponse, PaymentProvider } from './types'
 import { getApiBasePath, getInitData, getStartParamFallback } from './api'
+import { isTelegramPaymentSurface, webPaymentUrl } from './web-payments'
 
 function paymentErrorMessage(value: unknown): string {
   if (typeof value === 'string' && value.trim()) {
@@ -23,6 +24,9 @@ export async function createPayment(payload: {
   promoCode?: string
   customerEmail?: string
 }): Promise<CreatePaymentResponse> {
+  if (isTelegramPaymentSurface() && payload.provider !== 'telegram_stars') {
+    throw new Error(`Этот способ оплаты доступен на сайте: ${webPaymentUrl({ packageId: payload.packageId, provider: payload.provider })}`)
+  }
   const initData = getInitData()
   if (!initData) {
     throw new Error('Откройте mini app из Telegram и попробуйте снова.')

@@ -90,7 +90,7 @@ try {
     await page.route('**/telegram-widget.js?22', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
     }))
-    const response = await page.goto(origin + '/login' + (width === 390 ? '?startapp=test_ref' : ''), {
+    const response = await page.goto(origin + '/login' + (width === 390 ? '?startapp=test_ref&return_to=' + encodeURIComponent('/mini-app/?intent=topup&package_id=mini&provider=lava_card') : ''), {
       waitUntil: 'load',
     })
     assert.equal(response.status(), 200)
@@ -110,6 +110,9 @@ try {
       await page.locator('#ci-telegram-login').click()
       await page.waitForURL('**/mini-app/**')
       assert.ok(page.url().includes('startapp=test_ref'), 'startapp survives sign-in')
+      assert.equal(new URL(page.url()).searchParams.get('intent'), 'topup')
+      assert.equal(new URL(page.url()).searchParams.get('package_id'), 'mini')
+      assert.equal(new URL(page.url()).searchParams.get('provider'), 'lava_card')
       assert.ok(page.url().includes('#tgWebAppData='), 'signed initData goes in URL fragment')
       assert.equal(posts.length, 1, 'a single signed login POST must be sent')
       assert.equal(posts[0].telegram_auth.hash, 'mock_signed_payload')
