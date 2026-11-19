@@ -11,7 +11,12 @@ import json
 import pytest
 
 from bot import astro_report_api
-from bot.services import astro_chart_core, astro_lunar, astro_places, astro_report_periods
+from bot.services import (
+    astro_chart_core,
+    astro_lunar,
+    astro_places,
+    astro_report_periods,
+)
 from bot.services.astro_report_pipeline import (
     AstroReportError,
     ReportPlan,
@@ -126,7 +131,6 @@ def test_invalid_manual_place_name_not_whitelisted_into_llm_facts():
 
 
 def test_verified_birth_place_included_in_actual_gpt6_section_input():
-    from bot.services.astro_report_pipeline import _fact_catalog
 
     class Checkpoints:
         async def read(self, **kwargs):
