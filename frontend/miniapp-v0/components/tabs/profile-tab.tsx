@@ -12,7 +12,13 @@ import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
 import { platformMiniAppUrl } from '@/lib/account-platform'
+import { isBrowserAccountSession, signOutBrowserAccount } from '@/lib/browser-account-session'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   addFeedComment,
@@ -36,6 +42,7 @@ import {
   ImageOff,
   Link2,
   Loader2,
+  LogOut,
   MessageCircle,
   Play,
   Radio,
@@ -212,6 +219,10 @@ export function ProfileTab() {
   useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [copied, setCopied] = useState<string | number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [logoutPending, setLogoutPending] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
+
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
   const [revealedIds, setRevealedIds] = useState<Set<number>>(() => new Set())
   const [hasMore, setHasMore] = useState(false)
@@ -668,6 +679,19 @@ export function ProfileTab() {
     setActiveTab(1)
   }
 
+  const handleWebSignOut = async () => {
+    if (logoutPending) return
+    setLogoutPending(true)
+    setLogoutError('')
+    try {
+      await signOutBrowserAccount()
+    } catch {
+      setLogoutError('Не удалось выйти из аккаунта. Проверьте соединение и попробуйте ещё раз.')
+    } finally {
+      setLogoutPending(false)
+    }
+  }
+
   return (
     <div className="px-4 pb-28">
       <section className="space-y-5">
@@ -713,6 +737,37 @@ export function ProfileTab() {
           ) : null}
         </div>
 
+        {isOwnProfile && isLive && isBrowserAccountSession() ? (
+          <AlertDialog open={logoutOpen} onOpenChange={(open) => {
+            if (!open && logoutPending) return
+            setLogoutOpen(open)
+            if (!open) setLogoutError('')
+          }}>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="outline" className="min-h-11 w-full justify-center gap-2 rounded-xl border-border/60">
+                <LogOut className="h-4 w-4" />
+                Выйти из аккаунта
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Выйти из аккаунта?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Веб-сессия на этом устройстве завершится. Чтобы войти снова, понадобится авторизация.
+                  В Telegram вход останется без изменений.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              {logoutError ? <p role="alert" className="text-sm text-destructive">{logoutError}</p> : null}
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={logoutPending}>Отмена</AlertDialogCancel>
+                <Button type="button" disabled={logoutPending} onClick={() => void handleWebSignOut()}>
+                  {logoutPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {logoutPending ? 'Выходим…' : 'Выйти'}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
         {isOwnProfile ? <PersonalReferenceLibrary /> : null}
         {isOwnProfile ? <SharedAccountPreview isAdmin={state.user.isAdmin} telegramBotUsername={state.user.botUsername} /> : null}
         {isOwnProfile ? (

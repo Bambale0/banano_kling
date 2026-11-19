@@ -47,6 +47,8 @@ declare global {
     }
     __BANANO_TG_INIT_DATA__?: string
     __BANANO_PLATFORM_INIT_DATA__?: string
+    /** Blocks WebView/initData rehydration between browser logout and navigation. */
+    __BANANO_BROWSER_SIGNOUT__?: boolean
   }
 }
 
@@ -124,6 +126,9 @@ export function clearPlatformSessionToken(): void {
 }
 
 export function getInitData(): string {
+  // Other mounted components can keep calling getInitData while logout navigates.
+  // A browser-signed credential must never be re-cached after it was cleared.
+  if (typeof window !== 'undefined' && window.__BANANO_BROWSER_SIGNOUT__) return ''
   const platformSession = typeof window !== 'undefined'
     ? String(window.__BANANO_PLATFORM_INIT_DATA__ || '').trim()
     : ''
