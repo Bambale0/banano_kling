@@ -399,6 +399,23 @@ def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec,
     """
     dynamic = plan.dynamic_period
     if dynamic is None:
+        if plan.service_id == "year":
+            # Year snapshots are observational samples, never exact transit events.
+            # Verify the 12 calculated calendar anchors without creating 12
+            # fabricated monthly prediction sections.
+            period = facts.get("period")
+            if (not isinstance(period, str) or
+                    not re.fullmatch(r"[0-9]{4}", period) or
+                    not 1900 <= int(period) <= 2100):
+                raise AstroReportError("Некорректный год исходных фактов.")
+            expected_dates = [f"{period}-{month:02d}-01" for month in range(1, 13)]
+            samples = facts.get("samples")
+            if not isinstance(samples, list):
+                raise AstroReportError("Отсутствуют детальные расчётные факты для каждого периода.")
+            actual_dates = [row.get("date") if isinstance(row, dict) else None
+                            for row in samples]
+            if actual_dates != expected_dates:
+                raise AstroReportError("Календарные периоды неполны, дублированы или перепутаны.")
         return plan.sections
     period = facts.get("period")
     if not isinstance(period, str):

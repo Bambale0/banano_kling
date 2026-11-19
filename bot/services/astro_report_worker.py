@@ -35,6 +35,9 @@ _ARCHIVED_NATAL_PLAN_PATHS = (
 )
 
 
+_ARCHIVED_YEAR_PLAN_PATH = Path(__file__).resolve().parents[1] / "astro_report_plans_year_v2_legacy.json"
+
+
 def resolve_astro_job_plan(job: ClaimedAstroJob, secret: str) -> tuple[ReportPlan, str | None]:
     """Match an encrypted job's exact immutable prompt and section contract.
 
@@ -47,6 +50,8 @@ def resolve_astro_job_plan(job: ClaimedAstroJob, secret: str) -> tuple[ReportPla
     candidates = [latest]
     if job.service_id == "natal":
         candidates.extend(load_report_plan("natal", path=p) for p in _ARCHIVED_NATAL_PLAN_PATHS)
+    elif job.service_id == "year":
+        candidates.append(load_report_plan("year", path=_ARCHIVED_YEAR_PLAN_PATH))
     for plan in candidates:
         fingerprint = report_fingerprint(
             owner_id=job.owner_id, plan=plan, facts=job.facts,
