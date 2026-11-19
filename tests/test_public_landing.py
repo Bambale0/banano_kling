@@ -47,7 +47,7 @@ class LandingPublicContractTest(unittest.TestCase):
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertNotIn("/mini-app/", self.page.links)
         self.assertGreaterEqual(self.page.links.count("/login"), 10)
-        self.assertEqual(set(self.page.links) - {"/login", "/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
+        self.assertEqual(set(self.page.links) - {"/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
