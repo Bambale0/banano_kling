@@ -420,6 +420,11 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
           setConfig(data)
           onSessionDetected(Boolean(data.authenticated))
         }
+        const isExplicitLink = new URLSearchParams(window.location.search).get('link') === 'telegram'
+        if (data.authenticated && !data.studio_ready && !isExplicitLink) {
+          window.location.replace('/mini-app/')
+          return
+        }
         if (data.authenticated && data.studio_ready) {
           const studio = await fetch('/mini-app/api/web-auth/studio', {
             method: 'POST', credentials: 'same-origin', cache: 'no-store',
@@ -441,13 +446,17 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
   }, [onSessionDetected])
 
   if (!config?.providers?.yandex && !config?.authenticated) return null
+  if (config.authenticated && !config.studio_ready
+    && new URLSearchParams(window.location.search).get('link') !== 'telegram') {
+    return <p role="status" className="text-sm text-[#d7b56f]">Вход подтверждён. Открываем веб-аккаунт…</p>
+  }
   if (config.authenticated && !config.studio_ready) {
     return (
       <section className="space-y-3 border border-[#d5af60]/40 bg-[#d5af60]/[0.055] p-4" aria-label="Вход через Яндекс">
         <p className="font-semibold text-[#f3d392]">Вход через Яндекс подтверждён</p>
         <p className="text-sm text-[#ddd6c8]">
-          Чтобы пользоваться генерациями и своим балансом, один раз свяжи этот аккаунт с Telegram.
-          После привязки ты сможешь входить через Яндекс.
+          Привязка Telegram добровольная. Она нужна только для доступа к уже существующим
+          работам и балансу Telegram; независимая веб-учётная запись не требует мессенджера.
         </p>
         <LegacyTelegramWidget linkYandex />
         {error ? <p role="status" className="text-xs text-amber-300">{error}</p> : null}
@@ -512,7 +521,7 @@ export function LoginPanel() {
               Продолжить создавать.
             </CardTitle>
             <CardDescription className="max-w-xs text-sm leading-relaxed text-[#b9b6af]">
-              Нажми кнопку и подтверди вход в Telegram — и можно снова создавать.
+              Выберите Яндекс ID или Telegram — система подтвердит ваш аккаунт.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
@@ -521,7 +530,7 @@ export function LoginPanel() {
             <div className="flex items-start gap-3 border-t border-[#998054]/30 pt-5">
               <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-[#e5b25c]" />
               <p className="text-xs leading-relaxed text-[#a8a8a3]">
-                Мы не просим пароль от Telegram. Вход подтверждается в самом Telegram.
+                Пароли сервисов не передаются NEUROMIX. Яндекс ID и Telegram подтверждают вход у своего провайдера.
               </p>
             </div>
           </CardContent>

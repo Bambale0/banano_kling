@@ -4,7 +4,7 @@ import './login.css'
 
 export const metadata: Metadata = {
   title: 'Войти в NEUROMIX — AI Creative Studio',
-  description: 'Вход в веб-студию NEUROMIX через Telegram. Генерация фото, видео и работа с референсами.',
+  description: 'Вход в NEUROMIX через Яндекс ID или Telegram. Управление аккаунтом и доступ к AI-студии.',
   robots: { index: false, follow: true },
 }
 

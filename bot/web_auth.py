@@ -388,6 +388,42 @@ async def web_auth_config(request: web.Request) -> web.Response:
                   }})
 
 
+async def web_account(request: web.Request) -> web.Response:
+    """A first-class browser identity; never manufacture a Telegram user ID.
+
+    This endpoint exposes only the independently owned account and its own
+    ledger. The Telegram Mini App and its legacy wallet are not consulted.
+    Generation/payment controls remain disabled until their native web
+    account-scoped adapters have been implemented and audited.
+    """
+    account_id = await _session_account(request)
+    if not account_id:
+        return _json({"ok": False, "error": "session_required"}, 401)
+    from bot.shared_accounts.wallet import WalletService
+
+    async with db_backend.connect() as db:
+        rows = await (await db.execute(
+            "SELECT provider FROM web_auth_identities WHERE account_id = ?",
+            (account_id,),
+        )).fetchall()
+        linked = await (await db.execute(
+            """SELECT 1 FROM shared_account_identities
+               WHERE platform = 'telegram' AND account_id = ?""",
+            (account_id,),
+        )).fetchone()
+
+    balance = (await WalletService("live").snapshot(account_id))["balance"]
+    return _json({
+        "ok": True, "account_id": account_id, "studio_mode": "web",
+        "connected": sorted(str(row[0]) for row in rows),
+        "telegram_linked": bool(linked),
+        "balance": balance,
+        # This is a real account, but the legacy Telegram-dependent generation
+        # pipeline is explicitly inaccessible: no counterfeit identity or funds.
+        "can_generate": False,
+    })
+
+
 def _oauth_urls(provider: str) -> tuple[str, str, str, str]:
     if provider == "google":
         return ("https://accounts.google.com/o/oauth2/v2/auth",
@@ -599,6 +635,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     """Register exact endpoints before /mini-app/api/{tail:.*}."""
     root = miniapp_root + "/api/web-auth"
     app.router.add_get(root + "/config", web_auth_config)
+    app.router.add_get(root + "/account", web_account)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)
