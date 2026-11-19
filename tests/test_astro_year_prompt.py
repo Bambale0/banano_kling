@@ -6,7 +6,10 @@ from types import SimpleNamespace
 import pytest
 
 from bot.services.astro_report_pipeline import (
-    AstroReportError, _expand_period_sections, load_report_plan, report_fingerprint,
+    AstroReportError,
+    _expand_period_sections,
+    load_report_plan,
+    report_fingerprint,
 )
 from bot.services.astro_report_worker import resolve_astro_job_plan
 
