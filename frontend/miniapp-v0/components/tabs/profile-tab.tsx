@@ -15,7 +15,7 @@ import { platformMiniAppUrl } from '@/lib/account-platform'
 import { isBrowserAccountSession, signOutBrowserAccount } from '@/lib/browser-account-session'
 import { Button } from '@/components/ui/button'
 import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialog, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
   AlertDialogTitle, AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
@@ -219,6 +219,10 @@ export function ProfileTab() {
   useEffect(() => () => { repeatRequest.current += 1 }, [])
   const [copied, setCopied] = useState<string | number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [logoutOpen, setLogoutOpen] = useState(false)
+  const [logoutPending, setLogoutPending] = useState(false)
+  const [logoutError, setLogoutError] = useState('')
+
   const [feedRefreshToken, setFeedRefreshToken] = useState(0)
   const [revealedIds, setRevealedIds] = useState<Set<number>>(() => new Set())
   const [hasMore, setHasMore] = useState(false)
@@ -675,6 +679,19 @@ export function ProfileTab() {
     setActiveTab(1)
   }
 
+  const handleWebSignOut = async () => {
+    if (logoutPending) return
+    setLogoutPending(true)
+    setLogoutError('')
+    try {
+      await signOutBrowserAccount()
+    } catch (failure) {
+      setLogoutError(getErrorMessage(failure, 'Не удалось выйти. Попробуйте ещё раз.'))
+    } finally {
+      setLogoutPending(false)
+    }
+  }
+
   return (
     <div className="px-4 pb-28">
       <section className="space-y-5">
@@ -721,7 +738,11 @@ export function ProfileTab() {
         </div>
 
         {isOwnProfile && isLive && isBrowserAccountSession() ? (
-          <AlertDialog>
+          <AlertDialog open={logoutOpen} onOpenChange={(open) => {
+            if (!open && logoutPending) return
+            setLogoutOpen(open)
+            if (!open) setLogoutError('')
+          }}>
             <AlertDialogTrigger asChild>
               <Button type="button" variant="outline" className="min-h-11 w-full justify-center gap-2 rounded-xl border-border/60">
                 <LogOut className="h-4 w-4" />
@@ -736,9 +757,13 @@ export function ProfileTab() {
                   В Telegram вход останется без изменений.
                 </AlertDialogDescription>
               </AlertDialogHeader>
+              {logoutError ? <p role="alert" className="text-sm text-destructive">{logoutError}</p> : null}
               <AlertDialogFooter>
-                <AlertDialogCancel>Отмена</AlertDialogCancel>
-                <AlertDialogAction onClick={signOutBrowserAccount}>Выйти</AlertDialogAction>
+                <AlertDialogCancel disabled={logoutPending}>Отмена</AlertDialogCancel>
+                <Button type="button" disabled={logoutPending} onClick={() => void handleWebSignOut()}>
+                  {logoutPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  {logoutPending ? 'Выходим…' : 'Выйти'}
+                </Button>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
