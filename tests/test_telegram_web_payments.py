@@ -115,12 +115,18 @@ async def test_dispatcher_settles_stars_before_legacy_email_catchall(monkeypatch
     from bot.telegram_payment_surface import install_telegram_payment_surface
 
     settle = AsyncMock()
-    monkeypatch.setattr(payments, 'process_successful_stars_payment', settle)
+    async def settlement(message):
+        await settle(message)
+
+    monkeypatch.setattr(payments, 'process_successful_stars_payment', settlement)
     dp = Dispatcher()
     install_telegram_payment_surface(dp)
     legacy = Router()
     catchall = AsyncMock()
-    legacy.message.register(catchall, PaymentStates.waiting_lava_email)
+    async def legacy_email(message):
+        await catchall(message)
+
+    legacy.message.register(legacy_email, PaymentStates.waiting_lava_email)
     dp.include_router(legacy)
     bot = Bot('123456:TEST_TOKEN')
     try:
