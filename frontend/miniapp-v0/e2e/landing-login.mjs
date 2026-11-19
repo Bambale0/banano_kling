@@ -83,6 +83,8 @@ try {
   for (const [width, height] of [[320, 700], [390, 844], [768, 960], [1440, 900]]) {
     const page = await browser.newPage({ viewport: { width, height } })
     const errors = []
+    let oidcOptions = null
+    await page.exposeFunction('__ciTrackOidcOptions', options => { oidcOptions = options })
     page.on('pageerror', error => errors.push(String(error)))
     await page.route('https://telegram.org/js/**', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: '',
@@ -92,7 +94,7 @@ try {
         window.Telegram = window.Telegram || {};
         window.Telegram.Login = {
           auth(options, callback) {
-            window.__ciOidcOptions = options;
+            window.__ciTrackOidcOptions(options);
             callback({ id_token: 'ci-id-token' });
           }
         };
@@ -125,8 +127,8 @@ try {
       assert.ok(page.url().includes('#tgWebAppData='), 'signed initData goes in URL fragment')
       assert.equal(posts.length, 1, 'a single signed login POST must be sent')
       assert.equal(posts[0].id_token, 'ci-id-token')
-      assert.equal(await page.evaluate(() => window.__ciOidcOptions.scope.join(',')), 'profile')
-      assert.equal(await page.evaluate(() => window.__ciOidcOptions.nonce), 'ci-test-nonce-1234567890123456789012')
+      assert.equal(oidcOptions?.scope?.join(','), 'profile')
+      assert.equal(oidcOptions?.nonce, 'ci-test-nonce-1234567890123456789012')
     }
     await page.close()
     console.log(`login/shadcn [${width}]: OK`)
