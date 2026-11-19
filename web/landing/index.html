@@ -22,10 +22,19 @@
     (function () {
       var fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
       var query = new URLSearchParams(window.location.search);
-      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform', 'tgWebAppStartParam', 'startapp'];
+      var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'];
       if (keys.some(function (key) { return fragment.has(key) || query.has(key); })) {
         window.location.replace('/mini-app/' + window.location.search + window.location.hash);
       }
+      // Plain browser deep links are referral context, not authenticated Telegram launches.
+      // Carry the context to /login, then let the login page resume the Mini App.
+      document.addEventListener('DOMContentLoaded', function () {
+        var start = query.get('startapp') || query.get('tgWebAppStartParam');
+        if (!start || !/^[a-zA-Z0-9_-]{1,512}$/.test(start)) return;
+        document.querySelectorAll('a[href="/login"]').forEach(function (link) {
+          link.setAttribute('href', '/login?startapp=' + encodeURIComponent(start));
+        });
+      });
     })();
   </script>
   <style>
