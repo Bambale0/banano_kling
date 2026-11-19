@@ -124,4 +124,4 @@ async def test_browser_oidc_login_requires_matching_nonce_cookie(monkeypatch, si
     accepted = await browser_auth.browser_telegram_auth(Request(NONCE))
     assert accepted.status == 200
     assert json.loads(accepted.text)["init_data"]
-    assert "Max-Age=0" in accepted.headers["Set-Cookie"]
+    assert accepted.cookies[browser_auth._OIDC_NONCE_COOKIE]["max-age"] == "0"
