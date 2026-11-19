@@ -91,6 +91,9 @@ footer{display:flex;justify-content:space-between;gap:15px;padding-top:18px;bord
 "use strict";
 const API="/mini-app/api/web-auth";
 const query=new URLSearchParams(window.location.search);
+// Magic link bearer lives in the fragment (never in HTTP access logs).
+const magicTicket=new URLSearchParams(window.location.hash.replace(/^#/,"")).get("ticket");
+if(magicTicket)window.history.replaceState(null,"",window.location.pathname+window.location.search);
 const status=document.getElementById("status");
 const form=document.getElementById("email-form");
 const providerButtons={google:document.getElementById("google"),yandex:document.getElementById("yandex")};
@@ -113,7 +116,7 @@ const message=(value)=>{status.textContent=value;};
 const errors={
   oauth:"Не удалось подтвердить вход. Повтори попытку.",
   expired:"Ссылка устарела или уже использована. Запроси новую.",
-  "already-linked":"Этот способ уже принадлежит другому аккаунту. Для объединения двух существующих аккаунтов необходимо отдельное подтверждение обоих.",
+  "already-linked":"Не удалось связать аккаунты: истекла сессия или обнаружен конфликт прав. Войди заново и повтори попытку.",
   "session-expired":"Сессия истекла. Войди снова и повтори привязку.",
   identity:"Провайдер не передал подтверждённую личность.",
   unavailable:"Способ входа временно недоступен."
@@ -152,6 +155,23 @@ async function setup(){
         ?(provider==="google"?"Google подключён":"Яндекс подключён")
         :(provider==="google"?"Подключить Google":"Подключить Яндекс");
     }
+  }
+  if(magicTicket){
+    try{
+      message("Подтверждаем вход по почте…");
+      const response=await fetch(API+"/email/verify",{
+        method:"POST",credentials:"same-origin",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({ticket:magicTicket})
+      });
+      const payload=await readJson(response);
+      const destination=new URL(payload.redirect||next,window.location.origin);
+      if(destination.origin!==window.location.origin)throw new Error("Неверный адрес возврата");
+      window.location.assign(destination.pathname+destination.search+destination.hash);
+    }catch{
+      message("Ссылка уже использована или срок действия истёк. Запроси новое письмо.");
+    }
+    return;
   }
   if(!query.get("error")&&!query.get("linked"))
     message(authenticated?"Ты в аккаунте. Можешь подключить ещё один способ входа.":"Выбери доступный способ входа.");
