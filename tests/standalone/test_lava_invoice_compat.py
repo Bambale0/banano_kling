@@ -180,7 +180,6 @@ async def test_provider_status_legacy_contract_requires_explicit_invoice_id(monk
 
     async def fake_mapping(contract):
         assert contract == "legacy-contract"
-        return None
 
     saved = []
 
