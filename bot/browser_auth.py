@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode
 from aiohttp import web
 
 from bot.config import config
+from bot.telegram_oidc import fetch_telegram_jwks, verify_telegram_id_token
 from bot.services.trend_preview_service import (
     ensure_lightweight_trend_preview_url,
     ensure_trend_preview_assets,
@@ -25,6 +26,13 @@ from bot.trend_visibility import (
 
 _LOGIN_MAX_AGE_SECONDS = 10 * 60
 _BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
+_OIDC_NONCE_COOKIE = "nm_telegram_oidc_nonce"
+_OIDC_NONCE_SECONDS = 300
+
+
+def _telegram_oidc_client_id() -> str:
+    value = (config.TELEGRAM_OIDC_CLIENT_ID or config.BOT_TOKEN.split(":", 1)[0]).strip()
+    return value if value.isdecimal() and len(value) <= 20 else ""
 _ALLOWED_LOGIN_FIELDS = {
     "id",
     "first_name",
@@ -111,13 +119,21 @@ async def browser_telegram_auth_config(request: web.Request) -> web.Response:
     try:
         bot = request.app["bot"]
         me = await bot.get_me()
+        nonce = secrets.token_urlsafe(32)
         response = web.json_response(
             {
                 "ok": True,
                 "bot_username": str(me.username or "").lstrip("@"),
+                "oidc_client_id": _telegram_oidc_client_id(),
+                "oidc_nonce": nonce,
             }
         )
-        response.headers["Cache-Control"] = "public, max-age=300"
+        response.set_cookie(
+            _OIDC_NONCE_COOKIE, nonce, httponly=True, secure=True,
+            samesite="Lax", max_age=_OIDC_NONCE_SECONDS,
+            path=(config.MINI_APP_PATH or "/mini-app").rstrip("/") + "/api/browser-auth",
+        )
+        response.headers["Cache-Control"] = "no-store"
         return response
     except Exception:  # noqa: BLE001 - transport failures must become a stable 503 response
         return web.json_response(
@@ -130,8 +146,22 @@ async def browser_telegram_auth_config(request: web.Request) -> web.Response:
 async def browser_telegram_auth(request: web.Request) -> web.Response:
     try:
         body = await request.json()
-        telegram_auth = body.get("telegram_auth", body)
-        user = _verify_telegram_login(telegram_auth, config.BOT_TOKEN)
+        if not isinstance(body, dict):
+            raise ValueError("Invalid Telegram login payload")
+        if "id_token" in body:
+            token = body["id_token"]
+            nonce = request.cookies.get(_OIDC_NONCE_COOKIE, "")
+            client_id = _telegram_oidc_client_id()
+            if not nonce or not client_id:
+                raise ValueError("Missing Telegram OIDC browser challenge")
+            # Signature + nonce are verified before generating Mini App credentials.
+            user = verify_telegram_id_token(
+                token, client_id=client_id, nonce=nonce,
+                jwks=await fetch_telegram_jwks(),
+            )
+        else:
+            # Retain the legacy signed widget contract as an explicit fallback.
+            user = _verify_telegram_login(body.get("telegram_auth", body), config.BOT_TOKEN)
         init_data = _build_browser_init_data(user, config.BOT_TOKEN)
         response = web.json_response(
             {
@@ -140,6 +170,11 @@ async def browser_telegram_auth(request: web.Request) -> web.Response:
                 "expires_in": _BROWSER_SESSION_MAX_AGE_SECONDS,
             }
         )
+        response.del_cookie(
+            _OIDC_NONCE_COOKIE,
+            path=(config.MINI_APP_PATH or "/mini-app").rstrip("/") + "/api/browser-auth",
+            secure=True, httponly=True, samesite="Lax",
+        )
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         return response
@@ -147,6 +182,12 @@ async def browser_telegram_auth(request: web.Request) -> web.Response:
         return web.json_response(
             {"ok": False, "error": str(error)},
             status=401,
+            headers={"Cache-Control": "no-store"},
+        )
+    except ConnectionError:
+        return web.json_response(
+            {"ok": False, "error": "Telegram verification temporarily unavailable"},
+            status=503,
             headers={"Cache-Control": "no-store"},
         )
     except Exception:  # noqa: BLE001 - unexpected auth failures must not leak internals
