@@ -12,6 +12,7 @@ class Parser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.links = []
+        self.anchors = []
         self.headings = []
         self.ids = set()
 
@@ -19,6 +20,7 @@ class Parser(HTMLParser):
         data = dict(attrs)
         if tag == "a":
             self.links.append(data.get("href", ""))
+            self.anchors.append(data)
         if tag == "h1":
             self.headings.append(data)
         if "id" in data:
@@ -43,8 +45,9 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("safe-area-inset-bottom", self.html)
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
-        self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
+        self.assertNotIn("/mini-app/", self.page.links)
+        self.assertGreaterEqual(self.page.links.count("/login"), 10)
+        self.assertEqual(set(self.page.links) - {"/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -53,12 +56,34 @@ class LandingPublicContractTest(unittest.TestCase):
             if link.startswith("#"):
                 self.assertIn(link[1:], self.page.ids)
 
+    def test_all_landing_studio_ctas_pass_through_login(self):
+        # Public calls to action must not bypass the login page.
+        for class_name in (
+            "hot-login",
+            "hot-enter",
+            "hot-hero-cta",
+            "grunge-mobile-enter",
+            "mobile-grunge-cta",
+            "mobile-dock",
+        ):
+            anchors = [
+                attrs for attrs in self.page.anchors
+                if class_name in attrs.get("class", "").split()
+            ]
+            self.assertEqual(1, len(anchors), class_name)
+            self.assertEqual("/login", anchors[0].get("href"), class_name)
+
+        self.assertNotIn("/mini-app/", self.page.links)
+        panel = (ROOT / "frontend/miniapp-v0/components/landing-login-panel.tsx").read_text(encoding="utf-8")
+        self.assertIn("window.location.replace(studioUrlWithSession(data.init_data))", panel)
+        self.assertIn("if (!response.ok || !data.ok", panel)
+
     def test_login_is_real_shadcn_route_not_a_fake_oauth_button(self):
         page = (ROOT / "frontend/miniapp-v0/app/login/page.tsx").read_text(encoding="utf-8")
         panel = (ROOT / "frontend/miniapp-v0/components/landing-login-panel.tsx").read_text(encoding="utf-8")
         css = (ROOT / "frontend/miniapp-v0/app/login/login.css").read_text(encoding="utf-8")
         self.assertIn('href="/login"', self.html)
-        self.assertEqual(self.page.links.count("/login"), 3)
+        self.assertGreaterEqual(self.page.links.count("/login"), 10)
         self.assertIn("LoginPanel", page)
         for component in ("Button", "Card", "Badge", "Separator"):
             self.assertIn(component, panel)
@@ -91,6 +116,12 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("location ^~ /mini-app/api/", self.nginx)
         self.assertIn("location /mini-app/", self.nginx)
 
+    def test_landing_release_gate_enforces_login_not_direct_app(self):
+        self.assertIn('assert p.links.count("/mini-app/") == 0', self.publisher)
+        self.assertIn('assert p.links.count("/login") >= 10', self.publisher)
+        self.assertIn('[landing] $mode root missing login entry', self.publisher)
+        self.assertIn('[landing] $mode root bypasses login', self.publisher)
+
     def test_legacy_telegram_webview_launch_bypasses_public_landing(self):
         self.assertIn("tgWebAppData", self.html)
         self.assertIn("tgWebAppVersion", self.html)
@@ -98,6 +129,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("'startapp'", self.html)
         self.assertIn("window.location.replace('/mini-app/'", self.html)
         self.assertIn("window.location.hash", self.html)
+
+    def test_browser_referrals_do_not_bypass_login(self):
+        self.assertIn("var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'];", self.html)
+        self.assertNotIn("'tgWebAppStartParam', 'startapp'];", self.html)
+        self.assertIn("query.get('startapp') || query.get('tgWebAppStartParam')", self.html)
+        self.assertIn("document.querySelectorAll('a[href=\"/login\"]')", self.html)
+        self.assertIn("'/login?startapp=' + encodeURIComponent(start)", self.html)
 
     def test_uses_existing_miniapp_color_tokens(self):
         theme = (ROOT / "frontend/miniapp-v0/app/globals.css").read_text(encoding="utf-8")
@@ -157,7 +195,7 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertEqual(5, self.html.count("<details>"))
         self.assertEqual(5, self.html.count("<summary>"))
         self.assertIn('id="login-title"', self.html)
-        self.assertIn('href="/mini-app/"', self.html)
+        self.assertIn('href="/login"', self.html)
 
     def test_faq_is_native_accessible_and_trust_does_not_fabricate_testimonials(self):
         self.assertIn('<section class="section-faq" id="faq"', self.html)

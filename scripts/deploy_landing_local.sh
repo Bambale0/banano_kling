@@ -46,7 +46,8 @@ class Links(HTMLParser):
 p = Links()
 p.feed(Path(sys.argv[1]).read_text(encoding="utf8"))
 assert p.headings == ["h1"], "Landing must have one H1"
-assert p.links.count("/mini-app/") >= 3, "Missing direct app entrypoints"
+assert p.links.count("/mini-app/") == 0, "Public landing must not bypass login"
+assert p.links.count("/login") >= 10, "Missing public login entrypoints"
 assert all(link.startswith(("/", "#")) for link in p.links), "Unexpected outbound link"
 PY
 
@@ -176,14 +177,15 @@ for mode in origin public; do
   status=""
   for (( attempt=1; attempt<=30; attempt++ )); do
     status="$(curl -sS --connect-timeout 5 --max-time 15 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST/" || true)"
-    if [[ "$status" == 200 ]] && grep -q 'id="hero-title"' "$SMOKE" && grep -q 'href="/mini-app/"' "$SMOKE"; then
+    if [[ "$status" == 200 ]] && grep -q 'id="hero-title"' "$SMOKE" && grep -q 'href="/login"' "$SMOKE" && ! grep -q 'href="/mini-app/"' "$SMOKE"; then
       break
     fi
     sleep 1
   done
   [[ "$status" == 200 ]] || { echo "[landing] $mode root returned $status, expected 200" >&2; exit 1; }
   grep -q 'id="hero-title"' "$SMOKE" || { echo "[landing] $mode root does not serve landing" >&2; exit 1; }
-  grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] $mode root missing app entry" >&2; exit 1; }
+  grep -q 'href="/login"' "$SMOKE" || { echo "[landing] $mode root missing login entry" >&2; exit 1; }
+  ! grep -q 'href="/mini-app/"' "$SMOKE" || { echo "[landing] $mode root bypasses login" >&2; exit 1; }
 done
 for file in robots.txt sitemap.xml grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
   code="$(curl -sS --max-time 15 --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/$file")"
