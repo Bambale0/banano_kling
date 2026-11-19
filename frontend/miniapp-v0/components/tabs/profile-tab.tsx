@@ -685,8 +685,8 @@ export function ProfileTab() {
     setLogoutError('')
     try {
       await signOutBrowserAccount()
-    } catch (failure) {
-      setLogoutError(getErrorMessage(failure, 'Не удалось выйти. Попробуйте ещё раз.'))
+    } catch {
+      setLogoutError('Не удалось выйти из аккаунта. Проверьте соединение и попробуйте ещё раз.')
     } finally {
       setLogoutPending(false)
     }
