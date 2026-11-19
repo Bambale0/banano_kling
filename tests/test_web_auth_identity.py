@@ -7,7 +7,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from bot import database, db as db_backend, web_auth
+from bot import database, db, web_auth
 from bot.shared_accounts.wallet import WalletService
 
 
@@ -51,7 +51,7 @@ async def test_verified_other_provider_links_without_identity_replacement(monkey
         SimpleNamespace(), "yandex", "yandex-sub", _flow(source=google_account),
     )
     assert linked.location == "/login?linked=yandex"
-    async with db_backend.connect() as db:
+    async with db.connect() as db:
         rows = await (await db.execute(
             "SELECT provider, account_id FROM web_auth_identities ORDER BY provider",
         )).fetchall()
@@ -79,7 +79,7 @@ async def test_existing_provider_identity_cannot_be_stolen_via_link(monkeypatch)
     )
     assert refused.location == "/login?error=already-linked"
     assert not refused.cookies
-    async with db_backend.connect() as db:
+    async with db.connect() as db:
         row = await (await db.execute(
             "SELECT account_id FROM web_auth_identities WHERE provider = ? AND subject = ?",
             ("yandex", "owner-sub"),
@@ -96,7 +96,7 @@ async def test_telegram_web_auth_uses_legacy_identity_without_synthetic_id():
     account = await web_auth._session_account(SimpleNamespace(cookies={
         "nm_web_session": signed.cookies["nm_web_session"].value,
     }))
-    async with db_backend.connect() as db:
+    async with db.connect() as db:
         mapping = await (await db.execute(
             "SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?",
             ("telegram", 987654321),
@@ -201,7 +201,7 @@ async def test_existing_google_and_telegram_accounts_merge_only_with_both_fresh_
     result_id = await web_auth._session_account(SimpleNamespace(cookies={
         "nm_web_session": merged.cookies["nm_web_session"].value,
     }))
-    async with db_backend.connect() as db:
+    async with db.connect() as db:
         rows = await (await db.execute(
             "SELECT account_id FROM web_auth_identities WHERE provider = 'google'",
         )).fetchall()
@@ -240,7 +240,7 @@ async def test_two_existing_accounts_without_source_session_proof_never_merge(mo
         "google", "existing-google", _flow(source=first_id),
     )
     assert denied.location == "/login?error=already-linked"
-    async with db_backend.connect() as db:
+    async with db.connect() as db:
         rows = await (await db.execute(
             "SELECT id FROM shared_accounts WHERE status = 'active'",
         )).fetchall()
