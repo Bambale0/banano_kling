@@ -124,7 +124,7 @@ class TelegramPaymentRequestMiddleware(BaseRequestMiddleware):
                         state = self.fsm.get_context(bot=bot, chat_id=chat_id, user_id=chat_id)
                         stored = await state.get_data()
                         promo_code = str(stored.get("promo_code") or "")
-                    except Exception as exc:
+                    except Exception as exc:  # noqa: BLE001 - payment handoff must survive FSM storage outages
                         logger.warning("Payment promo lookup unavailable: error_type=%s", type(exc).__name__)
                 if promo_code:
                     rewritten = website_payment_markup(markup, promo_code=promo_code)
