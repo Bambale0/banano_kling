@@ -5,9 +5,9 @@ Task branch: feature/web-multiauth-20261119. Release only via PR into tanyapi.
 
 ## Implemented/changed
 
-- Standalone /login: Google, Yandex, Telegram Login Widget and email magic-link UI; disabled providers are shown as unavailable.
+- Standalone /login: Google, Yandex, Telegram Login Widget and email six-digit OTP UI; disabled providers are shown as unavailable.
 - OAuth Authorization Code + S256 PKCE, server-side state with one-time consumption, SameSite Lax state cookie and fixed HTTPS redirect_uri.
-- Email one-time 256-bit bearer (only hashed in DB), 10-minute expiry, TLS SMTP, bounded sending.
+- Email one-time 6-digit code: keyed HMAC stored in DB (not the code), 10-minute expiry, five failed attempts, 60s resend cooldown, per-email and per-IP durable throttling. Code entered inline on /login; Resend HTTPS API by default, SMTP available as a fallback.
 - Google/Yandex stable provider subject and separate web_auth_identities; Telegram reuses verified legacy identity, no fake Telegram ID.
 - Shared-account membership for linked providers, HttpOnly Secure session cookie, bounded server-side sessions.
 - Redirects only to local app/login paths. Referral context preserved from the marketing page to /login to Mini App.
@@ -24,8 +24,18 @@ They MUST be configured through the secret manager, not committed.
 Required public origin: WEB_AUTH_PUBLIC_ORIGIN=https://neuromixbot.com
 Google callback: https://neuromixbot.com/mini-app/api/web-auth/callback/google
 Yandex callback: https://neuromixbot.com/mini-app/api/web-auth/callback/yandex
-Email: WEB_AUTH_SMTP_HOST, WEB_AUTH_SMTP_PORT, WEB_AUTH_SMTP_FROM;
+Email provider (recommended): WEB_AUTH_EMAIL_PROVIDER=resend
+WEB_AUTH_RESEND_API_KEY: sending-only token from Resend (secret manager)
+WEB_AUTH_RESEND_FROM: verified sender on a domain you control, e.g. NEUROMIX <verify@neuromixbot.com>
+WEB_AUTH_EMAIL_CODE_SECRET: dedicated long random secret for HMAC (optional when BOT_TOKEN is set, but recommended)
+Verify sender domain with Resend's DNS (SPF/DKIM and preferably DMARC). Never use a sender domain belonging to another entity.
+
+Alternative SMTP: WEB_AUTH_EMAIL_PROVIDER=smtp
+WEB_AUTH_SMTP_HOST, WEB_AUTH_SMTP_PORT=587, WEB_AUTH_SMTP_FROM
 WEB_AUTH_SMTP_USERNAME and WEB_AUTH_SMTP_PASSWORD when required.
+No provider key or SMTP password may be stored in source control.
+Provider acceptance (Resend email ID / SMTP response) does NOT guarantee delivery to a mailbox.
+No automatic retries on an ambiguous HTTP timeout; Resend Idempotency-Key allows safe explicit reconciliation if necessary.
 
 Telegram Login Widget domain requires BotFather configuration.
 
@@ -49,7 +59,7 @@ Equal email must never merge balances. Legacy Telegram/VK flows remain intact.
 - /login 200, cache no-store; /mini-app and health intact.
 - Providers shown as enabled only when configured.
 - OAuth state+PKCE callback succeeds/replay fails; no open redirect.
-- Email ticket single-use; delivery failures do not create identities.
+- Email 6-digit code in a real message, inline field, auto-submit on sixth digit, consumed once; 5 guesses, cooldown and durable rate limits. Provider delivery errors must not authenticate.
 - Telegram signed widget payload and browser Mini App launch preserved.
 - Account linking only after provider verification, no takeover.
 - Ref entry /?ref=CODE -> /login?ref=CODE -> /mini-app/?ref=CODE.
