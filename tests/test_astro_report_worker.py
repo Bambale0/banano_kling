@@ -51,7 +51,7 @@ def test_job_recovers_full_natal_after_provider_error_and_reuses_checkpoint(tmp_
         assert await worker.run_once(now=int(time.time()) + 5)
         response = await jobs.status(owner_id=99, job_id=ident)
         assert response["status"] == "completed"
-        assert response["report"]["word_count"] >= 10000
+        assert response["report"]["word_count"] >= load_report_plan("natal").min_total_words
         assert provider.requests.count(provider.requests[0]) == 1
         assert len(response["report"]["sections"]) == len(load_report_plan("natal").sections)
         assert await worker.run_once() is False
