@@ -137,11 +137,25 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
-  await failed.getByText('Не удалось подготовить Telegram-вход.', { exact: false }).waitFor()
-  await failed.getByRole('button', { name: /Telegram не открылся/ }).click()
+  await failed.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
   console.log('login/auth-failure fallback: OK')
+
+  const withoutOidc = await browser.newPage()
+  await withoutOidc.route('**/mini-app/api/browser-auth/config', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, bot_username: 'ExampleBot', oidc_client_id: '', oidc_nonce: '' }),
+  }))
+  await withoutOidc.route('**/telegram-widget.js?22', route => route.fulfill({
+    status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
+  }))
+  await withoutOidc.goto(origin + '/login')
+  await withoutOidc.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
+  assert.equal(await withoutOidc.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
+  await withoutOidc.close()
+  console.log('login/oidc-unconfigured -> legacy widget: OK')
 } finally {
   if (browser) await browser.close()
   server.close()
