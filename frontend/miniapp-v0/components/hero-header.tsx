@@ -18,7 +18,7 @@ export function HeroHeader() {
   }
 
   return (
-    <header className="sticky miniapp-sticky-header z-40 bg-background/80 px-3 pb-2 pt-3 backdrop-blur-xl sm:px-4 lg:px-6">
+    <header className="sticky miniapp-sticky-header z-40 bg-background px-3 pb-2 pt-3 sm:px-4 lg:px-6">
       <div className="mx-auto w-full max-w-[1180px]">
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/50 bg-card/55 px-3 py-2.5 shadow-lg shadow-background/30">
           <div className="min-w-0">
