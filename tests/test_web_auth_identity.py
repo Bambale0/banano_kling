@@ -1,4 +1,5 @@
 """Persistent browser identities: real SQLite transactions, replay and linking."""
+
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
