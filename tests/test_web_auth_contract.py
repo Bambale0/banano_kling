@@ -79,17 +79,16 @@ def test_login_html_shows_four_methods_and_local_api_only():
     assert 'new URL(payload.redirect||next,window.location.origin)' in html
     assert 'window.location.assign(destination.pathname+destination.search+destination.hash)' in html
     assert "/mini-app/api/web-auth" in html
-    # The email URL fragment never reaches Nginx access logs; only POST
-    # consumes the ticket, so passive email link scanners cannot burn it.
-    assert 'window.location.hash.replace(/^#/,"")' in html
-    assert 'window.history.replaceState(' in html
-    assert 'method:"POST",credentials:"same-origin"' in html
+    assert 'id="code-form"' in html
+    assert 'id="otp-code"' in html
+    assert 'autocomplete="one-time-code"' in html
+    assert 'codeInput.value.length===6' in html
     assert 'API+"/email/verify"' in html
+    assert 'challenge_id:challengeId,code:codeInput.value' in html
+    assert 'resendAt=Date.now()' in html
     backend = (ROOT / "bot/web_auth.py").read_text(encoding="utf-8")
-    assert '"/login#ticket=" + token' in backend
     assert 'app.router.add_post(root + "/email/verify", email_verify)' in backend
     assert 'app.router.add_get(root + "/email/verify"' not in backend
-
     assert "localStorage" not in html
 
 
