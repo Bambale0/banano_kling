@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Read-only, privacy-safe Lava payment cohort audit.
 
 Produces aggregate counts only: no order IDs, payment IDs, customer details,
@@ -8,10 +7,10 @@ and read-only, including when called by an operator on production.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 import os
 import sys
+from datetime import datetime, timezone
 
 STATUS_SQL = """
 SELECT status, count(*)
@@ -156,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         result = audit_database(dsn)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - fail closed without leaking DSNs
         # Database connection exception strings can contain server details.
         print(f"ERROR: audit failed ({type(exc).__name__})", file=sys.stderr)
         return 1
