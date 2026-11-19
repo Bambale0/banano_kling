@@ -169,6 +169,35 @@ async def test_google_oauth_start_requires_state_cookie_and_pkce(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_yandex_oauth_uses_registered_permissions_without_extra_scope(monkeypatch):
+    """Yandex returns invalid_scope when unregistered login:email is requested."""
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setenv("WEB_AUTH_YANDEX_CLIENT_ID", "registered-yandex-client")
+    monkeypatch.setenv("WEB_AUTH_YANDEX_CLIENT_SECRET", "test-secret")
+    app = web.Application()
+    app.router.add_get("/mini-app/api/web-auth/start/{provider}", web_auth.oauth_start)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.get(
+            "/mini-app/api/web-auth/start/yandex?next=%2Flogin%3Fref%3DTEST",
+            allow_redirects=False,
+        )
+        assert response.status == 302
+        parsed = urlsplit(response.headers["Location"])
+        assert parsed.hostname == "oauth.yandex.ru"
+        params = parse_qs(parsed.query)
+        # Yandex OAuth uses permissions registered for the app if scope is omitted.
+        assert "scope" not in params
+        assert params["response_type"] == ["code"]
+        assert params["redirect_uri"] == [
+            "https://neuromixbot.com/mini-app/api/web-auth/callback/yandex"
+        ]
+        assert params["code_challenge_method"] == ["S256"]
+        assert len(params["state"][0]) == 43
+        assert response.cookies["nm_web_oauth_state"]["httponly"]
+        assert response.cookies["nm_web_oauth_state"]["secure"]
+
+
+@pytest.mark.asyncio
 async def test_email_same_email_never_silently_merges_google_account():
     google = await web_auth._complete_identity(SimpleNamespace(), "google", "google-email-sub", _flow())
     email = await web_auth._complete_identity(SimpleNamespace(), "email", "test@example.com", _flow())
