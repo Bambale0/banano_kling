@@ -202,6 +202,10 @@ jobs:
   miniapp_e2e:
     name: GitHub runner — Mini App browser E2E
     runs-on: ubuntu-24.04
+    # Match the locked frontend Playwright version; browsers and signed OS
+    # libraries are preinstalled, so apt mirror outages cannot block E2E.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     needs: [lint, test]
     if: >-
       ${{
@@ -244,15 +248,13 @@ jobs:
         id: build
         run: npm run build
 
-      - name: Prepare signed Ubuntu apt mirror
-        run: |
-          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
-          bash ../../scripts/ci/prepare-ubuntu-apt.sh
+      - name: Verify apt mirror fallback fixture
+        run: bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
 
-      - name: Install Chromium and WebKit runtimes
+      - name: Verify matching Chromium and WebKit runtimes
         id: chromium
         timeout-minutes: 10
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install chromium webkit
 
       - name: Prepare mounted static export
         id: prepare
