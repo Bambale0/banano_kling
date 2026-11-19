@@ -35,6 +35,38 @@ _MAX_GUESSES = 5
 _RESEND_API = "https://api.resend.com/emails"
 
 
+def _limit(name: str, default: int, lower: int, upper: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    return value if lower <= value <= upper else default
+
+
+def _ttl() -> int:
+    return _limit("WEB_AUTH_EMAIL_CODE_TTL_SECONDS", _CODE_TTL, 120, 900)
+
+
+def _cooldown() -> int:
+    return _limit("WEB_AUTH_EMAIL_RESEND_COOLDOWN_SECONDS", _RESEND_COOLDOWN, 30, 180)
+
+
+def _window() -> int:
+    return _limit("WEB_AUTH_EMAIL_RATE_WINDOW_SECONDS", _RATE_WINDOW, 300, 3600)
+
+
+def _email_quota() -> int:
+    return _limit("WEB_AUTH_EMAIL_SENDS_PER_WINDOW", _MAX_EMAIL_SENDS, 1, 10)
+
+
+def _ip_quota() -> int:
+    return _limit("WEB_AUTH_EMAIL_IP_SENDS_PER_WINDOW", _MAX_IP_SENDS, 1, 100)
+
+
+def _max_guesses() -> int:
+    return _limit("WEB_AUTH_EMAIL_MAX_CODE_ATTEMPTS", _MAX_GUESSES, 3, 10)
+
+
 class EmailDeliveryError(Exception):
     """Do not leak provider payloads or secret-bearing HTTP headers."""
 
@@ -230,7 +262,7 @@ async def _issue(email: str, ip: str, mode: str, source: str | None,
             # Keep history beyond code expiry for request throttling.
             await db.execute(
                 "DELETE FROM web_auth_email_rate WHERE created_at_epoch < ?",
-                (now - _RATE_WINDOW,),
+                (now - _window(),),
             )
             await db.execute(
                 "DELETE FROM web_auth_email_codes WHERE expires_at_epoch <= ?", (now,),
@@ -238,16 +270,16 @@ async def _issue(email: str, ip: str, mode: str, source: str | None,
             email_count = await (await db.execute(
                 "SELECT COUNT(*), MAX(created_at_epoch) FROM web_auth_email_rate "
                 "WHERE email_key = ? AND created_at_epoch > ?",
-                (email_key, now - _RATE_WINDOW),
+                (email_key, now - _window()),
             )).fetchone()
             ip_count = await (await db.execute(
                 "SELECT COUNT(*) FROM web_auth_email_rate WHERE ip_key = ? "
-                "AND created_at_epoch > ?", (ip_key, now - _RATE_WINDOW),
+                "AND created_at_epoch > ?", (ip_key, now - _window()),
             )).fetchone()
-            if (int(email_count[0]) >= _MAX_EMAIL_SENDS
-                    or int(ip_count[0]) >= _MAX_IP_SENDS
+            if (int(email_count[0]) >= _email_quota()
+                    or int(ip_count[0]) >= _ip_quota()
                     or (email_count[1] is not None
-                        and now - int(email_count[1]) < _RESEND_COOLDOWN)):
+                        and now - int(email_count[1]) < _cooldown())):
                 raise ValueError("Email code cooldown or rate limit")
             await db.execute(
                 "DELETE FROM web_auth_email_codes WHERE email = ?", (email,),
@@ -259,7 +291,7 @@ async def _issue(email: str, ip: str, mode: str, source: str | None,
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (hashlib.sha256(ticket.encode()).hexdigest(), email,
                  _code_hash(ticket, code), mode, source, destination,
-                 now, now + _CODE_TTL),
+                 now, now + _ttl()),
             )
             await db.execute(
                 """INSERT INTO web_auth_email_rate
@@ -295,7 +327,7 @@ async def _verify(ticket: str, code: str) -> dict | None:
                    FROM web_auth_email_codes WHERE challenge_hash = ?""" + suffix,
                 (digest,),
             )).fetchone()
-            if not row or int(row[6]) <= now or int(row[5]) >= _MAX_GUESSES:
+            if not row or int(row[6]) <= now or int(row[5]) >= _max_guesses():
                 await db.rollback()
                 return None
             match = hmac.compare_digest(expected, str(row[1]))
@@ -358,15 +390,15 @@ async def email_start(request: web.Request) -> web.Response:
                        email_provider(), uncertain)
         if uncertain:
             return auth._json({
-                "ok": True, "challenge_id": ticket, "expires_in": _CODE_TTL,
-                "resend_after": _RESEND_COOLDOWN,
+                "ok": True, "challenge_id": ticket, "expires_in": _ttl(),
+                "resend_after": _cooldown(),
                 "message": "Отправка пока не подтверждена. Если код придёт, введите его здесь.",
             }, 202)
         return auth._json({"ok": False, "error": "Email delivery unavailable"}, 503)
 
     return auth._json({
-        "ok": True, "challenge_id": ticket, "expires_in": _CODE_TTL,
-        "resend_after": _RESEND_COOLDOWN,
+        "ok": True, "challenge_id": ticket, "expires_in": _ttl(),
+        "resend_after": _cooldown(),
         "message": "На почту отправлен 6-значный код. Введите его здесь.",
     })
 
