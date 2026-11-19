@@ -4,8 +4,6 @@ import hashlib
 import os
 import re
 from pathlib import Path
-from types import SimpleNamespace
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from aiohttp import web
@@ -119,8 +117,7 @@ async def test_public_config_flags_disabled_providers_without_secrets(monkeypatc
     monkeypatch.setattr(web_auth, "_session_account", no_session)
     app = web.Application()
     app.router.add_get("/mini-app/api/web-auth/config", web_auth.web_auth_config)
-    async with TestServer(app) as server:
-        async with TestClient(server) as client:
+    async with TestServer(app) as server, TestClient(server) as client:
             resp = await client.get("/mini-app/api/web-auth/config")
             assert resp.status == 200
             value = await resp.json()
@@ -136,8 +133,7 @@ async def test_telegram_endpoint_rejects_unsigned_identity_and_bad_origin(monkey
     monkeypatch.delenv("WEB_AUTH_PUBLIC_ORIGIN", raising=False)
     app = web.Application()
     app.router.add_post("/mini-app/api/web-auth/telegram", web_auth.telegram_login)
-    async with TestServer(app) as server:
-        async with TestClient(server) as client:
+    async with TestServer(app) as server, TestClient(server) as client:
             resp = await client.post("/mini-app/api/web-auth/telegram",
                                      json={"telegram_auth": {"id": 12345}})
             assert resp.status == 403
