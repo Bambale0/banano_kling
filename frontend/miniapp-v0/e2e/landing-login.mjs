@@ -145,6 +145,35 @@ try {
   }
 
 
+  // An already authenticated browser session resumes its exact payment intent
+  // without opening the new OIDC approval flow again.
+  const activeSession = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let activeSessionConfigRequests = 0
+  activeSession.on('request', request => {
+    if (request.url().includes('/mini-app/api/browser-auth/config')) activeSessionConfigRequests += 1
+  })
+  const activeReturnTo = '/mini-app/?intent=topup&package_id=mini&provider=lava_card'
+  const activeInitData = new URLSearchParams({
+    query_id: 'browser_e2e',
+    user: JSON.stringify({ id: 123 }),
+    auth_date: String(Math.floor(Date.now() / 1000)),
+    hash: 'browser_mock',
+  }).toString()
+  const activeFragment = new URLSearchParams({ tgWebAppData: activeInitData }).toString()
+  await activeSession.goto(
+    origin + '/login?return_to=' + encodeURIComponent(activeReturnTo) + '#' + activeFragment,
+    { waitUntil: 'load' },
+  )
+  await activeSession.waitForURL(url =>
+    url.pathname === '/mini-app/' &&
+    url.searchParams.get('intent') === 'topup' &&
+    url.searchParams.get('package_id') === 'mini' &&
+    url.searchParams.get('provider') === 'lava_card',
+  )
+  assert.equal(activeSessionConfigRequests, 0, 'active browser session must not request a new OIDC challenge')
+  await activeSession.close()
+  console.log('login/active browser session -> exact payment intent: OK')
+
   // Real landing CTAs: a click must show /login, not jump into unauthenticated Mini App.
   for (const [width, selector] of [[1440, '.hot-enter'], [390, '.grunge-mobile-enter']]) {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
