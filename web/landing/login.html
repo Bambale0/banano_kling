@@ -44,6 +44,11 @@ label{display:block;font-size:12px;color:var(--muted);margin-bottom:7px}
 .email-row{display:flex;gap:8px}
 input{background:#111314;border:1px solid #626262;border-radius:0;color:white;min-width:0;width:100%;padding:12px 13px;font:inherit;font-size:14px}
 .email-row button{width:auto;background:var(--sun);color:#1e1c16;border-color:var(--sun);padding:10px 17px}
+#code-form{display:none;margin-top:16px;padding:15px;border:1px dashed #a27c35;background:#22201a}
+#otp-code{font:700 25px ui-monospace,monospace;text-align:center;letter-spacing:.31em;font-variant-numeric:tabular-nums}
+#code-form .email-row button{white-space:nowrap}
+#code-form .code-secondary{margin-top:10px;background:none;color:#e4b454;border:0;padding:7px 0;min-height:30px;text-decoration:underline;font-size:12px}
+#code-form .code-secondary:disabled{color:#999;text-decoration:none}
 small{color:#999;font-size:11px;line-height:1.6;display:block;margin-top:17px}
 #telegram-widget{margin-top:8px;min-height:2px;display:flex;align-items:center;justify-content:center}
 #status{margin-top:18px;font-size:13px;line-height:1.6;color:#dcd1b5;min-height:20px}
@@ -77,8 +82,13 @@ footer{display:flex;justify-content:space-between;gap:15px;padding-top:18px;bord
 <div id="telegram-widget" aria-label="Вход через Telegram"></div>
 <div class="email-divider">ИЛИ ПО ПОЧТЕ</div>
 <form id="email-form" autocomplete="on">
-<label for="email">Email — пришлём одноразовую ссылку</label>
+<label for="email">Email — пришлём 6-значный код</label>
 <div class="email-row"><input id="email" name="email" type="email" required autocomplete="email" placeholder="name@example.com"><button id="email-button" disabled type="submit">Отправить</button></div>
+</form>
+<form id="code-form" autocomplete="on" novalidate>
+<label for="otp-code">Код подтверждения из письма</label>
+<div class="email-row"><input id="otp-code" name="one-time-code" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" aria-label="6-значный код из письма" required><button type="submit" id="verify-button">Подтвердить</button></div>
+<button type="button" class="code-secondary" id="resend-code" disabled>Отправить код повторно</button>
 </form>
 <div id="status" role="status" aria-live="polite">Проверяем доступные способы входа…</div>
 <small>Аккаунты связываются только после подтверждения каждого способа. Совпадение email само по себе не объединяет балансы и историю.</small>
@@ -91,11 +101,15 @@ footer{display:flex;justify-content:space-between;gap:15px;padding-top:18px;bord
 "use strict";
 const API="/mini-app/api/web-auth";
 const query=new URLSearchParams(window.location.search);
-// Magic link bearer lives in the fragment (never in HTTP access logs).
-const magicTicket=new URLSearchParams(window.location.hash.replace(/^#/,"")).get("ticket");
-if(magicTicket)window.history.replaceState(null,"",window.location.pathname+window.location.search);
 const status=document.getElementById("status");
 const form=document.getElementById("email-form");
+const codeForm=document.getElementById("code-form");
+const codeInput=document.getElementById("otp-code");
+const resendButton=document.getElementById("resend-code");
+let challengeId="";
+let resendAt=0;
+let sendingCode=false;
+let verifyingCode=false;
 const providerButtons={google:document.getElementById("google"),yandex:document.getElementById("yandex")};
 let authenticated=false;
 let connected=[];
@@ -156,23 +170,6 @@ async function setup(){
         :(provider==="google"?"Подключить Google":"Подключить Яндекс");
     }
   }
-  if(magicTicket){
-    try{
-      message("Подтверждаем вход по почте…");
-      const response=await fetch(API+"/email/verify",{
-        method:"POST",credentials:"same-origin",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ticket:magicTicket})
-      });
-      const payload=await readJson(response);
-      const destination=new URL(payload.redirect||next,window.location.origin);
-      if(destination.origin!==window.location.origin)throw new Error("Неверный адрес возврата");
-      window.location.assign(destination.pathname+destination.search+destination.hash);
-    }catch{
-      message("Ссылка уже использована или срок действия истёк. Запроси новое письмо.");
-    }
-    return;
-  }
   if(!query.get("error")&&!query.get("linked"))
     message(authenticated?"Ты в аккаунте. Можешь подключить ещё один способ входа.":"Выбери доступный способ входа.");
   if(data.providers?.telegram)setupTelegram();
@@ -214,20 +211,64 @@ async function setupTelegram(){
   document.getElementById("telegram-widget").appendChild(script);
  }catch{message("Telegram временно недоступен. Другие способы входа можно использовать.");}
 }
-form.addEventListener("submit",async(event)=>{
- event.preventDefault();
+async function requestEmailCode(){
+ if(sendingCode)return;
+ if(challengeId&&Date.now()<resendAt){message("Повторная отправка пока недоступна.");return;}
+ sendingCode=true;
  const button=document.getElementById("email-button");
  button.disabled=true;
+ resendButton.disabled=true;
  try{
   const data=await readJson(await fetch(API+"/email/start",{
     method:"POST",credentials:"same-origin",
     headers:{"Content-Type":"application/json"},
     body:JSON.stringify({email:document.getElementById("email").value,next,intent:mode()})
   }));
-  message(data.message||"Проверь почту.");
- }catch(error){message(error.message||"Не удалось отправить письмо.")}
- finally{button.disabled=false;}
-});
+  if(!/^[A-Za-z0-9_-]{43}$/.test(data.challenge_id||""))throw new Error("Не удалось создать подтверждение");
+  challengeId=data.challenge_id;
+  resendAt=Date.now()+(Number(data.resend_after)||60)*1000;
+  codeInput.value="";
+  codeForm.style.display="block";
+  message(data.message||"Введите 6-значный код из письма.");
+  codeInput.focus();
+ }catch(error){message(error.message||"Не удалось отправить код.");}
+ finally{sendingCode=false;button.disabled=false;updateResendButton();}
+}
+function updateResendButton(){
+ if(!challengeId||sendingCode){resendButton.disabled=true;return;}
+ const seconds=Math.max(0,Math.ceil((resendAt-Date.now())/1000));
+ resendButton.disabled=seconds>0;
+ resendButton.textContent=seconds>0?"Повторить через "+seconds+" с":"Отправить новый код";
+}
+window.setInterval(updateResendButton,1000);
+form.addEventListener("submit",async(event)=>{event.preventDefault();await requestEmailCode();});
+resendButton.addEventListener("click",()=>{void requestEmailCode();});
+async function submitCode(){
+ if(verifyingCode||!challengeId||!/^[0-9]{6}$/.test(codeInput.value))return;
+ verifyingCode=true;
+ document.getElementById("verify-button").disabled=true;
+ try{
+  message("Проверяем код…");
+  const payload=await readJson(await fetch(API+"/email/verify",{
+    method:"POST",credentials:"same-origin",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({challenge_id:challengeId,code:codeInput.value})
+  }));
+  challengeId="";
+  const destination=new URL(payload.redirect||next,window.location.origin);
+  if(destination.origin!==window.location.origin)throw new Error("Неверный адрес возврата");
+  window.location.assign(destination.pathname+destination.search+destination.hash);
+ }catch{
+  codeInput.value="";
+  codeInput.focus();
+  message("Неверный или просроченный код. Проверь письмо или запроси новый.");
+ }finally{
+  verifyingCode=false;
+  document.getElementById("verify-button").disabled=false;
+ }
+}
+codeForm.addEventListener("submit",async(event)=>{event.preventDefault();await submitCode();});
+codeInput.addEventListener("input",()=>{codeInput.value=codeInput.value.replace(/[^0-9]/g,"").slice(0,6);if(codeInput.value.length===6)void submitCode();});
 document.getElementById("logout").addEventListener("click",async()=>{
  try{
   await readJson(await fetch(API+"/logout",{method:"POST",credentials:"same-origin"}));
