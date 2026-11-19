@@ -41,11 +41,10 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt pytest pytest-asyncio
       - name: Install validated FFmpeg media tools
+        timeout-minutes: 5
         run: |
-          bash scripts/ci/test-prepare-ubuntu-apt.sh
-          bash scripts/ci/prepare-ubuntu-apt.sh
-          sudo timeout 300 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends ffmpeg
-          ffprobe -version | head -1
+          set -Eeuo pipefail
+          bash scripts/ci/install-verified-ffmpeg.sh
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
   postgres:
