@@ -1369,11 +1369,15 @@ try {
   // Web browser accounts can sign out from their own profile; Telegram-native
   // accounts do not receive this button. Confirming must discard browser
   // credential snapshots and navigate to /login without auth-bearing params.
-  await page.route('**/login', route => route.fulfill({
-    status: 200,
-    contentType: 'text/html',
-    body: '<!DOCTYPE html><html lang="ru"><body><h1>Вход в NEUROMIX</h1></body></html>',
-  }))
+  let loginDocumentServed = false
+  await page.route('**/login', route => {
+    loginDocumentServed = true
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!DOCTYPE html><html lang="ru"><body><h1>Вход в NEUROMIX</h1></body></html>',
+    })
+  })
   await page.getByRole('button', { name: 'Профиль', exact: true }).click()
   const logoutButton = page.getByRole('button', { name: 'Выйти из аккаунта', exact: true })
   await logoutButton.waitFor()
@@ -1391,8 +1395,9 @@ try {
   assert.equal(new URL(page.url()).pathname, '/mini-app/', 'Failed server logout must preserve the active web page')
   await page.getByRole('alertdialog').getByRole('button', { name: 'Выйти', exact: true }).click()
   await page.waitForURL('**/login')
+  await page.waitForLoadState('load')
   assert.equal(browserLogoutCalls, 2, 'Browser logout must retry revocation before redirect')
-  await page.getByRole('heading', { name: 'Вход в NEUROMIX' }).waitFor()
+  assert.equal(loginDocumentServed, true, 'Sign-out must request the clean login document')
   const logoutStorage = await page.evaluate(() => ({
     staleSession: window.sessionStorage.getItem('__banano_tg_init_data'),
     staleLaunch: window.sessionStorage.getItem('__banano_initial_search'),
