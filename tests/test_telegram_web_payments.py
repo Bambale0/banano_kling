@@ -53,6 +53,10 @@ def test_bot_buttons_use_website_without_auth_credentials(monkeypatch):
     assert parse_qs(urlsplit(destination).query) == {'intent': ['topup'], 'package_id': ['mini'], 'provider': ['lava_card']}
     assert buttons[2].callback_data == 'buy_stars_mini'
     assert buttons[3].callback_data == 'check_payment_123'
+    tribute_destination = parse_qs(urlsplit(buttons[4].url).query)['return_to'][0]
+    assert parse_qs(urlsplit(tribute_destination).query) == {
+        'intent': ['topup'], 'package_id': ['mini'], 'provider': ['tribute'],
+    }
 
 
 async def test_bot_old_callback_never_reaches_checkout():
@@ -200,3 +204,48 @@ def test_browser_login_and_stars_remain_available():
     assert vk_payment_provider_denied({'platform': 'telegram'}, 'telegram_stars') is None
     assert vk_payment_provider_denied({'platform': 'vk'}, 'telegram_stars').status == 403
     assert vk_payment_provider_denied({'platform': 'vk'}, 'lava_card') is None
+
+
+async def test_outbound_payment_keyboard_uses_current_fsm_promo():
+    from aiogram.methods import SendMessage
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
+
+    middleware = TelegramPaymentRequestMiddleware()
+    state = SimpleNamespace(get_data=AsyncMock(return_value={'promo_code': 'BONUS50'}))
+    middleware.fsm = SimpleNamespace(get_context=lambda **kwargs: state)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='Card', callback_data='buy_lava_card_mini'),
+    ]])
+    method = SendMessage(chat_id=123, text='Checkout', reply_markup=markup)
+    send = AsyncMock()
+    await middleware(send, AsyncMock(), method)
+
+    sent = send.await_args.args[1]
+    destination = parse_qs(urlsplit(sent.reply_markup.inline_keyboard[0][0].url).query)['return_to'][0]
+    assert parse_qs(urlsplit(destination).query) == {
+        'intent': ['topup'], 'package_id': ['mini'],
+        'provider': ['lava_card'], 'promo_code': ['BONUS50'],
+    }
+    state.get_data.assert_awaited_once()
+
+
+async def test_outbound_unrelated_keyboard_does_not_query_fsm():
+    from aiogram.methods import SendMessage
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
+
+    middleware = TelegramPaymentRequestMiddleware()
+    state = SimpleNamespace(get_data=AsyncMock())
+    middleware.fsm = SimpleNamespace(get_context=lambda **kwargs: state)
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text='Profile', callback_data='menu_profile'),
+    ]])
+    method = SendMessage(chat_id=123, text='Profile', reply_markup=markup)
+    send = AsyncMock()
+    await middleware(send, AsyncMock(), method)
+
+    assert send.await_args.args[1].reply_markup is markup
+    state.get_data.assert_not_awaited()
