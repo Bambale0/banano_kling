@@ -4,13 +4,15 @@ from urllib.parse import urlencode, urlsplit
 from bot.config import config
 
 
-def web_payment_url(package_id: str = "", provider: str = "", *, intent: str = "topup") -> str:
+def web_payment_url(package_id: str = "", provider: str = "", *, intent: str = "topup", promo_code: str = "") -> str:
     origin = urlsplit(config.mini_app_url)
     query = {"intent": intent}
     if package_id:
         query["package_id"] = package_id
     if provider:
         query["provider"] = provider
+    if promo_code:
+        query["promo_code"] = promo_code
     destination = "/mini-app/?" + urlencode(query)
     return f"{origin.scheme}://{origin.netloc}/login?" + urlencode({"return_to": destination})
 

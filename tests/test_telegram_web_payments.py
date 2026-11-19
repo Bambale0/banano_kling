@@ -86,6 +86,27 @@ async def test_native_non_xtr_invoice_is_rejected():
     send.assert_not_awaited()
 
 
+async def test_legacy_email_handoff_retains_package_method_and_selected_promo():
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message
+
+    from bot.states import PaymentStates
+    from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
+
+    bot = AsyncMock()
+    message = Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private'), text='buyer@synthetic.test').as_(bot)
+    state = AsyncMock()
+    state.get_data.return_value = {'lava_checkout_package_id': 'mini', 'lava_checkout_mode': 'card', 'promo_code': 'TEST-PROMO'}
+    handler = AsyncMock()
+    await TelegramPaymentSurfaceMiddleware()(handler, message, {'raw_state': PaymentStates.waiting_lava_email.state, 'state': state})
+    handler.assert_not_awaited()
+    state.clear.assert_awaited_once()
+    link = bot.call_args.args[0].reply_markup.inline_keyboard[0][0].url
+    destination = parse_qs(urlsplit(link).query)['return_to'][0]
+    assert parse_qs(urlsplit(destination).query) == {'intent': ['topup'], 'package_id': ['mini'], 'provider': ['lava_card'], 'promo_code': ['TEST-PROMO']}
+
+
 async def test_successful_stars_reaches_settlement_even_in_legacy_lava_email_state():
     from datetime import UTC, datetime
 

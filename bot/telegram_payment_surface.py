@@ -12,9 +12,9 @@ from bot.states import PaymentStates
 from bot.web_payments import payment_callback_target, web_payment_url
 
 
-def website_keyboard(package_id: str = "", provider: str = "") -> InlineKeyboardMarkup:
+def website_keyboard(package_id: str = "", provider: str = "", *, promo_code: str = "") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Открыть оплату на сайте", url=web_payment_url(package_id, provider))],
+        [InlineKeyboardButton(text="Открыть оплату на сайте", url=web_payment_url(package_id, provider, promo_code=promo_code))],
         [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="menu_stars")],
     ])
 
@@ -50,13 +50,19 @@ class TelegramPaymentSurfaceMiddleware(BaseMiddleware):
             if deep_link:
                 target = payment_callback_target(argument)
         if target is not None or legacy_email or deep_link:
-            if legacy_email and data.get("state"):
-                await data["state"].clear()
+            state = data.get("state")
+            payment_state = await state.get_data() if state is not None else {}
+            if legacy_email and state is not None:
+                target = (
+                    str(payment_state.get("lava_checkout_package_id") or ""),
+                    "lava_" + str(payment_state.get("lava_checkout_mode") or "sbp"),
+                )
+                await state.clear()
             message = event.message if isinstance(event, types.CallbackQuery) else event
             if isinstance(event, types.CallbackQuery):
                 await event.answer()
             if message:
-                await message.answer("Баланс и пополнение доступны на сайте. После входа вы вернётесь к оплате. В Telegram можно оплатить Stars.", reply_markup=website_keyboard(*(target or ("", ""))))
+                await message.answer("Баланс и пополнение доступны на сайте. После входа вы вернётесь к оплате. В Telegram можно оплатить Stars.", reply_markup=website_keyboard(*(target or ("", "")), promo_code=str(payment_state.get("promo_code") or "")))
             return
         return await handler(event, data)
 
