@@ -20,7 +20,7 @@ const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url || '/', 'http://127.0.0.1').pathname
     if (path === '/mini-app/api/browser-auth/config') {
-      json(res, 200, { ok: true, bot_username: 'ExampleBot' })
+      json(res, 200, { ok: true, bot_username: 'ExampleBot', oidc_client_id: '123456', oidc_nonce: 'ci-test-nonce-1234567890123456789012' })
       return
     }
     if (path === '/mini-app/api/browser-auth' && req.method === 'POST') {
@@ -87,6 +87,17 @@ try {
     await page.route('https://telegram.org/js/**', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: '',
     }))
+    await page.route('**/telegram-login.js', route => route.fulfill({
+      status: 200, contentType: 'text/javascript', body: `
+        window.Telegram = window.Telegram || {};
+        window.Telegram.Login = {
+          auth(options, callback) {
+            window.__ciOidcOptions = options;
+            callback({ id_token: 'ci-id-token' });
+          }
+        };
+      `,
+    }))
     await page.route('**/telegram-widget.js?22', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
     }))
@@ -94,7 +105,8 @@ try {
       waitUntil: 'load',
     })
     assert.equal(response.status(), 200)
-    await page.locator('#ci-telegram-login').waitFor()
+    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
+    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       headings: document.querySelectorAll('#login-page-title').length,
@@ -107,12 +119,14 @@ try {
     assert.ok(metrics.scripts >= 2, 'Next.js bundles must load at /login')
     assert.deepEqual(errors, [], 'React/Next hydration errors')
     if (width === 390) {
-      await page.locator('#ci-telegram-login').click()
+      await page.getByRole('button', { name: 'Продолжить через Telegram' }).click()
       await page.waitForURL('**/mini-app/**')
       assert.ok(page.url().includes('startapp=test_ref'), 'startapp survives sign-in')
       assert.ok(page.url().includes('#tgWebAppData='), 'signed initData goes in URL fragment')
       assert.equal(posts.length, 1, 'a single signed login POST must be sent')
-      assert.equal(posts[0].telegram_auth.hash, 'mock_signed_payload')
+      assert.equal(posts[0].id_token, 'ci-id-token')
+      assert.equal(await page.evaluate(() => window.__ciOidcOptions.scope.join(',')), 'profile')
+      assert.equal(await page.evaluate(() => window.__ciOidcOptions.nonce), 'ci-test-nonce-1234567890123456789012')
     }
     await page.close()
     console.log(`login/shadcn [${width}]: OK`)
@@ -121,7 +135,7 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
-  await failed.getByText('Не удалось загрузить вход.', { exact: false }).waitFor()
+  await failed.getByText('Не удалось подготовить Telegram-вход.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
   console.log('login/auth-failure fallback: OK')
