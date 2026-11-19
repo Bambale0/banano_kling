@@ -2,6 +2,7 @@
 import base64
 import json
 import time
+from types import SimpleNamespace
 
 import pytest
 from cryptography.hazmat.primitives import hashes
@@ -128,13 +129,11 @@ async def test_browser_oidc_login_requires_matching_nonce_cookie(monkeypatch, si
 
 
 @pytest.mark.asyncio
-async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replace_it(monkeypatch):
+async def test_config_nonce_cookie_is_secure_and_legacy_fallback_does_not_replace_it():
     class Bot:
         calls = 0
 
         async def get_me(self):
-            from types import SimpleNamespace
-
             self.calls += 1
             return SimpleNamespace(username="ExampleBot")
 
