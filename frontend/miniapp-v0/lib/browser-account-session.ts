@@ -1,7 +1,7 @@
 'use client'
 
 import { currentAccountPlatform } from './account-platform'
-import { getInitData } from './api'
+import { getApiBasePath, getInitData } from './api'
 
 const BROWSER_AUTH_SNAPSHOT_KEYS = [
   '__banano_tg_init_data',
@@ -44,7 +44,7 @@ export function clearBrowserAccountCredentials(): void {
  * browser-signed Telegram payload. A local-only clear would silently re-login
  * a Yandex/email user whose web-auth cookie was still valid. */
 export async function revokeBrowserAccountSession(): Promise<void> {
-  const response = await fetch('/mini-app/api/web-auth/logout', {
+  const response = await fetch(`${getApiBasePath()}/web-auth/logout`, {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
