@@ -164,3 +164,73 @@ async def test_email_same_email_never_silently_merges_google_account():
         SimpleNamespace(cookies={"nm_web_session": email.cookies["nm_web_session"].value}),
     )
     assert google_account != email_account
+
+
+@pytest.mark.asyncio
+async def test_existing_google_and_telegram_accounts_merge_only_with_both_fresh_proofs():
+    # Existing Telegram account already has a different shared-account ID.
+    telegram = await web_auth._complete_identity(
+        SimpleNamespace(), "telegram", "456789123", _flow(),
+    )
+    first_id = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": telegram.cookies["nm_web_session"].value,
+    }))
+    google = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "already-google-sub", _flow(),
+    )
+    second_cookie = google.cookies["nm_web_session"].value
+    second_id = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": second_cookie,
+    }))
+    assert first_id != second_id
+
+    # This one action requires: a current Google session and a freshly
+    # verified Telegram Login Widget payload. Both are checked server side.
+    merged = await web_auth._complete_identity(
+        SimpleNamespace(cookies={"nm_web_session": second_cookie}),
+        "telegram", "456789123", _flow(source=second_id),
+    )
+    assert merged.location == "/login?linked=telegram"
+    result_id = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": merged.cookies["nm_web_session"].value,
+    }))
+    async with db_backend.connect() as db:
+        rows = await (await db.execute(
+            "SELECT account_id FROM web_auth_identities WHERE provider = 'google'",
+        )).fetchall()
+        tg = await (await db.execute(
+            "SELECT account_id FROM shared_account_identities WHERE platform = 'telegram'",
+        )).fetchall()
+        active = await (await db.execute(
+            "SELECT COUNT(*) FROM shared_accounts WHERE status = 'active'",
+        )).fetchone()
+    assert rows[0][0] == tg[0][0] == result_id
+    assert active[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_two_existing_accounts_without_source_session_proof_never_merge(monkeypatch):
+    first = await web_auth._complete_identity(SimpleNamespace(), "yandex", "existing-yandex", _flow())
+    second = await web_auth._complete_identity(SimpleNamespace(), "google", "existing-google", _flow())
+    first_id = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": first.cookies["nm_web_session"].value,
+    }))
+    second_id = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": second.cookies["nm_web_session"].value,
+    }))
+    assert first_id != second_id
+    # Even if a caller spoofs the source account, absent the actual signed
+    # session cookie the DB transaction must not transfer any accounts.
+    async def forged_session(request):
+        return first_id
+    monkeypatch.setattr(web_auth, "_session_account", forged_session)
+    denied = await web_auth._complete_identity(
+        SimpleNamespace(cookies={}),
+        "google", "existing-google", _flow(source=first_id),
+    )
+    assert denied.location == "/login?error=already-linked"
+    async with db_backend.connect() as db:
+        rows = await (await db.execute(
+            "SELECT id FROM shared_accounts WHERE status = 'active'",
+        )).fetchall()
+    assert len(rows) == 2
