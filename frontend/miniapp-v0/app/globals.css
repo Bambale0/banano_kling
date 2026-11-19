@@ -191,6 +191,8 @@
 
 .safe-bottom {
   padding-bottom: max(16px, var(--miniapp-safe-bottom));
+  padding-left: max(0px, var(--miniapp-safe-left));
+  padding-right: max(0px, var(--miniapp-safe-right));
 }
 
 .safe-top {
