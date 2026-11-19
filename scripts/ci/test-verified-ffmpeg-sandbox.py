@@ -64,7 +64,7 @@ def main() -> None:
             "fenced-convert", [
                 "ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist",
                 "file,pipe", "-format_whitelist", "ogg,mov,wav,mp3,aac",
-                "-threads", "1", "-i", str(source), "-map", "0:a:0",
+                "-filter_threads", "1", "-threads", "1", "-i", str(source), "-map", "0:a:0",
                 "-vn", "-threads", "1", "-c:a", "libmp3lame", "-b:a", "128k",
                 "-t", "16.0", "-fs", "15728640", "-y", str(folder / "direct.mp3"),
             ], fenced=True,
