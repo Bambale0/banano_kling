@@ -201,10 +201,19 @@
   padding-right: max(0px, var(--miniapp-safe-right));
 }
 
-/* A sticky element must remain below Telegram's controls while scrolling.
-   Padding on its outer shell alone does not protect it once it sticks. */
+/* Keep the shell inset in landscape without making its top padding a
+   second sticky offset (which exposed the scrolled Trends title on iOS). */
+.safe-horizontal {
+  padding-left: max(0px, var(--miniapp-safe-left));
+  padding-right: max(0px, var(--miniapp-safe-right));
+}
+
+/* The sticky header itself owns the top native exclusion area: its solid
+   background must cover scroll content all the way to the viewport edge.
+   Applying this inset to an ancestor AND a sticky top leaves a painted gap. */
 .miniapp-sticky-header {
-  top: max(16px, var(--miniapp-safe-top));
+  top: 0;
+  padding-top: calc(max(16px, var(--miniapp-safe-top)) + 12px);
 }
 
 /* Feed/profile lightboxes cover the whole WebView, not just the app shell. */

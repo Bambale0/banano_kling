@@ -650,6 +650,8 @@ try {
   await page.getByText('Онлайн', { exact: true }).waitFor()
   assert.equal(await page.getByText('Разреши боту писать тебе', { exact: true }).count(), 0)
 
+  await page.getByRole('heading', { name: 'Тренды', exact: true }).waitFor()
+
   // Telegram fullscreen draws native Back/Close controls above WebView content.
   // Its content-safe area is additional to the device notch, not a replacement.
   // Verify real geometry rather than only CSS class names; the insets can change
@@ -663,9 +665,11 @@ try {
       root.setProperty('--tg-safe-area-inset-bottom', '12px')
       root.setProperty('--tg-content-safe-area-inset-bottom', '8px')
       const header = document.querySelector('header')
+      const brandCard = header?.querySelector('.rounded-2xl')
+      const trendHeading = [...document.querySelectorAll('main h2')].find((item) => item.textContent?.trim() === 'Тренды')
       const bottom = document.querySelector('.safe-bottom')
       const navButton = document.querySelector('nav[aria-label="Разделы приложения"] button')
-      if (!header || !bottom || !navButton) throw new Error('Mini App shell is missing')
+      if (!header || !brandCard || !trendHeading || !bottom || !navButton) throw new Error('Mini App shell or Trends title is missing')
       const viewer = document.createElement('div')
       viewer.className = 'miniapp-fullscreen-viewer fixed inset-0'
       const close = document.createElement('button')
@@ -674,6 +678,10 @@ try {
       document.body.appendChild(viewer)
       const result = {
         headerTop: header.getBoundingClientRect().top,
+        headerBottom: header.getBoundingClientRect().bottom,
+        headerCardTop: brandCard.getBoundingClientRect().top,
+        trendHeadingTop: trendHeading.getBoundingClientRect().top,
+        headerBackground: getComputedStyle(header).backgroundColor,
         stickyTop: parseFloat(getComputedStyle(header).top),
         bottomPadding: parseFloat(getComputedStyle(bottom).paddingBottom),
         navButtonBottom: navButton.getBoundingClientRect().bottom,
@@ -683,13 +691,50 @@ try {
       viewer.remove()
       return result
     })
-    assert.ok(geometry.headerTop >= 79, `Telegram header overlap at ${width}px: ${JSON.stringify(geometry)}`)
-    assert.ok(geometry.stickyTop >= 79, `Sticky header may cross native controls at ${width}px`)
+    assert.ok(geometry.headerTop >= -1 && geometry.headerTop <= 1, `Header must own the top safe area at ${width}px: ${JSON.stringify(geometry)}`)
+    assert.equal(geometry.stickyTop, 0, `Sticky header cannot leave a gap exposing Trends above it at ${width}px`)
+    assert.ok(geometry.headerCardTop >= 79, `Brand controls overlap Telegram native buttons at ${width}px: ${JSON.stringify(geometry)}`)
+    assert.ok(geometry.trendHeadingTop >= geometry.headerBottom - 1, `Trends appears above NEUROMIX at ${width}px: ${JSON.stringify(geometry)}`)
+    assert.ok(geometry.headerBackground !== 'rgba(0, 0, 0, 0)' && geometry.headerBackground !== 'transparent', `Header must hide content scrolling behind it at ${width}px`)
     assert.ok(geometry.viewerCloseTop >= 79, `Lightbox close crosses native controls at ${width}px`)
     assert.ok(geometry.viewerPaddingTop >= 79, `Lightbox media crosses native controls at ${width}px`)
     assert.ok(geometry.bottomPadding >= 19, `Bottom navigation ignores Telegram insets at ${width}px`)
     assert.ok(geometry.navButtonBottom <= 801, `Nav buttons overlap home indicator at ${width}px`)
   }
+  // Regression for iPhone screenshot: after scrolling, the title must not
+  // appear in the empty strip above a sticky NEUROMIX header.
+  await page.setViewportSize({ width: 390, height: 520 })
+  const scrolledHeader = await page.evaluate(() => {
+    const main = document.querySelector('main')
+    const header = document.querySelector('header')
+    const brandCard = header?.querySelector('.rounded-2xl')
+    if (!main || !header || !brandCard) throw new Error('Sticky shell is missing')
+    const extraContent = document.createElement('div')
+    extraContent.style.height = '1600px'
+    main.appendChild(extraContent)
+    window.scrollTo(0, 180)
+    main.scrollTop = 180
+    const bounds = header.getBoundingClientRect()
+    const coveringElement = document.elementFromPoint(window.innerWidth / 2, Math.min(bounds.bottom - 2, window.innerHeight - 2))
+    const result = {
+      didScroll: window.scrollY > 0 || main.scrollTop > 0,
+      headerTop: bounds.top,
+      brandTop: brandCard.getBoundingClientRect().top,
+      topCoveredByHeader: coveringElement === header || header.contains(coveringElement),
+    }
+    main.scrollTop = 0
+    window.scrollTo(0, 0)
+    extraContent.remove()
+    return result
+  })
+  assert.ok(scrolledHeader.didScroll, 'Trends scroll regression did not actually scroll')
+  assert.ok(scrolledHeader.headerTop >= -1 && scrolledHeader.headerTop <= 1,
+    `Header moved away from Telegram chrome when scrolling: ${JSON.stringify(scrolledHeader)}`)
+  assert.ok(scrolledHeader.brandTop >= 79,
+    `Brand controls entered native Telegram safe area: ${JSON.stringify(scrolledHeader)}`)
+  assert.ok(scrolledHeader.topCoveredByHeader,
+    `A scrolling Trends title can paint on top of the header: ${JSON.stringify(scrolledHeader)}`)
+
   await page.evaluate(() => {
     const root = document.documentElement.style
     for (const side of ['top', 'bottom']) {

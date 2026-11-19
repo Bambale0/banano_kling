@@ -55,7 +55,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
   }, [setActiveTab, state.mode])
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-background flex flex-col">
+    <div className="min-h-screen overflow-x-clip bg-background flex flex-col">
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-b from-gold/[0.03] via-transparent to-cyan/[0.02]" />
         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-gold/[0.05] blur-[120px] rounded-full" />
@@ -67,7 +67,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
         <TelegramOpenGate />
       ) : (
         <>
-          <div className="relative flex flex-col min-h-screen safe-top min-w-0 overflow-x-hidden">
+          <div className="relative flex flex-col min-h-screen safe-horizontal min-w-0 overflow-x-clip">
             <HeroHeader />
           {/* A deep-linked trend owns the active Radix modal. Delivery is optional,
               so defer its offer instead of blocking the trend or fighting its focus trap. */}
