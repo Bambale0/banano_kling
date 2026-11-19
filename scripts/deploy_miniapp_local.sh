@@ -220,6 +220,8 @@ npm run lint
 rm -rf .next out
 npm run build
 [[ -s "${OUT_DIR}/index.html" ]] || die "static export did not create out/index.html"
+[[ -s "${OUT_DIR}/login/index.html" ]] || die "static export did not create out/login/index.html"
+grep -q 'id="login-page-title"' "${OUT_DIR}/login/index.html" || die "login route export missing branded page"
 [[ -d "${OUT_DIR}/_next/static" ]] || die "static export is missing _next/static"
 install -d -m 0700 "$build_work/telegram"
 rsync -a "${OUT_DIR}/" "$build_work/telegram/"
