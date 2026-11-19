@@ -124,6 +124,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("window.location.replace('/mini-app/'", self.html)
         self.assertIn("window.location.hash", self.html)
 
+    def test_browser_referrals_do_not_bypass_login(self):
+        self.assertIn("var keys = ['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'];", self.html)
+        self.assertNotIn("'tgWebAppStartParam', 'startapp'];", self.html)
+        self.assertIn("query.get('startapp') || query.get('tgWebAppStartParam')", self.html)
+        self.assertIn("document.querySelectorAll('a[href=\"/login\"]')", self.html)
+        self.assertIn("'/login?startapp=' + encodeURIComponent(start)", self.html)
+
     def test_uses_existing_miniapp_color_tokens(self):
         theme = (ROOT / "frontend/miniapp-v0/app/globals.css").read_text(encoding="utf-8")
         for key, value in (
