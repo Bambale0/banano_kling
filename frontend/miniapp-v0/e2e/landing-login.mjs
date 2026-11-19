@@ -136,6 +136,7 @@ try {
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
   await failed.getByText('Не удалось подготовить Telegram-вход.', { exact: false }).waitFor()
+  await failed.getByRole('button', { name: /Telegram не открылся/ }).click()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
   console.log('login/auth-failure fallback: OK')
