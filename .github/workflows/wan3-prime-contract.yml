@@ -82,6 +82,10 @@ jobs:
   browser:
     name: Wan Prime - all modes mobile browser
     runs-on: ubuntu-24.04
+    # Browser binaries/dependencies match package-lock; avoid apt mirror
+    # outages without skipping any Playwright contract tests.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     timeout-minutes: 20
     defaults:
       run:
@@ -95,11 +99,9 @@ jobs:
           cache-dependency-path: frontend/miniapp-v0/package-lock.json
       - run: npm ci
       - run: npm run build
-      - name: Prepare signed Ubuntu apt mirror
-        run: |
-          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
-          bash ../../scripts/ci/prepare-ubuntu-apt.sh
-      - run: npx playwright install --with-deps chromium
+      - name: Verify apt mirror fallback fixture
+        run: bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
+      - run: npx playwright install chromium
       - run: node e2e/wan3-prime.mjs
       - uses: actions/upload-artifact@v4
         if: always()
