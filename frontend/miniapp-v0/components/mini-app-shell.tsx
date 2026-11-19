@@ -76,7 +76,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
             botUsername={state.user.botUsername}
             onRefresh={refreshTelegramChatAccess}
           />
-            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+env(safe-area-inset-bottom))]">
+            <main className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden pb-[calc(6rem+var(--miniapp-safe-bottom))]">
               <div className="mx-auto w-full max-w-[1180px]">
                 {state.error && <p role="alert" className="mx-4 mt-4 rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{state.error}</p>}
                 {children}

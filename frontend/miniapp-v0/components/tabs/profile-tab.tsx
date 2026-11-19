@@ -967,11 +967,11 @@ export function ProfileTab() {
       )}
 
       {previewItem ? (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/95 px-3 py-6">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-background/95 miniapp-fullscreen-viewer">
           <button
             type="button"
             onClick={() => dismissPreview()}
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full bg-secondary/80 text-foreground"
+            className="absolute miniapp-fullscreen-viewer-close flex h-10 w-10 items-center justify-center rounded-full bg-secondary/80 text-foreground"
             aria-label="Закрыть"
           >
             <X className="h-5 w-5" />
