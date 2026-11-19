@@ -5,7 +5,7 @@ import inspect
 import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import ModuleType
 from typing import Any
 from uuid import UUID
@@ -42,8 +42,8 @@ def _is_recent_transaction(transaction: Any) -> bool:
     if not isinstance(timestamp, datetime):
         return False
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    age = datetime.now(timezone.utc) - timestamp
+        timestamp = timestamp.replace(tzinfo=UTC)
+    age = datetime.now(UTC) - timestamp
     return timedelta(seconds=-300) <= age <= timedelta(days=_LIST_LOOKBACK_DAYS)
 
 
@@ -66,7 +66,7 @@ async def _list_verified_invoice(transaction: Any) -> dict[str, Any] | None:
 
     async with _lava_list_lock:
         if time.monotonic() >= _lava_list_cache_until:
-            begin = (datetime.now(timezone.utc) -
+            begin = (datetime.now(UTC) -
                      timedelta(days=_LIST_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
             records: dict[str, dict[str, Any]] = {}
             total = None

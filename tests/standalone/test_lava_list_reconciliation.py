@@ -1,12 +1,11 @@
 """Regression for Lava's invoice-list fallback when detail lookup returns 404."""
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from bot.services import lava_invoice_compat as compat
 from bot.services.lava_service import LavaProviderUnavailable, lava_service
-
 
 INV1 = "11111111-1111-4111-8111-111111111111"
 INV2 = "22222222-2222-4222-8222-222222222222"
@@ -17,7 +16,7 @@ def tx(payment_id=INV1, amount_rub=500):
         payment_id=payment_id,
         amount_rub=amount_rub,
         order_id="order-1",
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -115,6 +114,6 @@ async def test_legacy_transaction_skips_new_list_strategy(monkeypatch):
     monkeypatch.setattr(lava_service, "_request", provider)
     compat._clear_lava_invoice_list_cache()
     old = tx()
-    old.created_at = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    old.created_at = datetime(2026, 7, 1, tzinfo=UTC)
     assert await compat._list_verified_invoice(old) is None
     assert calls == []
