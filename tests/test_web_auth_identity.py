@@ -111,21 +111,32 @@ async def test_telegram_web_auth_uses_legacy_identity_without_synthetic_id():
 
 
 @pytest.mark.asyncio
-async def test_email_magic_ticket_is_one_time_and_expires():
-    ticket = await web_auth._new_flow("email", "login", None, "test@example.com",
-                                      "/mini-app/?ref=REF123")
-    flow = await web_auth._consume_flow("email", ticket)
+async def test_email_code_is_one_time_and_expires():
+    from bot import email_otp
+
+    ticket, code = await email_otp._issue(
+        "test@example.com", "192.0.2.1", "login", None, "/mini-app/?ref=REF123",
+    )
+    flow = await email_otp._verify(ticket, code)
     assert flow["subject"] == "test@example.com"
     assert flow["destination"] == "/mini-app/?ref=REF123"
-    assert await web_auth._consume_flow("email", ticket) is None
+    assert await email_otp._verify(ticket, code) is None
 
 
 @pytest.mark.asyncio
-async def test_email_magic_ticket_has_bounded_requests():
+async def test_email_code_rate_limit_persists_across_calls(monkeypatch):
+    from bot import email_otp
+
+    now = 1_800_000_000
+    monkeypatch.setattr(email_otp.time, "time", lambda: now)
     for index in range(3):
-        await web_auth._new_flow("email", "login", None, "test@example.com", "/mini-app/")
-    with pytest.raises(ValueError, match="Too many"):
-        await web_auth._new_flow("email", "login", None, "test@example.com", "/mini-app/")
+        monkeypatch.setattr(email_otp.time, "time", lambda tick=now + index * 61: tick)
+        await email_otp._issue("test@example.com", "192.0.2.1",
+                               "login", None, "/mini-app/")
+    monkeypatch.setattr(email_otp.time, "time", lambda: now + 183)
+    with pytest.raises(ValueError, match="rate limit"):
+        await email_otp._issue("test@example.com", "192.0.2.1",
+                               "login", None, "/mini-app/")
 
 
 @pytest.mark.asyncio
