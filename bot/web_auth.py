@@ -394,9 +394,12 @@ def _oauth_urls(provider: str) -> tuple[str, str, str, str]:
                 "https://oauth2.googleapis.com/token",
                 "https://openidconnect.googleapis.com/v1/userinfo",
                 "openid email profile")
+    # Yandex's registered application permissions are authoritative.
+    # Explicitly requesting login:email when only Yandex ID login is enabled
+    # causes invalid_scope before the user can approve sign-in.
     return ("https://oauth.yandex.ru/authorize",
             "https://oauth.yandex.ru/token",
-            "https://login.yandex.ru/info", "login:info login:email")
+            "https://login.yandex.ru/info", "")
 
 
 async def oauth_start(request: web.Request) -> web.StreamResponse:
@@ -423,11 +426,14 @@ async def oauth_start(request: web.Request) -> web.StreamResponse:
                             destination, verifier)
     authorize, _, _, scope = _oauth_urls(provider)
     callback = _public_origin() + _API + "/callback/" + provider
-    url = authorize + "?" + urlencode({
+    params = {
         "client_id": client_id, "redirect_uri": callback, "response_type": "code",
-        "scope": scope, "state": state, "code_challenge": challenge,
+        "state": state, "code_challenge": challenge,
         "code_challenge_method": "S256",
-    })
+    }
+    if scope:
+        params["scope"] = scope
+    url = authorize + "?" + urlencode(params)
     response = _redirect(url)
     response.set_cookie(_STATE_COOKIE, _digest(state), httponly=True, secure=True,
                         samesite="Lax", path=_API + "/", max_age=_FLOW_SECONDS)
