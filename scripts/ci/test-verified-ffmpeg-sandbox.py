@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """CI-only diagnostic: real FFmpeg/FFprobe under Wan's production memory fence.
 
 All media are generated inside a temporary directory; no user data or
