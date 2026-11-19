@@ -599,6 +599,10 @@ class AccessGuardMiddleware(BaseMiddleware):
         event: types.TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        # Settlement is a financial service event, not a new access request.
+        # Never discard an accepted charge because policy changed after invoicing.
+        if isinstance(event, types.Message) and event.successful_payment:
+            return await handler(event, data)
         user = getattr(event, "from_user", None)
         if not user:
             return await handler(event, data)

@@ -110,6 +110,7 @@ async def test_dispatcher_settles_stars_before_legacy_email_catchall(monkeypatch
     from aiogram import Bot, Dispatcher, Router
     from aiogram.types import Chat, Message, SuccessfulPayment, Update, User
 
+    from bot import main
     from bot.handlers import payments
     from bot.states import PaymentStates
     from bot.telegram_payment_surface import install_telegram_payment_surface
@@ -119,7 +120,14 @@ async def test_dispatcher_settles_stars_before_legacy_email_catchall(monkeypatch
         await settle(message)
 
     monkeypatch.setattr(payments, 'process_successful_stars_payment', settlement)
+    banned = AsyncMock(return_value=True)
+    maintenance = AsyncMock(return_value=True)
+    subscription = AsyncMock(return_value=True)
+    monkeypatch.setattr(main, 'is_user_banned', banned)
+    monkeypatch.setattr(main, 'is_maintenance_mode_enabled', maintenance)
+    monkeypatch.setattr(main, 'is_channel_subscription_required', subscription)
     dp = Dispatcher()
+    dp.message.outer_middleware(main.AccessGuardMiddleware())
     install_telegram_payment_surface(dp)
     legacy = Router()
     catchall = AsyncMock()
@@ -136,6 +144,9 @@ async def test_dispatcher_settles_stars_before_legacy_email_catchall(monkeypatch
         await dp.feed_update(bot, Update(update_id=1, message=message))
         settle.assert_awaited_once()
         catchall.assert_not_awaited()
+        banned.assert_not_awaited()
+        maintenance.assert_not_awaited()
+        subscription.assert_not_awaited()
     finally:
         await bot.session.close()
         await dp.storage.close()
