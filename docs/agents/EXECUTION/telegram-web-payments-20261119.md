@@ -14,6 +14,9 @@ Baseline: production source `tanyapi`, SHA `13e926870e1df356d0e1ab3f3fb68c318f30
 - `return_to` is limited to the exact same-origin `/mini-app/` route with allowlisted intent fields. No auth credentials appear in website payment URLs. Auth is forwarded in the existing URL fragment after login.
 - Login retains selected package/provider and optional promo/required credits. On successful bootstrap the web studio opens the selected package without creating a charge. Provider checkout still requires explicit action. An existing valid browser session skips repeat login; errors keep the local intent available.
 - Webhook verification, atomic transaction completion, referral effects and reconciliation are retained unchanged.
+- Supported requested web methods resume with an explicit Continue action. Previously retired methods keep their retirement and show a clear request to select another method; this change does not reactivate Prodamus/CryptoBot in the web catalog.
+- Paid Stars updates bypass access restrictions (ban/maintenance/subscription changes after invoicing) and settle at the root Dispatcher before any generation/email FSM catchall. No new user action bypasses access restrictions.
+- When external bridge navigation fails, a persistent manual external link remains available. The Telegram WebView and generation draft are retained.
 
 ## Evidence ledger
 
@@ -22,8 +25,9 @@ Baseline: production source `tanyapi`, SHA `13e926870e1df356d0e1ab3f3fb68c318f30
 - Full frontend Jest: 123 suites, 999 tests passed.
 - ESLint: zero errors, three pre-existing warnings. TypeScript passed. Production static build/export passed. `npm audit --audit-level=high` passed (moderate findings remain); Next.js emitted an existing dependency security reminder.
 - Browser login E2E passed at 320/390/768/1440 px, including selected payment return intent and auth-config failure fallback.
-- Android browser payment E2E passed: TG wallet redirects to website with no fiat request, native Stars path, and existing web delayed checkout, one-invoice reuse and video draft preservation. iOS and production checks pending.
-- Full backend regression and final review pending. Release gates are not satisfied by this ledger yet.
+- Android and iOS/WebKit browser payment E2E passed, including a throwing bridge: TG wallet redirects to website with no fiat request, native Stars path, and existing web delayed checkout, one-invoice reuse and video draft preservation.
+- Independent Standards and Spec reviews found the Stars service-event interception, empty command parsing, requested-method resumption and same-WebView fallback; all were corrected with regression coverage. Additional full-chain Stars/access-guard regression passed.
+- Latest focused backend: 138 passed (Stars middleware/Dispatcher, access restrictions, bot eligibility and keyboards); 94 passed / 1 skipped for payment/outage/receipt and previously missing test dependencies. Full clean exact-SHA backend/CI and production verification remain release gates at document authoring.
 
 ## Verification layers / release
 

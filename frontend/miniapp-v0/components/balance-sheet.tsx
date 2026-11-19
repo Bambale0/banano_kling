@@ -91,10 +91,9 @@ export function BalanceSheet() {
     || ['lava_card', 'lava_sbp'].includes(requestedProvider) && Boolean(selectedPackage.lava_offer_id)
     || ['lava_foreign', 'lava_foreign_card', 'lava_foreign_paypal'].includes(requestedProvider) && Boolean(selectedPackage.lava_foreign_offer_id || selectedPackage.lava_foreign_product_id)
     || ['freekassa_card', 'freekassa_sbp'].includes(requestedProvider) && selectedPackage.freekassa_enabled
-    || requestedProvider === 'prodamus' && selectedPackage.prodamus_enabled
     || requestedProvider === 'robokassa' && selectedPackage.robokassa_enabled
   )
-  const requestedProviderLabel = ({ telegram_stars: 'Stars', lava_card: 'Карта', lava_sbp: 'СБП', freekassa_card: 'Карта KASSA', freekassa_sbp: 'СБП KASSA', lava_foreign: 'Зарубежная карта', lava_foreign_card: 'Зарубежная карта', lava_foreign_paypal: 'PayPal', tribute: 'Зарубежная / СНГ', prodamus: 'Prodamus', robokassa: 'Robokassa' } as Record<string, string>)[requestedProvider || '']
+  const requestedProviderLabel = ({ telegram_stars: 'Stars', lava_card: 'Карта', lava_sbp: 'СБП', freekassa_card: 'Карта KASSA', freekassa_sbp: 'СБП KASSA', lava_foreign: 'Зарубежная карта', lava_foreign_card: 'Зарубежная карта', lava_foreign_paypal: 'PayPal', tribute: 'Зарубежная / СНГ', robokassa: 'Robokassa' } as Record<string, string>)[requestedProvider || '']
   const orderedPackages = selectedPackageId
     ? [...paymentPackages].sort((a, b) => Number(b.id === selectedPackageId) - Number(a.id === selectedPackageId))
     : paymentPackages
