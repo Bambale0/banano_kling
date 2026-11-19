@@ -9,6 +9,7 @@ beforeEach(() => {
   delete window.__BANANO_TG_INIT_DATA__
   delete window.__BANANO_PLATFORM_INIT_DATA__
   delete window.__BANANO_INITIAL_LAUNCH__
+  delete window.__BANANO_BROWSER_SIGNOUT__
   window.Telegram = undefined
   window.history.replaceState({}, '', '/mini-app/')
 })
@@ -51,6 +52,17 @@ test('signout drops all cached browser credentials and strips launch auth from U
     '__banano_initial_search', '__telegram__initParams']) {
     expect(window.sessionStorage.getItem(key)).toBeNull()
   }
+})
+
+test('browser sign-out blocks Telegram bridge rehydration during navigation', () => {
+  window.Telegram = { WebApp: { initData: browserSession } }
+  expect(getInitData()).toBe(browserSession)
+  expect(window.sessionStorage.getItem('__banano_tg_init_data')).toBe(browserSession)
+
+  clearBrowserAccountCredentials()
+  expect(getInitData()).toBe('')
+  expect(window.__BANANO_TG_INIT_DATA__).toBeUndefined()
+  expect(window.sessionStorage.getItem('__banano_tg_init_data')).toBeNull()
 })
 
 test('no native Telegram account credential is destroyed by signing out of web', () => {
