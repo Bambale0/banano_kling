@@ -216,7 +216,7 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
             or set(place) != {"name", "country_code", "place_id", "timezone", "source"}
             or not isinstance(place.get("name"), str)
             or not 1 <= len(place["name"]) <= 120
-            or any(ord(ch) < 32 or ch in "<>{}\\\n\\r" for ch in place["name"])
+            or any(ord(ch) < 32 or ord(ch) == 92 or ch in "<>{}" for ch in place["name"])
             or not isinstance(place.get("country_code"), str)
             or not re.fullmatch(r"[A-Z]{2}", place["country_code"])
             or type(place.get("place_id")) is not int
