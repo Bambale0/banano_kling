@@ -214,8 +214,12 @@ async def _issue(email: str, ip: str, mode: str, source: str | None,
     email_key, ip_key = _rate_key("email", email), _rate_key("ip", ip)
     async with db_backend.connect() as db:
         if db_backend.is_postgres():
-            lock_key = int(email_key[:15], 16)
-            await db.execute("SELECT pg_advisory_xact_lock(?)", (lock_key,))
+            # Two concurrent emails from different recipients must still count
+            # against the same IP bucket. Lock all affected rate buckets in a
+            # deterministic order, avoiding cross-request deadlocks.
+            keys = sorted({int(value[:15], 16) for value in (email_key, ip_key)})
+            for lock_key in keys:
+                await db.execute("SELECT pg_advisory_xact_lock(?)", (lock_key,))
         else:
             await db.execute("BEGIN IMMEDIATE")
         try:
