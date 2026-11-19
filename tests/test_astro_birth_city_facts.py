@@ -107,3 +107,35 @@ def test_forged_or_malformed_birth_places_are_not_llm_facts(bad):
              "birth_place": bad}
     with pytest.raises(AstroReportError, match="места рождения"):
         _fact_catalog(facts)
+
+
+@pytest.mark.parametrize("city", ["Berlin", "Paris", "Saint Petersburg", "New York"])
+def test_canonical_geonames_city_latin_letters_remain_valid(city):
+    """Regression: denylist escaping must not ban ordinary Latin n/r."""
+    place = {
+        "name": city,
+        "country_code": "DE",
+        "place_id": 2950159,
+        "timezone": "Europe/Berlin",
+        "source": "GeoNames",
+    }
+    facts = {"schema_version": "astro.natal-facts.v1",
+             "chart": {"bodies": {"Sun": {"lon": 42.3}}},
+             "birth_place": place}
+    assert _fact_catalog(facts)["birth_place"] == place
+
+
+@pytest.mark.parametrize("city", ["Evil\\\\Prompt", "Evil\\nPrompt", "Evil\\rPrompt"])
+def test_birth_city_control_characters_and_backslash_are_rejected(city):
+    place = {
+        "name": city,
+        "country_code": "DE",
+        "place_id": 2950159,
+        "timezone": "Europe/Berlin",
+        "source": "GeoNames",
+    }
+    facts = {"schema_version": "astro.natal-facts.v1",
+             "chart": {"bodies": {"Sun": {"lon": 42.3}}},
+             "birth_place": place}
+    with pytest.raises(AstroReportError, match="места рождения"):
+        _fact_catalog(facts)
