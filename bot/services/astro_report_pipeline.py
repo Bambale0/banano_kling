@@ -221,7 +221,7 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         if (
             type(value) is not str or not 1 <= len(value) <= 125
             or any(unicodedata.category(char).startswith("C") for char in value)
-            or not re.fullmatch(r"[^\\n\\r]+, [A-Z]{2}", value)
+            or not re.fullmatch(r".+, [A-Z]{2}", value)
         ):
             raise AstroReportError("Некорректное подтверждённое название города.")
     if "house_overlays" in selected:
