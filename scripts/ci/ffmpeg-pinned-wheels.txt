@@ -1,0 +1,5 @@
+# CI-only verified wheel artifacts for Ubuntu x86_64.
+# SHA-256 digests published by PyPI for the exact 0.5.0 wheels.
+# Both binaries are real statically linked FFmpeg/FFprobe 9.0.2.
+portable-ffmpeg==0.5.0 --hash=sha256:98f0f24e85721ea6f4a4998df158600f96a77093d4448b0d4b445eb874a8b2e5
+portable-ffmpeg-full==0.5.0 --hash=sha256:8c5372652d49153687dd3276d8750527cf10dc5088c17122ab755db96c1c728a
