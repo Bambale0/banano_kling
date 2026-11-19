@@ -179,11 +179,43 @@
               0 0 40px oklch(0.65 0.12 220 / 0.1);
 }
 
-/* Safe area for mobile */
+/* Telegram fullscreen has two different exclusions: the device cutout and
+   the Telegram controls. Content insets are in addition to the device insets.
+   Keep the CSS SDK variables live so fullscreen/rotation changes reflow UI. */
+:root {
+  --miniapp-safe-top: calc(max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px)) + var(--tg-content-safe-area-inset-top, 0px));
+  --miniapp-safe-bottom: calc(max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px)) + var(--tg-content-safe-area-inset-bottom, 0px));
+  --miniapp-safe-left: calc(max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px)) + var(--tg-content-safe-area-inset-left, 0px));
+  --miniapp-safe-right: calc(max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px)) + var(--tg-content-safe-area-inset-right, 0px));
+}
+
 .safe-bottom {
-  padding-bottom: max(env(safe-area-inset-bottom), 16px);
+  padding-bottom: max(16px, var(--miniapp-safe-bottom));
+  padding-left: max(0px, var(--miniapp-safe-left));
+  padding-right: max(0px, var(--miniapp-safe-right));
 }
 
 .safe-top {
-  padding-top: max(env(safe-area-inset-top), 16px);
+  padding-top: max(16px, var(--miniapp-safe-top));
+  padding-left: max(0px, var(--miniapp-safe-left));
+  padding-right: max(0px, var(--miniapp-safe-right));
+}
+
+/* A sticky element must remain below Telegram's controls while scrolling.
+   Padding on its outer shell alone does not protect it once it sticks. */
+.miniapp-sticky-header {
+  top: max(16px, var(--miniapp-safe-top));
+}
+
+/* Feed/profile lightboxes cover the whole WebView, not just the app shell. */
+.miniapp-fullscreen-viewer {
+  padding-top: max(24px, var(--miniapp-safe-top));
+  padding-bottom: max(24px, var(--miniapp-safe-bottom));
+  padding-left: max(12px, var(--miniapp-safe-left));
+  padding-right: max(12px, var(--miniapp-safe-right));
+}
+
+.miniapp-fullscreen-viewer-close {
+  top: max(16px, var(--miniapp-safe-top));
+  right: max(16px, var(--miniapp-safe-right));
 }

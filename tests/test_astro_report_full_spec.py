@@ -1,4 +1,4 @@
-"""Regression: versioned seven-service plans, including the new natal eight-block instruction."""
+"""Regression: versioned seven-service plans, including the full natal research instruction."""
 
 import json
 from dataclasses import replace
@@ -14,7 +14,7 @@ from bot.services.astro_report_pipeline import (
 
 # Source-derived report sections, excluding computation input and format-only chapters.
 REPORT_SPECS = {
-    "natal": (8, 540),
+    "natal": (30, 11_000),
     "compatibility": (25, 10_000),
     "karma": (27, 8_000),
     "year": (29, 12_000),

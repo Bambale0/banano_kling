@@ -84,8 +84,8 @@ def test_seven_services_have_versioned_long_report_plans():
         assert len(loaded.sections) >= 8
         assert sum(section.min_words for section in loaded.sections) >= loaded.min_total_words
         if name == "natal":
-            assert loaded.min_total_words == 540
-            assert len(loaded.sections) == 8
+            assert loaded.min_total_words == 11_000
+            assert len(loaded.sections) == 30
         else:
             assert loaded.min_total_words >= 5000
 

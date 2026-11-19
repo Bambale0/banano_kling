@@ -650,6 +650,55 @@ try {
   await page.getByText('Онлайн', { exact: true }).waitFor()
   assert.equal(await page.getByText('Разреши боту писать тебе', { exact: true }).count(), 0)
 
+  // Telegram fullscreen draws native Back/Close controls above WebView content.
+  // Its content-safe area is additional to the device notch, not a replacement.
+  // Verify real geometry rather than only CSS class names; the insets can change
+  // after the initial render, for example on fullscreen/rotation transitions.
+  for (const width of [320, 390, 430]) {
+    await page.setViewportSize({ width, height: 820 })
+    const geometry = await page.evaluate(() => {
+      const root = document.documentElement.style
+      root.setProperty('--tg-safe-area-inset-top', '24px')
+      root.setProperty('--tg-content-safe-area-inset-top', '56px')
+      root.setProperty('--tg-safe-area-inset-bottom', '12px')
+      root.setProperty('--tg-content-safe-area-inset-bottom', '8px')
+      const header = document.querySelector('header')
+      const bottom = document.querySelector('.safe-bottom')
+      const navButton = document.querySelector('nav[aria-label="Разделы приложения"] button')
+      if (!header || !bottom || !navButton) throw new Error('Mini App shell is missing')
+      const viewer = document.createElement('div')
+      viewer.className = 'miniapp-fullscreen-viewer fixed inset-0'
+      const close = document.createElement('button')
+      close.className = 'miniapp-fullscreen-viewer-close absolute h-10 w-10'
+      viewer.appendChild(close)
+      document.body.appendChild(viewer)
+      const result = {
+        headerTop: header.getBoundingClientRect().top,
+        stickyTop: parseFloat(getComputedStyle(header).top),
+        bottomPadding: parseFloat(getComputedStyle(bottom).paddingBottom),
+        navButtonBottom: navButton.getBoundingClientRect().bottom,
+        viewerCloseTop: close.getBoundingClientRect().top,
+        viewerPaddingTop: parseFloat(getComputedStyle(viewer).paddingTop),
+      }
+      viewer.remove()
+      return result
+    })
+    assert.ok(geometry.headerTop >= 79, `Telegram header overlap at ${width}px: ${JSON.stringify(geometry)}`)
+    assert.ok(geometry.stickyTop >= 79, `Sticky header may cross native controls at ${width}px`)
+    assert.ok(geometry.viewerCloseTop >= 79, `Lightbox close crosses native controls at ${width}px`)
+    assert.ok(geometry.viewerPaddingTop >= 79, `Lightbox media crosses native controls at ${width}px`)
+    assert.ok(geometry.bottomPadding >= 19, `Bottom navigation ignores Telegram insets at ${width}px`)
+    assert.ok(geometry.navButtonBottom <= 801, `Nav buttons overlap home indicator at ${width}px`)
+  }
+  await page.evaluate(() => {
+    const root = document.documentElement.style
+    for (const side of ['top', 'bottom']) {
+      root.removeProperty(`--tg-safe-area-inset-${side}`)
+      root.removeProperty(`--tg-content-safe-area-inset-${side}`)
+    }
+  })
+  await page.setViewportSize({ width: 430, height: 900 })
+
   // Default landing E2E: a normal Mini App launch opens Trends before any nav click.
   // Pinterest AI is excluded from the showcase; it is reachable via Services only.
   await page.getByText('Curated Video', { exact: true }).waitFor()
@@ -996,6 +1045,18 @@ try {
       await (recipeMode
         ? page.getByText('Референсы тренда', { exact: true })
         : page.getByTestId('genjutsu-operation-grid')).waitFor()
+      // The actual studio close button must stay below Telegram's native Back/X.
+      const studioHeaderTop = await region.evaluate((element) => {
+        const root = document.documentElement.style
+        root.setProperty('--tg-safe-area-inset-top', '24px')
+        root.setProperty('--tg-content-safe-area-inset-top', '56px')
+        const top = element.querySelector('header')?.getBoundingClientRect().top ?? -1
+        root.removeProperty('--tg-safe-area-inset-top')
+        root.removeProperty('--tg-content-safe-area-inset-top')
+        return top
+      })
+      assert.ok(studioHeaderTop >= 79,
+        `Genjutsu close overlaps Telegram native controls at ${width}px (${studioHeaderTop})`)
       // Wait for the open animation to finish before measuring the viewport.
       await page.waitForFunction(() => {
         const dialog = document.querySelector('[role="dialog"]')
@@ -1164,6 +1225,24 @@ try {
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-menu-414.png' })
   }
   await page.getByRole('button', { name: 'Натальная карта', exact: true }).click()
+  // Fixed Astro Back must sit above the bottom tab navigation even in Telegram.
+  const astroBackGeometry = await page.evaluate(() => {
+    const root = document.documentElement.style
+    root.setProperty('--tg-safe-area-inset-bottom', '12px')
+    root.setProperty('--tg-content-safe-area-inset-bottom', '16px')
+    const back = document.querySelector('.astro-back')
+    const nav = document.querySelector('nav[aria-label="Разделы приложения"]')
+    if (!back || !nav) throw new Error('Astro back or navigation is missing')
+    const geometry = {
+      backBottom: back.getBoundingClientRect().bottom,
+      navTop: nav.getBoundingClientRect().top,
+    }
+    root.removeProperty('--tg-safe-area-inset-bottom')
+    root.removeProperty('--tg-content-safe-area-inset-bottom')
+    return geometry
+  })
+  assert.ok(astroBackGeometry.backBottom <= astroBackGeometry.navTop,
+    `Astro Back overlaps bottom navigation: ${JSON.stringify(astroBackGeometry)}`)
   await page.getByLabel('person: дата рождения').fill('29.02.2000')
   await page.getByLabel('person: время рождения').fill('12:00')
   await page.getByLabel('person: место рождения').fill('Москва, Россия')
