@@ -265,13 +265,43 @@ class LinkService:
             if not row or row[0] != 'active':
                 raise PreviewConflict('Accounts changed; create a new invitation')
         canonical = accounts[0]
-        # Proofs refer to identities, not arbitrary accounts submitted by the client.
-        for platform, external, original in [(link['source_platform'], link['source_external_id'], originals[0]),
-                                              (link['target_platform'], link['target_external_id'], originals[1])]:
-            row = await (await db.execute('SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
-                                         (platform, external))).fetchone()
-            if not row or row[0] != await canonical_account(db, original):
-                raise PreviewConflict('Identity ownership changed')
+        # Proofs refer to verified identities, never to caller-supplied IDs.
+        # Browser two-party proof = active HttpOnly session of the source and
+        # a freshly verified OAuth/Telegram/email identity for the target.
+        browser_proof = link.get('_verified_browser_proof')
+        if browser_proof:
+            source = await (await db.execute(
+                '''SELECT account_id FROM web_auth_sessions WHERE token_hash = ?
+                   AND revoked_at_epoch IS NULL AND expires_at_epoch > ?''',
+                (browser_proof['session_hash'], int(time.time())),
+            )).fetchone()
+            if not source or source[0] != await canonical_account(db, originals[0]):
+                raise PreviewConflict('Source browser session is no longer valid')
+            provider, subject = browser_proof['provider'], browser_proof['subject']
+            if provider == 'telegram':
+                verified = await (await db.execute(
+                    '''SELECT account_id FROM shared_account_identities
+                       WHERE platform = 'telegram' AND external_id = ?''',
+                    (int(subject),),
+                )).fetchone()
+            else:
+                verified = await (await db.execute(
+                    'SELECT account_id FROM web_auth_identities WHERE provider = ? AND subject = ?',
+                    (provider, subject),
+                )).fetchone()
+            if not verified or verified[0] != await canonical_account(db, originals[1]):
+                raise PreviewConflict('Verified provider ownership changed')
+        else:
+            for platform, external, original in [
+                (link['source_platform'], link['source_external_id'], originals[0]),
+                (link['target_platform'], link['target_external_id'], originals[1]),
+            ]:
+                row = await (await db.execute(
+                    'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
+                    (platform, external),
+                )).fetchone()
+                if not row or row[0] != await canonical_account(db, original):
+                    raise PreviewConflict('Identity ownership changed')
         if len(accounts) == 1:
             return canonical
         other = accounts[1]
@@ -280,6 +310,12 @@ class LinkService:
             GROUP BY platform HAVING COUNT(*) > 1''', (canonical, other))).fetchone()
         if conflict:
             raise PreviewConflict('An account already has a different identity on this platform')
+        browser_conflict = await (await db.execute(
+            '''SELECT provider FROM web_auth_identities WHERE account_id IN (?, ?)
+               GROUP BY provider HAVING COUNT(*) > 1''', (canonical, other),
+        )).fetchone()
+        if browser_conflict:
+            raise PreviewConflict('An account already has a different identity on this provider')
         for scope in ('sandbox', 'live'):
             service = WalletService(scope)
             balances = {}
@@ -297,5 +333,6 @@ class LinkService:
             await db.execute('UPDATE shared_wallet_reservations SET account_id = ? WHERE scope = ? AND account_id = ?', (canonical, scope, other))
         await db.execute('UPDATE shared_account_identities SET account_id = ? WHERE account_id = ?', (canonical, other))
         await db.execute('UPDATE shared_account_legacy_links SET account_id = ? WHERE account_id = ?', (canonical, other))
+        await db.execute('UPDATE web_auth_identities SET account_id = ? WHERE account_id = ?', (canonical, other))
         await db.execute("UPDATE shared_accounts SET status = 'merged', merged_into = ? WHERE id = ?", (canonical, other))
         return canonical
