@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -203,8 +204,26 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         "positions", "cross_aspects", "person_a", "person_b",
         "birth_time_known", "not_calculated", "warnings", "aspect_orbs_deg",
         "utc_reference", "local_reference", "timezone",
+        # These are canonical GeoNames labels added only by server-side
+        # place_id lookup, never from client-supplied free text.
+        "birth_place_name", "first_birth_place_name", "second_birth_place_name",
+        "solar_return_place_name", "calendar_place_name",
     )
     selected = {name: facts[name] for name in fields if name in facts}
+    place_fields = (
+        "birth_place_name", "first_birth_place_name", "second_birth_place_name",
+        "solar_return_place_name", "calendar_place_name",
+    )
+    for key in place_fields:
+        if key not in selected:
+            continue  # Historical encrypted jobs predate textual city metadata.
+        value = selected[key]
+        if (
+            type(value) is not str or not 1 <= len(value) <= 125
+            or any(unicodedata.category(char).startswith("C") for char in value)
+            or not re.fullmatch(r"[^\\n\\r]+, [A-Z]{2}", value)
+        ):
+            raise AstroReportError("Некорректное подтверждённое название города.")
     if "house_overlays" in selected:
         overlays = selected["house_overlays"]
         allowed = {"first_in_second", "second_in_first", "natal_in_solar", "solar_in_natal"}
