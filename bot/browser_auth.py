@@ -28,11 +28,31 @@ _LOGIN_MAX_AGE_SECONDS = 10 * 60
 _BROWSER_SESSION_MAX_AGE_SECONDS = 24 * 60 * 60
 _OIDC_NONCE_COOKIE = "nm_telegram_oidc_nonce"
 _OIDC_NONCE_SECONDS = 300
+_BOT_USERNAME_CACHE: dict[str, Any] = {"value": "", "until": 0.0}
+_BOT_USERNAME_LOCK = asyncio.Lock()
+
+
+async def _browser_bot_username(request: web.Request) -> str:
+    cached = _BOT_USERNAME_CACHE
+    if cached["value"] and time.monotonic() < cached["until"]:
+        return cached["value"]
+    async with _BOT_USERNAME_LOCK:
+        if cached["value"] and time.monotonic() < cached["until"]:
+            return cached["value"]
+        bot = request.app["bot"]
+        me = await bot.get_me()
+        username = str(me.username or "").lstrip("@")
+        if not username:
+            raise ValueError("Telegram bot username unavailable")
+        cached.update(value=username, until=time.monotonic() + 300)
+        return username
 
 
 def _telegram_oidc_client_id() -> str:
     value = (config.TELEGRAM_OIDC_CLIENT_ID or config.BOT_TOKEN.split(":", 1)[0]).strip()
     return value if value.isdecimal() and len(value) <= 20 else ""
+
+
 _ALLOWED_LOGIN_FIELDS = {
     "id",
     "first_name",
@@ -117,22 +137,23 @@ def _build_browser_init_data(user: dict[str, Any], bot_token: str) -> str:
 
 async def browser_telegram_auth_config(request: web.Request) -> web.Response:
     try:
-        bot = request.app["bot"]
-        me = await bot.get_me()
-        nonce = secrets.token_urlsafe(32)
+        username = await _browser_bot_username(request)
+        legacy_only = request.query.get("legacy") == "1"
+        nonce = "" if legacy_only else secrets.token_urlsafe(32)
         response = web.json_response(
             {
                 "ok": True,
-                "bot_username": str(me.username or "").lstrip("@"),
+                "bot_username": username,
                 "oidc_client_id": _telegram_oidc_client_id(),
                 "oidc_nonce": nonce,
             }
         )
-        response.set_cookie(
-            _OIDC_NONCE_COOKIE, nonce, httponly=True, secure=True,
-            samesite="Lax", max_age=_OIDC_NONCE_SECONDS,
-            path=(config.MINI_APP_PATH or "/mini-app").rstrip("/") + "/api/browser-auth",
-        )
+        if not legacy_only:
+            response.set_cookie(
+                _OIDC_NONCE_COOKIE, nonce, httponly=True, secure=True,
+                samesite="Lax", max_age=_OIDC_NONCE_SECONDS,
+                path=(config.MINI_APP_PATH or "/mini-app").rstrip("/") + "/api/browser-auth",
+            )
         response.headers["Cache-Control"] = "no-store"
         return response
     except Exception:  # noqa: BLE001 - transport failures must become a stable 503 response
