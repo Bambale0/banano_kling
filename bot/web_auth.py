@@ -221,8 +221,8 @@ async def _consume_flow(provider: str, token: str) -> dict | None:
             await db.commit()
             if deleted.rowcount != 1 or int(row[5]) <= int(time.time()):
                 return None
-            return dict(mode=row[0], source=row[1], subject=row[2],
-                        destination=row[3], verifier=row[4])
+            return {"mode": row[0], "source": row[1], "subject": row[2],
+                    "destination": row[3], "verifier": row[4]}
         except Exception:
             await db.rollback()
             raise
@@ -420,7 +420,7 @@ async def _remote_json(session: aiohttp.ClientSession, method: str, url: str, **
             raise ValueError("Oversized identity response")
         value = json.loads(body)
         if not isinstance(value, dict):
-            raise ValueError("Malformed identity response")
+            raise TypeError("Malformed identity response")
         return value
 
 
@@ -460,7 +460,7 @@ async def oauth_callback(request: web.Request) -> web.StreamResponse:
             if not isinstance(subject, (str, int)) or not re.fullmatch(r"[A-Za-z0-9_-]{1,255}", str(subject)):
                 raise ValueError("Missing stable provider subject")
         result = await _complete_identity(request, provider, str(subject), flow)
-    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, json.JSONDecodeError):
+    except (aiohttp.ClientError, TimeoutError, ValueError, TypeError, json.JSONDecodeError):
         result = _redirect("/login?error=oauth")
     result.del_cookie(_STATE_COOKIE, path=_API + "/")
     return result
@@ -514,7 +514,7 @@ async def email_start(request: web.Request) -> web.Response:
         url = _public_origin() + _API + "/email/verify?" + urlencode({"ticket": token})
         try:
             await asyncio.wait_for(asyncio.to_thread(_send_magic_link, email, url), timeout=13)
-        except (OSError, smtplib.SMTPException, asyncio.TimeoutError):
+        except (OSError, smtplib.SMTPException, TimeoutError):
             # Unsent challenges are not valid credentials.
             async with db_backend.connect() as db:
                 await db.execute("DELETE FROM web_auth_flows WHERE token_hash = ?", (_digest(token),))
