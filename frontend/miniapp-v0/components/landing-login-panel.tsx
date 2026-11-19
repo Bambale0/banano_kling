@@ -61,7 +61,7 @@ function LegacyTelegramWidget() {
     const controller = new AbortController()
     async function loadConfig() {
       try {
-        const response = await fetch('/mini-app/api/browser-auth/config', {
+        const response = await fetch('/mini-app/api/browser-auth/config?legacy=1', {
           method: 'GET',
           credentials: 'same-origin',
           headers: { Accept: 'application/json' },
