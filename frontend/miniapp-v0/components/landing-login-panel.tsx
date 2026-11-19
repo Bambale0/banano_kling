@@ -254,20 +254,23 @@ function TelegramOIDCLogin() {
             setMessage('Telegram откроет подтверждение входа. Номер вводить не нужно.')
           } else {
             setState('error')
-            setMessage('Быстрый вход сейчас недоступен. Попробуйте резервный способ.')
+            setShowLegacy(true)
+            setMessage('Быстрый вход сейчас недоступен. Используйте вход через Telegram ниже.')
           }
         }
         script.onerror = () => {
           if (mounted.current) {
             setState('error')
-            setMessage('Не удалось открыть быстрый вход через Telegram.')
+            setShowLegacy(true)
+            setMessage('Не удалось открыть быстрый вход через Telegram. Используйте резервный способ.')
           }
         }
         document.head.appendChild(script)
       } catch {
         if (mounted.current && !controller.signal.aborted) {
           setState('error')
-          setMessage('Не удалось подготовить Telegram-вход. Повторите попытку.')
+          setShowLegacy(true)
+          setMessage('Быстрый вход не настроен или недоступен. Используйте вход через Telegram ниже.')
         }
       }
     }
@@ -333,7 +336,7 @@ function TelegramOIDCLogin() {
 
   return (
     <div className="space-y-4">
-      <Button
+      {!(state === 'error' && showLegacy) ? <Button
         type="button"
         className="h-14 w-full rounded-sm bg-[#e7b154] text-base font-extrabold text-[#18140e] hover:bg-[#f2c477]"
         onClick={startLogin}
@@ -345,7 +348,7 @@ function TelegramOIDCLogin() {
           : null}
         Продолжить через Telegram
         <ArrowRight aria-hidden="true" className="ml-2 size-4" />
-      </Button>
+      </Button> : null}
       <p aria-live="polite" role="status" className="text-center text-xs text-[#b8babd]">
         {message}
       </p>
