@@ -245,7 +245,7 @@ function TelegramOIDCLogin() {
             typeof data.oidc_nonce !== 'string' || data.oidc_nonce.length < 24) {
           throw new Error('oidc-unavailable')
         }
-        if (!mounted.current) return
+        if (controller.signal.aborted || !mounted.current) return
         setConfig({ clientId, nonce: data.oidc_nonce })
         script.onload = () => {
           if (!mounted.current) return
