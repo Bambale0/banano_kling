@@ -24,6 +24,7 @@ from aiohttp import web
 
 from bot import db as db_backend
 from bot.shared_accounts.schema import ensure_schema as ensure_shared_schema
+from bot.shared_accounts.errors import PreviewConflict
 
 _API = "/mini-app/api/web-auth"
 _SESSION_COOKIE = "nm_web_session"
@@ -230,6 +231,10 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
     if flow["mode"] == "link" and (not source or await _session_account(request) != source):
         return _redirect("/login?error=session-expired")
     await _ensure_tables()
+    if source:
+        from bot.shared_accounts.links import ensure_link_schema
+        async with db_backend.connect() as setup_db:
+            await ensure_link_schema(setup_db)
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     try:
@@ -264,7 +269,26 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
                     if not active or active[0] != "active":
                         raise ValueError("Account unavailable")
                     if existing and existing != account_id:
-                        raise AuthConflict()
+                        # Both existing accounts have been independently proven:
+                        # a live source browser session plus this fresh verified
+                        # provider callback. Preserve wallets through the same
+                        # transaction-safe merger used for TG/VK links.
+                        from bot.shared_accounts.links import LinkService
+                        try:
+                            source_session_hash = _digest(request.cookies.get(_SESSION_COOKIE, ""))
+                        except (AttributeError, ValueError) as exc:
+                            raise AuthConflict() from exc
+                        account_id = await LinkService(None)._merge(db, {
+                            "id": uuid4().hex,
+                            "source_account_id": source,
+                            "target_account_id": existing,
+                            "_verified_browser_proof": {
+                                "session_hash": source_session_hash,
+                                "provider": provider,
+                                "subject": subject,
+                            },
+                        })
+                        existing = account_id
                     # One connected identity per provider. No silent replacement.
                     if is_telegram:
                         duplicate = await (await db.execute(
@@ -328,7 +352,7 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
             except Exception:
                 await db.rollback()
                 raise
-    except (AuthConflict, ValueError):
+    except (AuthConflict, PreviewConflict, ValueError):
         return _redirect("/login?error=already-linked")
     # A link returns to connected methods; sign-in preserves the original route.
     destination = "/login?linked=" + provider if source else _safe_next(flow["destination"])
