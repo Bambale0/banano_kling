@@ -226,9 +226,18 @@ function TelegramOIDCLogin() {
 
   useEffect(() => {
     mounted.current = true
-    const controller = new AbortController()
     const query = new URLSearchParams(window.location.search)
     const hash = new URLSearchParams(window.location.hash.slice(1))
+    const initData = getInitData()
+    const session = new URLSearchParams(initData)
+    const age = Date.now() / 1000 - Number(session.get('auth_date'))
+    // A valid browser session resumes the requested payment intent without
+    // opening Telegram approval again.
+    if (isBrowserPaymentSession() && age >= 0 && age < 86400) {
+      window.location.replace(studioUrlWithSession(initData))
+      return
+    }
+    const controller = new AbortController()
     // Native Telegram Mini App launches should never enter a browser auth loop.
     if (['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'].some(
       key => query.has(key) || hash.has(key)
