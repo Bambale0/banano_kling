@@ -36,7 +36,7 @@ def test_aggregated_report_is_safe_and_does_not_claim_paid_status():
 
 
 def test_report_rejects_inconsistent_snapshot():
-    statuses, ages, anomalies, bindings = _rows()
+    statuses, _ages, anomalies, bindings = _rows()
     with pytest.raises(ValueError, match="Inconsistent"):
         audit.report_from_rows(statuses, [("lt_1h", 2)], anomalies, bindings)
     with pytest.raises(ValueError, match="Unknown age"):
