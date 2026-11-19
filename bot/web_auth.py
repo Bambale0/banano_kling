@@ -35,12 +35,6 @@ _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}$")
 _PROVIDERS = ("google", "yandex", "telegram", "email")
 
 _DDL = (
-    """CREATE TABLE IF NOT EXISTS web_auth_identities (
-        provider TEXT NOT NULL CHECK(provider IN ('google', 'yandex', 'email')),
-        subject TEXT NOT NULL,
-        account_id TEXT NOT NULL REFERENCES shared_accounts(id),
-        verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY(provider, subject), UNIQUE(account_id, provider))""",
     """CREATE TABLE IF NOT EXISTS web_auth_sessions (
         token_hash TEXT PRIMARY KEY,
         account_id TEXT NOT NULL REFERENCES shared_accounts(id),
