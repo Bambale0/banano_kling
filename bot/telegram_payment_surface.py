@@ -1,4 +1,5 @@
 """Enforce Telegram commerce at incoming update and outgoing Bot API seams."""
+import logging
 from urllib.parse import urlsplit
 
 from aiogram import BaseMiddleware, types
@@ -10,6 +11,8 @@ from bot.payment_utils import package_stars_amount
 from bot.services.preset_manager import preset_manager
 from bot.states import PaymentStates
 from bot.web_payments import payment_callback_target, web_payment_url
+
+logger = logging.getLogger(__name__)
 
 
 def website_keyboard(package_id: str = "", provider: str = "", *, promo_code: str = "") -> InlineKeyboardMarkup:
@@ -67,7 +70,7 @@ class TelegramPaymentSurfaceMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-def website_payment_markup(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+def website_payment_markup(markup: InlineKeyboardMarkup, *, promo_code: str = "") -> InlineKeyboardMarkup:
     rows = []
     redirected = False
     for row in markup.inline_keyboard:
@@ -75,15 +78,26 @@ def website_payment_markup(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup
         for button in row:
             target = payment_callback_target(button.callback_data or "")
             url = urlsplit(button.url or (button.web_app.url if button.web_app else ""))
+            # Tribute links are package-specific: preserve the product selection.
+            if target is None and url.hostname == "web.tribute.tg":
+                from bot.handlers.tribute_payments import TRIBUTE_PACKAGE_LINKS
+
+                for package_id, configured_url in TRIBUTE_PACKAGE_LINKS.items():
+                    configured = urlsplit(configured_url)
+                    if url.hostname == configured.hostname and url.path.rstrip("/") == configured.path.rstrip("/"):
+                        target = (package_id, "tribute")
+                        break
             external_checkout = url.hostname in {
                 "web.tribute.tg", "gate.lava.top", "pay.fk.money", "auth.robokassa.ru", "pay.crypt.bot",
             } or "/freekassa/checkout" in url.path
             if target is not None or external_checkout:
                 redirected = True
-                buttons.append(InlineKeyboardButton(text=button.text, url=web_payment_url(*(target or ("", "")))))
+                buttons.append(InlineKeyboardButton(text=button.text, url=web_payment_url(*(target or ("", "")), promo_code=promo_code)))
             else:
                 buttons.append(button)
         rows.append(buttons)
+    if not redirected:
+        return markup
     has_stars = any((button.callback_data or '').startswith(('buy_stars_', 'menu_stars')) for row in rows for button in row)
     if redirected and config.TELEGRAM_STARS_ENABLED and not has_stars:
         rows.append([InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="menu_stars")])
@@ -91,12 +105,30 @@ def website_payment_markup(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup
 
 
 class TelegramPaymentRequestMiddleware(BaseRequestMiddleware):
+    def __init__(self):
+        self.fsm = None
+
     async def __call__(self, make_request, bot, method):
         if method.__api_method__ in {"sendInvoice", "createInvoiceLink"} and method.currency != "XTR":
             raise ValueError("Telegram native payments require XTR")
         markup = getattr(method, "reply_markup", None)
         if isinstance(markup, InlineKeyboardMarkup):
-            method = method.model_copy(update={"reply_markup": website_payment_markup(markup)})
+            rewritten = website_payment_markup(markup)
+            if rewritten is not markup:
+                promo_code = ""
+                chat_id = getattr(method, "chat_id", None)
+                # In private chats the FSM is keyed by the user/chat ID.
+                # Read only for a payment keyboard, never for ordinary replies.
+                if self.fsm is not None and isinstance(chat_id, int) and chat_id > 0:
+                    try:
+                        state = self.fsm.get_context(bot=bot, chat_id=chat_id, user_id=chat_id)
+                        stored = await state.get_data()
+                        promo_code = str(stored.get("promo_code") or "")
+                    except Exception as exc:
+                        logger.warning("Payment promo lookup unavailable: error_type=%s", type(exc).__name__)
+                if promo_code:
+                    rewritten = website_payment_markup(markup, promo_code=promo_code)
+                method = method.model_copy(update={"reply_markup": rewritten})
         return await make_request(bot, method)
 
 
