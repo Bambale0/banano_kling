@@ -44,7 +44,7 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_real_app_entrypoints_and_honest_future_auth(self):
         self.assertGreaterEqual(self.page.links.count("/mini-app/"), 3)
-        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#examples", "#login"})
+        self.assertEqual(set(self.page.links) - {"/mini-app/", "/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
         for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
             self.assertIn(method, self.html)
         self.assertNotIn('href="/oauth/google', self.html)
@@ -52,6 +52,44 @@ class LandingPublicContractTest(unittest.TestCase):
         for link in self.page.links:
             if link.startswith("#"):
                 self.assertIn(link[1:], self.page.ids)
+
+    def test_login_is_real_shadcn_route_not_a_fake_oauth_button(self):
+        page = (ROOT / "frontend/miniapp-v0/app/login/page.tsx").read_text(encoding="utf-8")
+        panel = (ROOT / "frontend/miniapp-v0/components/landing-login-panel.tsx").read_text(encoding="utf-8")
+        css = (ROOT / "frontend/miniapp-v0/app/login/login.css").read_text(encoding="utf-8")
+        self.assertIn('href="/login"', self.html)
+        self.assertEqual(self.page.links.count("/login"), 3)
+        self.assertIn("LoginPanel", page)
+        for component in ("Button", "Card", "Badge", "Separator"):
+            self.assertIn(component, panel)
+        self.assertIn("/mini-app/api/browser-auth/config", panel)
+        self.assertIn("/mini-app/api/browser-auth", panel)
+        self.assertIn("telegram_auth: user", panel)
+        self.assertIn("tgWebAppData", panel)
+        self.assertIn("window.location.replace(studioUrlWithSession", panel)
+        self.assertIn("skoro", panel.replace("скоро", "skoro"))
+        self.assertIn("neuromix-login", css)
+        self.assertIn("NoiseTexture", panel)
+        magic = (ROOT / "frontend/miniapp-v0/components/magicui/noise-texture.tsx").read_text(encoding="utf-8")
+        license_text = (ROOT / "docs/licenses/MAGICUI.md").read_text(encoding="utf-8")
+        self.assertIn("feTurbulence", magic)
+        self.assertIn("useId", magic)
+        self.assertNotIn("requestAnimationFrame", magic)
+        self.assertIn("Copyright (c) Magic UI", license_text)
+
+        self.assertNotIn('href="/oauth/google', panel)
+        self.assertNotIn("localStorage.setItem", panel)
+
+    def test_login_nginx_routing_and_safe_release_smoke(self):
+        self.assertIn("location = /login {", self.nginx)
+        self.assertIn("location = /login/ {", self.nginx)
+        self.assertIn("try_files /mini-app/login/index.html =404;", self.nginx)
+        self.assertIn('OUT_DIR}/login/index.html', self.deploy)
+        self.assertIn("login_block", self.publisher)
+        self.assertIn("for path in /login /login/; do", self.publisher)
+        self.assertIn('id="login-page-title"', self.publisher)
+        self.assertIn("location ^~ /mini-app/api/", self.nginx)
+        self.assertIn("location /mini-app/", self.nginx)
 
     def test_legacy_telegram_webview_launch_bypasses_public_landing(self):
         self.assertIn("tgWebAppData", self.html)

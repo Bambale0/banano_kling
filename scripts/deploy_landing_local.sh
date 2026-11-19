@@ -130,6 +130,30 @@ if assets not in content:
     content = content.replace(new, new + "\n" + assets, 1)
 if content.count("location = /grunge-hero-v1.webp {") != 1 or content.count("location = /grunge-mobile-art-v1.webp {") != 1:
     raise SystemExit("Grunge asset routes ambiguous")
+# The login UI is built by the same Next static export as the Mini App.
+# Expose only these exact public routes; never replace the catchall or API.
+login_block = """    # shadcn/ui login is rendered by the existing Next static export.
+    # Public URL stays /login; assets and the Mini App are served unchanged.
+    location = /login {
+        try_files /mini-app/login/index.html =404;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+    location = /login/ {
+        try_files /mini-app/login/index.html =404;
+        add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    }
+
+"""
+if login_block not in content:
+    if "location = /login {" in content or "location = /login/ {" in content:
+        raise SystemExit("Unexpected login route; refusing mutation")
+    miniapp_anchor = "    location = /mini-app {\n"
+    if content.count(miniapp_anchor) != 1:
+        raise SystemExit("Missing canonical Mini App route")
+    content = content.replace(miniapp_anchor, login_block + miniapp_anchor, 1)
+if content.count("location = /login {") != 1 or content.count("location = /login/ {") != 1:
+    raise SystemExit("Ambiguous login routes")
 if content.count("location = / {") != 1:
     raise SystemExit("Unexpected HTTPS root location count")
 tmp = path.with_suffix(path.suffix + ".landing-tmp")
@@ -172,6 +196,27 @@ for file in grunge-hero-v1.webp grunge-mobile-art-v1.webp; do
     if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
     actual="$(curl -sS --max-time 20 "${args[@]}" -o /dev/null -w '%{http_code} %{content_type}' "https://$HOST/$file" || true)"
     [[ "$actual" == "200 image/webp" ]] || { echo "[landing] $mode /$file returned $actual" >&2; exit 1; }
+  done
+done
+# A 200 response is insufficient: verify this is the actual exported
+# shadcn login page, not the Mini App fallback or the marketing root.
+for mode in origin public; do
+  args=()
+  if [[ "$mode" == origin ]]; then args=(--resolve "$HOST:443:127.0.0.1"); fi
+  for path in /login /login/; do
+    # On reload an old Nginx worker can briefly serve 404; the revision query
+    # also avoids stale edge caches. Never accept a 200 from the Mini App fallback.
+    code=""
+    for (( attempt=1; attempt<=30; attempt++ )); do
+      code="$(curl -sS --connect-timeout 5 --max-time 15 "${args[@]}" -o "$SMOKE" -w '%{http_code}' "https://$HOST$path?revision=$EXPECTED_SHA" || true)"
+      if [[ "$code" == 200 ]] && grep -q 'id="login-page-title"' "$SMOKE" && grep -q '/mini-app/_next/static/' "$SMOKE"; then
+        break
+      fi
+      sleep 1
+    done
+    [[ "$code" == 200 ]] || { echo "[landing] $mode $path returned $code" >&2; exit 1; }
+    grep -q 'id="login-page-title"' "$SMOKE" || { echo "[landing] $mode $path is not login page" >&2; exit 1; }
+    grep -q '/mini-app/_next/static/' "$SMOKE" || { echo "[landing] $mode $path missing Next assets" >&2; exit 1; }
   done
 done
 miniapp_revision="$(curl -fsS --max-time 20 --resolve "$HOST:443:127.0.0.1" "https://$HOST/mini-app/revision.txt")"

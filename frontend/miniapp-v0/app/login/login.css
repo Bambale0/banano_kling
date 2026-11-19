@@ -1,0 +1,92 @@
+/* Login route only. Existing Mini App CSS, tokens and interactions are unchanged. */
+.neuromix-login {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 52% 62% at 10% 55%, rgba(48, 101, 100, .15), transparent 75%),
+    radial-gradient(ellipse 39% 50% at 94% 8%, rgba(158, 105, 41, .13), transparent 83%),
+    #080d0f;
+  color: #eee8dc;
+}
+.neuromix-login .login-noise {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: .11;
+}
+.neuromix-login .login-header, .neuromix-login .login-stage, .neuromix-login .login-footer { position: relative; z-index: 1; }
+.neuromix-login .login-header { border-bottom: 1px solid rgba(231, 186, 107, .22); }
+.neuromix-login .login-brand-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #c69140;
+  color: #edbe65;
+  background: linear-gradient(125deg, #4e391d, #101719 80%);
+  font-size: 22px;
+  font-weight: 900;
+  transform: rotate(-8deg);
+}
+.neuromix-login .login-headline {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  font-family: Impact, "Arial Black", "DejaVu Sans Condensed", sans-serif;
+  font-size: clamp(4.2rem, 9.3vw, 8.7rem);
+  font-weight: 900;
+  letter-spacing: -.055em;
+  line-height: .93;
+}
+.neuromix-login .login-headline > span { white-space: nowrap; }
+.neuromix-login .login-headline-gold {
+  margin: .06em 0 .07em -.04em;
+  padding: .01em .13em .09em;
+  color: #18100b;
+  background: linear-gradient(97deg,#aa7135,#edb953 40%,#d99c3b);
+  clip-path: polygon(0 10%, 16% 3%, 30% 12%, 75% 0, 100% 10%, 96% 75%, 99% 96%, 48% 95%, 4% 100%);
+  transform: rotate(-3deg);
+}
+.neuromix-login .login-tape {
+  clip-path: polygon(0 15%, 8% 2%, 22% 7%, 68% 0, 100% 11%, 96% 82%, 74% 99%, 2% 92%);
+  transform: rotate(-2deg);
+}
+.neuromix-login .login-illustration { padding-bottom: 0; }
+.neuromix-login .login-artwork {
+  position: relative;
+  margin-top: 1.25rem;
+  width: 100%;
+  height: clamp(13rem, 30vw, 21rem);
+  background: url("/grunge-mobile-art-v1.webp") left center / contain no-repeat;
+  filter: contrast(1.08);
+  mask-image: linear-gradient(to bottom, #000 5%, #000 78%, transparent 100%);
+  pointer-events: none;
+}
+.neuromix-login .login-card { max-width: 490px; width: 100%; margin-left: auto; }
+.neuromix-login a:focus-visible,
+.neuromix-login button:focus-visible { outline: 2px solid #f1bb58; outline-offset: 4px; }
+.neuromix-login .login-footer { position: relative; }
+@media (max-width: 1023px) {
+  .neuromix-login .login-stage { max-width: 650px; }
+  .neuromix-login .login-illustration { padding-bottom: 0; }
+  .neuromix-login .login-headline { font-size: clamp(4.2rem, 13vw, 7.5rem); }
+  .neuromix-login .login-artwork { height: clamp(9rem, 26vw, 13rem); background-position: center; }
+  .neuromix-login .login-card { max-width: none; margin-left: 0; }
+}
+@media (max-width: 480px) {
+  .neuromix-login .login-header { padding-top: 14px; padding-bottom: 14px; }
+  .neuromix-login .login-headline { font-size: clamp(2.7rem, 13.8vw, 4rem); }
+  .neuromix-login .login-illustration { padding-bottom: 0; }
+  .neuromix-login .login-artwork { display: none; }
+  .neuromix-login .login-stage { gap: 1rem; padding-top: 1rem; }
+  .neuromix-login .login-illustration p { font-size: .875rem; margin-top: 1rem; line-height: 1.5; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .neuromix-login *, .neuromix-login *::before, .neuromix-login *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
