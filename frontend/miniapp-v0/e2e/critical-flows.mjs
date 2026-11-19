@@ -1334,6 +1334,39 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Астро', exact: true }).count(), 0)
   assert.equal(await page.locator('.astro-shell').count(), 0)
 
+  // Web browser accounts can sign out from their own profile; Telegram-native
+  // accounts do not receive this button. Confirming must discard browser
+  // credential snapshots and navigate to /login without auth-bearing params.
+  await page.route('**/login', route => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: '<!DOCTYPE html><html lang="ru"><body><h1>Вход в NEUROMIX</h1></body></html>',
+  }))
+  await page.getByRole('button', { name: 'Профиль', exact: true }).click()
+  const logoutButton = page.getByRole('button', { name: 'Выйти из аккаунта', exact: true })
+  await logoutButton.waitFor()
+  await logoutButton.click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Отмена' }).click()
+  await logoutButton.waitFor()
+  await page.evaluate(() => {
+    window.sessionStorage.setItem('__banano_initial_search', '?tgWebAppData=old-session')
+    window.sessionStorage.setItem('unrelated-preference', 'retained')
+  })
+  await logoutButton.click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Выйти', exact: true }).click()
+  await page.waitForURL('**/login')
+  await page.getByRole('heading', { name: 'Вход в NEUROMIX' }).waitFor()
+  const logoutStorage = await page.evaluate(() => ({
+    staleSession: window.sessionStorage.getItem('__banano_tg_init_data'),
+    staleLaunch: window.sessionStorage.getItem('__banano_initial_search'),
+    unrelatedPreference: window.sessionStorage.getItem('unrelated-preference'),
+    url: location.pathname + location.search + location.hash,
+  }))
+  assert.equal(logoutStorage.staleSession, null, 'Browser sign-out retained signed initData')
+  assert.equal(logoutStorage.staleLaunch, null, 'Browser sign-out retained launch credentials')
+  assert.equal(logoutStorage.unrelatedPreference, 'retained', 'Sign-out erased unrelated browser preferences')
+  assert.equal(logoutStorage.url, '/login', 'Sign-out must land at a clean login URL')
+
   console.log('Mini App critical browser E2E passed')
 } finally {
   await browser?.close()
