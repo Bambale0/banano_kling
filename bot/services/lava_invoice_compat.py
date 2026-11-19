@@ -97,7 +97,7 @@ async def _list_verified_invoice(transaction: Any) -> dict[str, Any] | None:
                         ),
                         timeout=remaining,
                     )
-                except asyncio.TimeoutError as exc:
+                except TimeoutError as exc:
                     logger.warning("Lava invoice listing timed out page=%s", page)
                     raise LavaProviderUnavailable(None) from exc
                 except Exception as exc:
