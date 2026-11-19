@@ -1045,6 +1045,18 @@ try {
       await (recipeMode
         ? page.getByText('Референсы тренда', { exact: true })
         : page.getByTestId('genjutsu-operation-grid')).waitFor()
+      // The actual studio close button must stay below Telegram's native Back/X.
+      const studioHeaderTop = await region.evaluate((element) => {
+        const root = document.documentElement.style
+        root.setProperty('--tg-safe-area-inset-top', '24px')
+        root.setProperty('--tg-content-safe-area-inset-top', '56px')
+        const top = element.querySelector('header')?.getBoundingClientRect().top ?? -1
+        root.removeProperty('--tg-safe-area-inset-top')
+        root.removeProperty('--tg-content-safe-area-inset-top')
+        return top
+      })
+      assert.ok(studioHeaderTop >= 79,
+        `Genjutsu close overlaps Telegram native controls at ${width}px (${studioHeaderTop})`)
       // Wait for the open animation to finish before measuring the viewport.
       await page.waitForFunction(() => {
         const dialog = document.querySelector('[role="dialog"]')
@@ -1213,6 +1225,24 @@ try {
     await page.screenshot({ path: process.env.ASTRO_QA_SCREENSHOTS + '/astro-menu-414.png' })
   }
   await page.getByRole('button', { name: 'Натальная карта', exact: true }).click()
+  // Fixed Astro Back must sit above the bottom tab navigation even in Telegram.
+  const astroBackGeometry = await page.evaluate(() => {
+    const root = document.documentElement.style
+    root.setProperty('--tg-safe-area-inset-bottom', '12px')
+    root.setProperty('--tg-content-safe-area-inset-bottom', '16px')
+    const back = document.querySelector('.astro-back')
+    const nav = document.querySelector('nav[aria-label="Разделы приложения"]')
+    if (!back || !nav) throw new Error('Astro back or navigation is missing')
+    const geometry = {
+      backBottom: back.getBoundingClientRect().bottom,
+      navTop: nav.getBoundingClientRect().top,
+    }
+    root.removeProperty('--tg-safe-area-inset-bottom')
+    root.removeProperty('--tg-content-safe-area-inset-bottom')
+    return geometry
+  })
+  assert.ok(astroBackGeometry.backBottom <= astroBackGeometry.navTop,
+    `Astro Back overlaps bottom navigation: ${JSON.stringify(astroBackGeometry)}`)
   await page.getByLabel('person: дата рождения').fill('29.02.2000')
   await page.getByLabel('person: время рождения').fill('12:00')
   await page.getByLabel('person: место рождения').fill('Москва, Россия')
