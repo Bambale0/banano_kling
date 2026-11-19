@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# CI-only portable FFmpeg setup. Linux amd64 wheels are pinned to published
-# SHA-256 digests, and the package independently verifies embedded binaries.
-# Does not skip media tests or substitute fake ffmpeg/ffprobe executables.
+# Install real FFmpeg/FFprobe from SHA-256 pinned Linux x64 release assets.
+# This avoids 88 slow apt dependencies and an FFmpeg 9 static build whose
+# output-mux threads failed under Wan's existing 512 MiB RLIMIT_AS in GH CI.
+# Never skip integrity or codec checks; no runtime security limits are changed.
 set -Eeuo pipefail
 
 if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
@@ -11,35 +12,32 @@ if command -v ffmpeg >/dev/null 2>&1 && command -v ffprobe >/dev/null 2>&1; then
 fi
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
-  echo 'Only Ubuntu x86_64 CI runners are supported for the pinned FFmpeg bundle' >&2
+  echo 'Only Linux x86_64 FFmpeg artifacts are pinned for this CI workflow' >&2
   exit 2
 fi
 
-root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
-python -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: \
-  --require-hashes -r "$root/scripts/ci/ffmpeg-pinned-wheels.txt"
+: "${GITHUB_PATH:?GITHUB_PATH must be present in GitHub Actions}"
+: "${RUNNER_TEMP:?RUNNER_TEMP must be present in GitHub Actions}"
 
-python - <<'PY'
-import os
-from pathlib import Path
-import subprocess
-from portable_ffmpeg import get_ffmpeg
+tag=b6.1.1
+base="https://github.com/eugeneware/ffmpeg-static/releases/download/$tag"
+dir="$RUNNER_TEMP/neuromix-ffmpeg-verified"
+mkdir -p "$dir"
+chmod 700 "$dir"
+for name in ffmpeg ffprobe; do
+  case "$name" in
+    ffmpeg) expected=bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa ;;
+    ffprobe) expected=25d9b6ccb05e3d9de9e04e31e2506d8dd7f9f0418981965ac6df12e8d3afd067 ;;
+  esac
+  curl --fail --location --silent --show-error --retry 2 --retry-delay 2 \
+    --connect-timeout 10 --max-time 100 \
+    --output "$dir/$name.gz" "$base/$name-linux-x64.gz"
+  printf '%s  %s\n' "$expected" "$dir/$name.gz" | sha256sum --check --status
+  gzip -t "$dir/$name.gz"
+  gzip -dc "$dir/$name.gz" > "$dir/$name"
+  chmod 755 "$dir/$name"
+  "$dir/$name" -version | sed -n '1p'
+done
 
-ffmpeg, ffprobe = (Path(path) for path in get_ffmpeg())
-if ffmpeg.parent != ffprobe.parent:
-    raise RuntimeError("FFmpeg and FFprobe must be installed together")
-for path in (ffmpeg, ffprobe):
-    if not path.is_file() or not os.access(path, os.X_OK):
-        raise RuntimeError(f"CI media executable unavailable: {path.name}")
-    result = subprocess.run(
-        [str(path), "-version"], capture_output=True, text=True, timeout=15,
-        check=True,
-    )
-    print(result.stdout.splitlines()[0], flush=True)
-github_path = os.environ.get("GITHUB_PATH")
-if not github_path:
-    raise RuntimeError("GITHUB_PATH missing from GitHub Actions environment")
-with open(github_path, "a", encoding="utf-8") as handle:
-    handle.write(str(ffmpeg.parent) + "\n")
-print("CI verified FFmpeg and FFprobe ready for next job steps", flush=True)
-PY
+printf '%s\n' "$dir" >> "$GITHUB_PATH"
+echo 'Verified real FFmpeg and FFprobe, hashes match immutable release artifacts.'
