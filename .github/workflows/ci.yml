@@ -11,7 +11,9 @@ permissions:
   statuses: write
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # v2 leaves the stale, unresponsive PR concurrency lock behind while still
+  # canceling superseded runs within this workflow/ref.
+  group: ci-v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -150,17 +152,9 @@ jobs:
           pip install --quiet -r requirements.txt
           python -m pip check
 
-      - name: Install media validation tools
+      - name: Install verified FFmpeg and FFprobe for media regression
         timeout-minutes: 8
-        run: |
-          set -Eeuo pipefail
-          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-            bash scripts/ci/test-prepare-ubuntu-apt.sh
-            bash scripts/ci/prepare-ubuntu-apt.sh
-            sudo timeout 300 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends ffmpeg
-          fi
-          ffmpeg -version | sed -n '1p'
-          ffprobe -version | sed -n '1p'
+        run: bash scripts/ci/install-verified-ffmpeg.sh
 
       - name: Run full safe regression suite
         id: full_suite
@@ -202,6 +196,10 @@ jobs:
   miniapp_e2e:
     name: GitHub runner — Mini App browser E2E
     runs-on: ubuntu-24.04
+    # Match the locked frontend Playwright version; browsers and signed OS
+    # libraries are preinstalled, so apt mirror outages cannot block E2E.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     needs: [lint, test]
     if: >-
       ${{
@@ -244,15 +242,13 @@ jobs:
         id: build
         run: npm run build
 
-      - name: Prepare signed Ubuntu apt mirror
-        run: |
-          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
-          bash ../../scripts/ci/prepare-ubuntu-apt.sh
+      - name: Verify apt mirror fallback fixture
+        run: bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
 
-      - name: Install Chromium and WebKit runtimes
+      - name: Verify matching Chromium and WebKit runtimes
         id: chromium
         timeout-minutes: 10
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install chromium webkit
 
       - name: Prepare mounted static export
         id: prepare
