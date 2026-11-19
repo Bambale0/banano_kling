@@ -1,4 +1,4 @@
-"""Regression: seven full original owner specifications, not a 12-card generic horoscope."""
+"""Regression: versioned seven-service plans, including the new natal eight-block instruction."""
 
 import json
 from dataclasses import replace
@@ -14,7 +14,7 @@ from bot.services.astro_report_pipeline import (
 
 # Source-derived report sections, excluding computation input and format-only chapters.
 REPORT_SPECS = {
-    "natal": (18, 10_000),
+    "natal": (8, 540),
     "compatibility": (25, 10_000),
     "karma": (27, 8_000),
     "year": (29, 12_000),
@@ -31,7 +31,10 @@ def test_full_owner_spec_coverage_and_minimum_words(service_id, expected):
     assert len(plan.sections) == expected_count
     assert plan.min_total_words == expected_min
     assert sum(s.min_words for s in plan.sections) >= expected_min
-    assert [s.id for s in plan.sections] == [f"section_{i:02d}" for i in range(3, expected_count + 3)]
+    start_section = 1 if service_id == "natal" else 3
+    assert [s.id for s in plan.sections] == [
+        f"section_{i:02d}" for i in range(start_section, expected_count + start_section)
+    ]
     assert all(s.instruction and s.title for s in plan.sections)
     assert "astronomical_facts" in plan.system_prompt
     assert "КРИТИЧЕСКОЕ ПРАВИЛО" in plan.system_prompt

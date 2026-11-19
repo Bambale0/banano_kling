@@ -12,6 +12,7 @@ import os
 import re
 import time
 from contextlib import suppress
+from pathlib import Path
 from uuid import uuid4
 
 from bot.services.astro_kie_gpt6 import KiePermanentError, KieRetryableError
@@ -19,12 +20,56 @@ from bot.services.astro_report_jobs import AstroReportJobs, ClaimedAstroJob
 from bot.services.astro_report_pipeline import (
     AstroReportError,
     AstroSectionValidationError,
+    ReportPlan,
     compose_report,
     load_report_plan,
     report_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
+
+
+_LEGACY_NATAL_PLAN_PATH = (
+    Path(__file__).resolve().parents[1] / "astro_report_plans_natal_v2_legacy.json"
+)
+
+
+def resolve_astro_job_plan(job: ClaimedAstroJob, secret: str) -> tuple[ReportPlan, str | None]:
+    """Match an encrypted job's exact immutable prompt and section contract.
+
+    On a natal prompt update, existing failed/manual-retry jobs must keep their
+    original verified 18-section template and encrypted checkpoints. New jobs
+    use the new eight-block prompt. Unauthenticated/tampered fingerprints fail
+    closed; we never silently swap templates or reuse someone else's content.
+    """
+    latest = load_report_plan(job.service_id)
+    candidates = [latest]
+    if job.service_id == "natal":
+        candidates.append(load_report_plan("natal", path=_LEGACY_NATAL_PLAN_PATH))
+    for plan in candidates:
+        fingerprint = report_fingerprint(
+            owner_id=job.owner_id, plan=plan, facts=job.facts,
+            secret=secret, generation_id=job.job_id,
+        )
+        if job.fingerprint == fingerprint:
+            if plan is not latest:
+                logger.info(
+                    "astro_report_archived_plan_selected job_id=%s service=%s version=%s",
+                    job.job_id, job.service_id, plan.version,
+                )
+            return plan, job.job_id
+        # Prior to per-click generation IDs, fingerprints were facts-only.
+        legacy_fingerprint = report_fingerprint(
+            owner_id=job.owner_id, plan=plan, facts=job.facts, secret=secret,
+        )
+        if job.fingerprint == legacy_fingerprint:
+            if plan is not latest:
+                logger.info(
+                    "astro_report_archived_plan_selected job_id=%s service=%s version=%s",
+                    job.job_id, job.service_id, plan.version,
+                )
+            return plan, None
+    raise ValueError("Astro source facts or template changed")
 
 
 class AstroReportWorker:
@@ -115,23 +160,9 @@ class AstroReportWorker:
         try:
             if not self.is_admin(job.owner_id):
                 raise PermissionError("Astro owner role revoked")
-            plan = load_report_plan(job.service_id)
-            expected = report_fingerprint(
-                owner_id=job.owner_id, plan=plan, facts=job.facts,
-                secret=self.jobs.fingerprint_secret, generation_id=job.job_id,
+            plan, generation_id = resolve_astro_job_plan(
+                job, self.jobs.fingerprint_secret,
             )
-            # Historic queued jobs use the original facts-only HMAC. Keep them
-            # resumable after release; new jobs have an isolated checkpoint key.
-            legacy = report_fingerprint(
-                owner_id=job.owner_id, plan=plan, facts=job.facts,
-                secret=self.jobs.fingerprint_secret,
-            )
-            if job.fingerprint == expected:
-                generation_id = job.job_id
-            elif job.fingerprint == legacy:
-                generation_id = None
-            else:
-                raise ValueError("Astro source facts or template changed")
             report = await asyncio.wait_for(compose_report(
                 owner_id=job.owner_id, plan=plan, facts=job.facts,
                 secret=self.jobs.fingerprint_secret, store=self.checkpoints,

@@ -203,8 +203,29 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         "positions", "cross_aspects", "person_a", "person_b",
         "birth_time_known", "not_calculated", "warnings", "aspect_orbs_deg",
         "utc_reference", "local_reference", "timezone",
+        "birth_place",
     )
     selected = {name: facts[name] for name in fields if name in facts}
+    if "birth_place" in selected:
+        # Only a canonical server-resolved GeoNames city is permitted in the
+        # LLM facts catalog. Do not let arbitrary browser/profile prose become
+        # model instructions or get leaked into logs.
+        place = selected["birth_place"]
+        if (
+            not isinstance(place, dict)
+            or set(place) != {"name", "country_code", "place_id", "timezone", "source"}
+            or not isinstance(place.get("name"), str)
+            or not 1 <= len(place["name"]) <= 120
+            or any(ord(ch) < 32 or ord(ch) == 92 or ch in "<>{}" for ch in place["name"])
+            or not isinstance(place.get("country_code"), str)
+            or not re.fullmatch(r"[A-Z]{2}", place["country_code"])
+            or type(place.get("place_id")) is not int
+            or not 1 <= place["place_id"] <= 2_147_483_647
+            or not isinstance(place.get("timezone"), str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+./-]{0,79}", place["timezone"])
+            or place.get("source") != "GeoNames"
+        ):
+            raise AstroReportError("Некорректные проверенные данные места рождения.")
     if "house_overlays" in selected:
         overlays = selected["house_overlays"]
         allowed = {"first_in_second", "second_in_first", "natal_in_solar", "solar_in_natal"}
