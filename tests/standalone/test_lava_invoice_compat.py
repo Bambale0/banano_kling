@@ -135,3 +135,68 @@ async def test_provider_status_queries_invoice_id_before_webhook_contract(monkey
     assert invoice_id == "invoice-1"
     assert requested == ["invoice-1"]
     assert saved == [("contract-1", "invoice-1")]
+
+
+@pytest.mark.asyncio
+async def test_provider_status_does_not_bind_contract_as_invoice_id(monkeypatch):
+    """Lava GET may return contractId as top-level id for an invoice query."""
+    requested = []
+    saved = []
+
+    async def fake_get_invoice(identifier):
+        requested.append(identifier)
+        return {
+            "ok": True,
+            "id": "contract-1",
+            "status": "completed",
+        }
+
+    async def fake_save(contract_id, invoice_id):
+        saved.append((contract_id, invoice_id))
+
+    monkeypatch.setattr(lava_service, "get_invoice", fake_get_invoice)
+    monkeypatch.setattr(safety, "_save_binding", fake_save)
+
+    transaction = SimpleNamespace(payment_id="invoice-1")
+    status, invoice_id = await compat._provider_status_compatible(
+        transaction,
+        contract_id="contract-1",
+        retry_delays=(0.0,),
+    )
+
+    assert status == "completed"
+    assert invoice_id == "invoice-1"
+    assert requested == ["invoice-1"]
+    assert saved == [("contract-1", "invoice-1")]
+
+
+@pytest.mark.asyncio
+async def test_provider_status_legacy_contract_requires_explicit_invoice_id(monkeypatch):
+    """Do not infer an invoice identifier from a contract-only GET response."""
+    async def fake_get_invoice(identifier):
+        if identifier == "legacy-contract":
+            return {"ok": True, "id": "legacy-contract", "status": "pending"}
+        return None
+
+    async def fake_mapping(contract):
+        assert contract == "legacy-contract"
+        return None
+
+    saved = []
+
+    async def fake_save(contract, invoice):
+        saved.append((contract, invoice))
+
+    monkeypatch.setattr(lava_service, "get_invoice", fake_get_invoice)
+    monkeypatch.setattr(safety, "_invoice_id_for_contract", fake_mapping)
+    monkeypatch.setattr(safety, "_save_binding", fake_save)
+
+    transaction = SimpleNamespace(payment_id="old-id")
+    status, invoice_id = await compat._provider_status_compatible(
+        transaction,
+        contract_id="legacy-contract",
+        retry_delays=(0.0,),
+    )
+    assert status == "pending"
+    assert invoice_id is None
+    assert saved == []
