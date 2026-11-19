@@ -644,7 +644,7 @@ try {
     })
   })
 
-  await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e`, {
+  await page.goto(`${baseUrl}?tgWebAppData=query_id%3Dbrowser_e2e`, {
     waitUntil: 'networkidle',
   })
   await page.getByText('Онлайн', { exact: true }).waitFor()
@@ -911,7 +911,7 @@ try {
   // Exercise the exported Seedance UI with mocked provider transport only.
   for (const editing of [true, false]) {
     bootstrapPayload.is_admin = editing
-    await page.goto(`${baseUrl}?tgWebAppData=query_id%3De2e`, { waitUntil: 'networkidle' })
+    await page.goto(`${baseUrl}?tgWebAppData=query_id%3Dbrowser_e2e`, { waitUntil: 'networkidle' })
     await page.getByRole('button', { name: 'Видео', exact: true }).click()
     const durationSlider = page.getByLabel('Длительность видео', { exact: true })
     await durationSlider.waitFor()
