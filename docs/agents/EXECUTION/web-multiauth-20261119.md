@@ -37,6 +37,18 @@ No provider key or SMTP password may be stored in source control.
 Provider acceptance (Resend email ID / SMTP response) does NOT guarantee delivery to a mailbox.
 No automatic retries on an ambiguous HTTP timeout; Resend Idempotency-Key allows safe explicit reconciliation if necessary.
 
+Optional bounded runtime settings (safe defaults in parentheses):
+- WEB_AUTH_EMAIL_CODE_TTL_SECONDS (600)
+- WEB_AUTH_EMAIL_RESEND_COOLDOWN_SECONDS (60)
+- WEB_AUTH_EMAIL_RATE_WINDOW_SECONDS (900)
+- WEB_AUTH_EMAIL_SENDS_PER_WINDOW (3)
+- WEB_AUTH_EMAIL_IP_SENDS_PER_WINDOW (15)
+- WEB_AUTH_EMAIL_MAX_CODE_ATTEMPTS (5)
+
+All OTP challenges and request-rate counters are stored in the shared database,
+not per-worker memory. Do not log or display raw codes in observability.
+A provider response ID means accepted for processing, not delivered to inbox.
+
 Telegram Login Widget domain requires BotFather configuration.
 
 ## Explicitly not yet fulfilled
