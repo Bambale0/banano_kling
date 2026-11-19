@@ -529,7 +529,10 @@ async def email_start(request: web.Request) -> web.Response:
             return _json({"ok": False, "error": "Session required"}, 401)
         token = await _new_flow("email", mode, account if mode == "link" else None,
                                 email, _safe_next(payload.get("next")))
-        url = _public_origin() + _API + "/email/verify?" + urlencode({"ticket": token})
+        # Fragment is never sent in HTTP requests/access logs. JavaScript
+        # exchanges the one-time ticket with POST on the login origin;
+        # passive email scanners doing GET cannot burn it.
+        url = _public_origin() + "/login#ticket=" + token
         try:
             await asyncio.wait_for(asyncio.to_thread(_send_magic_link, email, url), timeout=13)
         except (OSError, smtplib.SMTPException, TimeoutError):
@@ -543,11 +546,25 @@ async def email_start(request: web.Request) -> web.Response:
         return _json({"ok": False, "error": "Invalid email or too many requests"}, 400)
 
 
-async def email_verify(request: web.Request) -> web.StreamResponse:
-    flow = await _consume_flow("email", request.query.get("ticket", ""))
+async def email_verify(request: web.Request) -> web.Response:
+    if not _valid_browser_origin(request):
+        return _json({"ok": False, "error": "Invalid request origin"}, 403)
+    if request.content_length and request.content_length > 1024:
+        return _json({"ok": False, "error": "Invalid request"}, 413)
+    try:
+        payload = await request.json()
+        ticket = payload.get("ticket", "")
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return _json({"ok": False, "error": "Invalid ticket"}, 400)
+    flow = await _consume_flow("email", ticket)
     if not flow or not flow["subject"]:
-        return _redirect("/login?error=expired")
-    return await _complete_identity(request, "email", flow["subject"], flow)
+        return _json({"ok": False, "error": "Expired or used ticket"}, 401)
+    result = await _complete_identity(request, "email", flow["subject"], flow)
+    if _SESSION_COOKIE not in result.cookies:
+        return _json({"ok": False, "error": "Account linking failed"}, 409)
+    response = _json({"ok": True, "redirect": result.location})
+    _set_session_cookie(response, result.cookies[_SESSION_COOKIE].value)
+    return response
 
 
 async def telegram_login(request: web.Request) -> web.StreamResponse:
@@ -609,6 +626,6 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)
     app.router.add_post(root + "/email/start", email_start)
-    app.router.add_get(root + "/email/verify", email_verify)
+    app.router.add_post(root + "/email/verify", email_verify)
     app.router.add_post(root + "/telegram", telegram_login)
     app.router.add_post(root + "/logout", logout)
