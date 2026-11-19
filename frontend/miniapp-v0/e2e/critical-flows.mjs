@@ -472,6 +472,26 @@ try {
       return
     }
 
+    if (path.endsWith('/feed/profile')) {
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          profile: { referral_code: 'E2EADMIN', first_name: 'E2E', last_name: 'Admin',
+            username: 'e2e_admin', display_name: 'E2E Admin', photo_url: '',
+            posts_count: 0, likes_count: 0, shares_count: 0, remixes_count: 0 },
+          feed: [],
+        }),
+      })
+      return
+    }
+    if (path.endsWith('/feed/my')) {
+      await route.fulfill({
+        status: 200, contentType: 'application/json',
+        body: JSON.stringify({ ok: true, feed: [] }),
+      })
+      return
+    }
     if (path.endsWith('/bootstrap')) {
       await route.fulfill({
         status: 200,
