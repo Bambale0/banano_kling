@@ -5,17 +5,13 @@ provider access tokens or use an email match to merge wallets.
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
 import os
 import re
 import secrets
-import smtplib
-import ssl
 import time
-from email.message import EmailMessage
 from urllib.parse import urlencode, urlsplit
 from uuid import uuid4
 
@@ -86,8 +82,9 @@ def _credentials(provider: str) -> tuple[str, str]:
 
 
 def _email_enabled() -> bool:
-    return bool(_public_origin() and os.getenv("WEB_AUTH_SMTP_HOST")
-                and os.getenv("WEB_AUTH_SMTP_FROM"))
+    from bot.email_otp import email_enabled
+
+    return email_enabled()
 
 
 def _valid_browser_origin(request: web.Request) -> bool:
@@ -484,87 +481,16 @@ async def oauth_callback(request: web.Request) -> web.StreamResponse:
     return result
 
 
-def _send_magic_link(email: str, link: str) -> None:
-    host = os.getenv("WEB_AUTH_SMTP_HOST", "")
-    port = int(os.getenv("WEB_AUTH_SMTP_PORT", "587"))
-    user = os.getenv("WEB_AUTH_SMTP_USERNAME", "")
-    password = os.getenv("WEB_AUTH_SMTP_PASSWORD", "")
-    sender = os.getenv("WEB_AUTH_SMTP_FROM", "")
-    message = EmailMessage()
-    message["From"], message["To"] = sender, email
-    message["Subject"] = "NEUROMIX — вход по ссылке"
-    message.set_content("Откройте эту ссылку в течение 10 минут:\n\n" + link +
-                        "\n\nЕсли вы не запрашивали вход, просто игнорируйте письмо.")
-    ctx = ssl.create_default_context()
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=10) as smtp:
-            if user:
-                smtp.login(user, password)
-            smtp.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=10) as smtp:
-            smtp.ehlo()
-            smtp.starttls(context=ctx)
-            smtp.ehlo()
-            if user:
-                smtp.login(user, password)
-            smtp.send_message(message)
-
-
 async def email_start(request: web.Request) -> web.Response:
-    if not _email_enabled():
-        return _json({"ok": False, "error": "Email sign-in is not configured"}, 503)
-    if not _valid_browser_origin(request):
-        return _json({"ok": False, "error": "Invalid request origin"}, 403)
-    if request.content_length and request.content_length > 4096:
-        return _json({"ok": False, "error": "Invalid request"}, 413)
-    try:
-        payload = await request.json()
-        email = str(payload.get("email", "")).strip().lower()
-        if not _EMAIL_RE.fullmatch(email) or len(email) > 254:
-            raise ValueError("Invalid email")
-        mode = "link" if payload.get("intent") == "link" else "login"
-        account = await _session_account(request)
-        if mode == "link" and not account:
-            return _json({"ok": False, "error": "Session required"}, 401)
-        token = await _new_flow("email", mode, account if mode == "link" else None,
-                                email, _safe_next(payload.get("next")))
-        # Fragment is never sent in HTTP requests/access logs. JavaScript
-        # exchanges the one-time ticket with POST on the login origin;
-        # passive email scanners doing GET cannot burn it.
-        url = _public_origin() + "/login#ticket=" + token
-        try:
-            await asyncio.wait_for(asyncio.to_thread(_send_magic_link, email, url), timeout=13)
-        except (OSError, smtplib.SMTPException, TimeoutError):
-            # Unsent challenges are not valid credentials.
-            async with db_backend.connect() as db:
-                await db.execute("DELETE FROM web_auth_flows WHERE token_hash = ?", (_digest(token),))
-                await db.commit()
-            return _json({"ok": False, "error": "Email delivery unavailable"}, 503)
-        return _json({"ok": True, "message": "Проверьте почту: ссылка действует 10 минут."})
-    except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
-        return _json({"ok": False, "error": "Invalid email or too many requests"}, 400)
+    from bot.email_otp import email_start as start_otp
+
+    return await start_otp(request)
 
 
 async def email_verify(request: web.Request) -> web.Response:
-    if not _valid_browser_origin(request):
-        return _json({"ok": False, "error": "Invalid request origin"}, 403)
-    if request.content_length and request.content_length > 1024:
-        return _json({"ok": False, "error": "Invalid request"}, 413)
-    try:
-        payload = await request.json()
-        ticket = payload.get("ticket", "")
-    except (json.JSONDecodeError, TypeError, AttributeError):
-        return _json({"ok": False, "error": "Invalid ticket"}, 400)
-    flow = await _consume_flow("email", ticket)
-    if not flow or not flow["subject"]:
-        return _json({"ok": False, "error": "Expired or used ticket"}, 401)
-    result = await _complete_identity(request, "email", flow["subject"], flow)
-    if _SESSION_COOKIE not in result.cookies:
-        return _json({"ok": False, "error": "Account linking failed"}, 409)
-    response = _json({"ok": True, "redirect": result.location})
-    _set_session_cookie(response, result.cookies[_SESSION_COOKIE].value)
-    return response
+    from bot.email_otp import email_verify as verify_otp
+
+    return await verify_otp(request)
 
 
 async def telegram_login(request: web.Request) -> web.StreamResponse:
