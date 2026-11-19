@@ -212,6 +212,8 @@ try {
   let seedanceGenerationPayload = null
   let copiedTrendPayload = null
   let paymentPayload = null
+  let browserLogoutCalls = 0
+  let browserLogoutFailuresRemaining = 0
   let promptsPayload = null
   let trendGenerationPayload = null
   let pinterestReferencePayload = null
@@ -263,6 +265,16 @@ try {
   await page.route('**/mini-app/api/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname
+    if (path.endsWith('/web-auth/logout')) {
+      browserLogoutCalls += 1
+      if (browserLogoutFailuresRemaining > 0) {
+        browserLogoutFailuresRemaining -= 1
+        await route.fulfill({ status: 503, contentType: 'application/json', body: '{"ok":false}' })
+      } else {
+        await route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' })
+      }
+      return
+    }
 
     if (path.endsWith('/astro/places')) {
       const body = JSON.parse(request.postData() || '{}')
@@ -1372,9 +1384,14 @@ try {
     window.sessionStorage.setItem('__banano_initial_search', '?tgWebAppData=old-session')
     window.sessionStorage.setItem('unrelated-preference', 'retained')
   })
+  browserLogoutFailuresRemaining = 1
   await logoutButton.click()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Выйти', exact: true }).click()
+  await page.getByRole('alertdialog').getByRole('alert').getByText('Не удалось выйти из аккаунта. Проверьте соединение и попробуйте ещё раз.').waitFor()
+  assert.equal(new URL(page.url()).pathname, '/mini-app/', 'Failed server logout must preserve the active web page')
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Выйти', exact: true }).click()
   await page.waitForURL('**/login')
+  assert.equal(browserLogoutCalls, 2, 'Browser logout must retry revocation before redirect')
   await page.getByRole('heading', { name: 'Вход в NEUROMIX' }).waitFor()
   const logoutStorage = await page.evaluate(() => ({
     staleSession: window.sessionStorage.getItem('__banano_tg_init_data'),
