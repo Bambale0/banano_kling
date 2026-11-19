@@ -4,6 +4,7 @@ The official Telegram Login SDK returns an ID token. Never trust its decoded
 user object: verify the JWT against Telegram JWKS, claims and browser nonce.
 """
 import base64
+import binascii
 import json
 import time
 from typing import Any
@@ -38,7 +39,7 @@ def _parse_id_token(token: str) -> tuple[dict[str, Any], dict[str, Any], bytes, 
         header = json.loads(_decode_b64url(parts[0]))
         claims = json.loads(_decode_b64url(parts[1]))
         signature = _decode_b64url(parts[2])
-    except (ValueError, UnicodeError) as exc:
+    except (ValueError, UnicodeError, binascii.Error) as exc:
         raise ValueError("Invalid Telegram OIDC token") from exc
     if not isinstance(header, dict) or not isinstance(claims, dict):
         raise ValueError("Invalid Telegram OIDC token")
@@ -100,7 +101,7 @@ def verify_telegram_id_token(
             raise ValueError("Invalid Telegram signing key")
         public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
         public_key.verify(signature, signed, padding.PKCS1v15(), hashes.SHA256())
-    except (KeyError, TypeError, ValueError, InvalidSignature) as exc:
+    except (KeyError, TypeError, ValueError, InvalidSignature, binascii.Error) as exc:
         raise ValueError("Invalid Telegram OIDC signature") from exc
 
     timestamp = int(time.time()) if now is None else now
