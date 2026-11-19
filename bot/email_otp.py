@@ -177,15 +177,17 @@ async def _deliver_code(email: str, code: str, request_id: str) -> str:
             "text": _email_message(code),
         }
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(_RESEND_API, headers=headers, json=body) as response:
-                    # Never log provider response bodies (may contain PII).
-                    if response.status not in (200, 201):
-                        raise EmailDeliveryError(uncertain=response.status >= 500)
-                    data = await response.json(content_type=None)
-                    if not isinstance(data, dict) or not isinstance(data.get("id"), str):
-                        raise EmailDeliveryError(uncertain=True)
-                    return data["id"]
+            async with (
+                aiohttp.ClientSession(timeout=timeout) as session,
+                session.post(_RESEND_API, headers=headers, json=body) as response,
+            ):
+                # Never log provider response bodies (may contain PII).
+                if response.status not in (200, 201):
+                    raise EmailDeliveryError(uncertain=response.status >= 500)
+                data = await response.json(content_type=None)
+                if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+                    raise EmailDeliveryError(uncertain=True)
+                return data["id"]
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise EmailDeliveryError(uncertain=True) from exc
     if email_provider() != "smtp":
