@@ -42,7 +42,7 @@ def _parse_id_token(token: str) -> tuple[dict[str, Any], dict[str, Any], bytes, 
     except (ValueError, UnicodeError, binascii.Error) as exc:
         raise ValueError("Invalid Telegram OIDC token") from exc
     if not isinstance(header, dict) or not isinstance(claims, dict):
-        raise ValueError("Invalid Telegram OIDC token")
+        raise TypeError("Invalid Telegram OIDC token")
     return header, claims, (parts[0] + "." + parts[1]).encode("ascii"), signature
 
 
@@ -53,22 +53,26 @@ async def fetch_telegram_jwks() -> dict[str, Any]:
         return _JWKS_CACHE["keys"]
     try:
         timeout = aiohttp.ClientTimeout(total=5, connect=3)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession(timeout=timeout) as session,
+            session.get(
                 _TELEGRAM_JWKS_URL,
                 headers={"Accept": "application/json"},
                 max_redirects=0,
-            ) as response:
-                response.raise_for_status()
-                if int(response.headers.get("Content-Length", "0")) > 131072:
+            ) as response,
+        ):
+            response.raise_for_status()
+            if int(response.headers.get("Content-Length", "0")) > 131072:
+                raise ValueError("Oversized Telegram signing key response")
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(16384):
+                data.extend(chunk)
+                if len(data) > 131072:
                     raise ValueError("Oversized Telegram signing key response")
-                raw = await response.content.read(131073)
-                if len(raw) > 131072:
-                    raise ValueError("Oversized Telegram signing key response")
-                payload = json.loads(raw)
-                if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
-                    raise ValueError("Invalid Telegram signing key response")
-    except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+            payload = json.loads(data)
+            if not isinstance(payload, dict) or not isinstance(payload.get("keys"), list):
+                raise TypeError("Invalid Telegram signing key response")
+    except (aiohttp.ClientError, TimeoutError, ValueError, TypeError) as exc:
         raise ConnectionError("Telegram verification unavailable") from exc
     _JWKS_CACHE.update(keys=payload, until=time.monotonic() + _JWKS_CACHE_SECONDS)
     return payload
@@ -84,7 +88,7 @@ def verify_telegram_id_token(
         raise ValueError("Unsupported Telegram OIDC signing algorithm")
     keys = jwks.get("keys") if isinstance(jwks, dict) else None
     if not isinstance(keys, list):
-        raise ValueError("Invalid Telegram signing keys")
+        raise TypeError("Invalid Telegram signing keys")
     key = next((
         item for item in keys
         if isinstance(item, dict) and item.get("kty") == "RSA"
