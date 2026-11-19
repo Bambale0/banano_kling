@@ -8,6 +8,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from bot import database, db as db_backend, web_auth
+from bot.shared_accounts.wallet import WalletService
 
 
 def _flow(*, source=None, destination="/mini-app/?ref=ABC123"):
@@ -183,6 +184,12 @@ async def test_existing_google_and_telegram_accounts_merge_only_with_both_fresh_
         "nm_web_session": second_cookie,
     }))
     assert first_id != second_id
+    await WalletService("sandbox").apply(
+        first_id, "credit", "2.2500", "web-merge-wallet-first",
+    )
+    await WalletService("sandbox").apply(
+        second_id, "credit", "3.7500", "web-merge-wallet-second",
+    )
 
     # This one action requires: a current Google session and a freshly
     # verified Telegram Login Widget payload. Both are checked server side.
@@ -206,6 +213,10 @@ async def test_existing_google_and_telegram_accounts_merge_only_with_both_fresh_
         )).fetchone()
     assert rows[0][0] == tg[0][0] == result_id
     assert active[0] == 1
+    merged_wallet = await WalletService("sandbox").snapshot(result_id)
+    assert merged_wallet["balance"]["available"] == "6.0000"
+    entries = [item["kind"] for item in merged_wallet["entries"]]
+    assert "transfer_in" in entries and "transfer_out" in entries
 
 
 @pytest.mark.asyncio
