@@ -23,8 +23,8 @@ import aiohttp
 from aiohttp import web
 
 from bot import db as db_backend
-from bot.shared_accounts.schema import ensure_schema as ensure_shared_schema
 from bot.shared_accounts.errors import PreviewConflict
+from bot.shared_accounts.schema import ensure_schema as ensure_shared_schema
 
 _API = "/mini-app/api/web-auth"
 _SESSION_COOKIE = "nm_web_session"
