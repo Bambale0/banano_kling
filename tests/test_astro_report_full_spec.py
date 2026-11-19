@@ -17,7 +17,7 @@ REPORT_SPECS = {
     "natal": (30, 11_000),
     "compatibility": (25, 10_000),
     "karma": (27, 8_000),
-    "year": (29, 12_000),
+    "year": (12, 2_500),
     "month": (23, 5_000),
     "solar": (21, 12_000),
     "lunar": (14, 5_000),
@@ -31,7 +31,7 @@ def test_full_owner_spec_coverage_and_minimum_words(service_id, expected):
     assert len(plan.sections) == expected_count
     assert plan.min_total_words == expected_min
     assert sum(s.min_words for s in plan.sections) >= expected_min
-    start_section = 1 if service_id == "natal" else 3
+    start_section = 1 if service_id in ("natal", "year") else 3
     assert [s.id for s in plan.sections] == [
         f"section_{i:02d}" for i in range(start_section, expected_count + start_section)
     ]
@@ -82,8 +82,8 @@ def test_yearly_months_require_exact_twelve_calculated_rows():
         "samples": [{"date": f"2026-{month:02d}-01"} for month in range(1, 13)],
     }
     result = _expand_period_sections(plan, facts)
-    assert len(result) == len(plan.sections) + 12
-    assert result[-1].id == "month_20261201"
+    assert result == plan.sections  # snapshots are evidence, not invented event chapters
+    assert plan.dynamic_period is None
     with pytest.raises(AstroReportError, match="неполны|дублированы|перепутаны"):
         _expand_period_sections(plan, {**facts, "samples": facts["samples"][:11]})
     with pytest.raises(AstroReportError, match="Отсутствуют"):
