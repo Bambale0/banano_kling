@@ -44,12 +44,13 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("prefers-reduced-motion:reduce", self.html)
         self.assertIn("safe-area-inset-bottom", self.html)
 
-    def test_real_app_entrypoints_and_honest_future_auth(self):
+    def test_real_app_entrypoints_and_only_working_auth(self):
         self.assertNotIn("/mini-app/", self.page.links)
         self.assertGreaterEqual(self.page.links.count("/login"), 10)
         self.assertEqual(set(self.page.links) - {"/"}, {"#possibilities", "#benefits", "#how", "#examples", "/login"})
-        for method in ("Telegram", "Почта", "Google", "Яндекс ID", "скоро"):
-            self.assertIn(method, self.html)
+        self.assertIn("Telegram", self.html)
+        self.assertNotIn('class="auth-soon"', self.html)
+        self.assertNotIn('class="account-note"', self.html)
         self.assertNotIn('href="/oauth/google', self.html)
         self.assertNotIn('href="/oauth/yandex', self.html)
         for link in self.page.links:
@@ -85,14 +86,15 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn('href="/login"', self.html)
         self.assertGreaterEqual(self.page.links.count("/login"), 10)
         self.assertIn("LoginPanel", page)
-        for component in ("Button", "Card", "Badge", "Separator"):
+        for component in ("Button", "Card", "Badge"):
             self.assertIn(component, panel)
         self.assertIn("/mini-app/api/browser-auth/config", panel)
         self.assertIn("/mini-app/api/browser-auth", panel)
         self.assertIn("telegram_auth: user", panel)
         self.assertIn("tgWebAppData", panel)
         self.assertIn("window.location.replace(studioUrlWithSession", panel)
-        self.assertIn("skoro", panel.replace("скоро", "skoro"))
+        self.assertNotIn("скоро", panel)
+        self.assertNotIn("['Почта', 'Google', 'Яндекс ID']", panel)
         self.assertIn("neuromix-login", css)
         self.assertIn("NoiseTexture", panel)
         magic = (ROOT / "frontend/miniapp-v0/components/magicui/noise-texture.tsx").read_text(encoding="utf-8")
@@ -104,6 +106,42 @@ class LandingPublicContractTest(unittest.TestCase):
 
         self.assertNotIn('href="/oauth/google', panel)
         self.assertNotIn("localStorage.setItem", panel)
+
+    def test_no_internal_product_language_on_public_pages(self):
+        class VisibleText(HTMLParser):
+            def __init__(self):
+                super().__init__(convert_charrefs=True)
+                self.parts = []
+                self.hidden = 0
+
+            def handle_starttag(self, tag, attrs):
+                if tag in ("script", "style"):
+                    self.hidden += 1
+
+            def handle_endtag(self, tag):
+                if tag in ("script", "style"):
+                    self.hidden -= 1
+
+            def handle_data(self, data):
+                if not self.hidden:
+                    self.parts.append(data)
+
+        visitor = VisibleText()
+        visitor.feed(self.html)
+        text = " ".join(visitor.parts).lower()
+        for jargon in (
+            "промпт", "статусы задач", "история задач", "серверной авторизации",
+            "ai generation / 001", "моделей и режимов", "настройках генерации",
+            "выдуманные отзывы", "скоро", "пока не подключены",
+        ):
+            self.assertNotIn(jargon, text, jargon)
+
+        panel = (ROOT / "frontend/miniapp-v0/components/landing-login-panel.tsx").read_text(encoding="utf-8")
+        self.assertNotIn("['Почта', 'Google', 'Яндекс ID']", panel)
+        self.assertNotIn("скоро", panel)
+        self.assertNotIn("Быстрый вход не настроен", panel)
+        self.assertIn("TelegramOIDCLogin", panel)
+        self.assertIn("LegacyTelegramWidget", panel)
 
     def test_login_nginx_routing_and_safe_release_smoke(self):
         self.assertIn("location = /login {", self.nginx)
@@ -186,8 +224,8 @@ class LandingPublicContractTest(unittest.TestCase):
         for section_id in ids:
             self.assertIn(f'id="{section_id}"', self.html)
         self.assertIn("Фото, видео и тренды", self.html)
-        self.assertIn("Актуальные пакеты пополнения", self.html)
-        self.assertIn("не выдуманные отзывы", self.html)
+        self.assertIn("Актуальные цены", self.html)
+        self.assertIn("Фото, видео, тренды", self.html)
         self.assertNotIn("₽ за генерацию", self.html)
         self.assertNotIn("бесплатных генераций", self.html)
         self.assertEqual(4, self.html.count('class="story-row"'))
@@ -199,9 +237,10 @@ class LandingPublicContractTest(unittest.TestCase):
 
     def test_faq_is_native_accessible_and_trust_does_not_fabricate_testimonials(self):
         self.assertIn('<section class="section-faq" id="faq"', self.html)
-        self.assertIn("Сейчас веб-версия использует вход через Telegram", self.html)
-        self.assertIn("картинка будущего", self.html)
-        self.assertIn("Здесь показаны реальные разделы продукта", self.html)
+        self.assertIn("Сейчас для входа нужен Telegram", self.html)
+        self.assertIn("Нужен опыт работы с нейросетями?</summary><p>Нет.", self.html)
+        self.assertIn("всё под рукой", self.html)
+        self.assertIn("Твои идеи", self.html)
         self.assertNotIn('class="fake-review"', self.html)
         self.assertIn(".faq-items summary:focus-visible", self.html)
 
