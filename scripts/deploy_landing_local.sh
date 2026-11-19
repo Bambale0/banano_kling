@@ -139,7 +139,7 @@ login_locations = """    location = /login {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "no-referrer" always;
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-inline' https://*.telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src https://*.telegram.org; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-inline' https://telegram.org https://*.telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src https://*.telegram.org; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests" always;
     }
 
     location = /login/ {
@@ -150,7 +150,7 @@ login_locations = """    location = /login {
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "no-referrer" always;
-        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-inline' https://*.telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src https://*.telegram.org; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self' 'unsafe-inline' https://telegram.org https://*.telegram.org; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src https://*.telegram.org; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'; upgrade-insecure-requests" always;
     }
 
 """
