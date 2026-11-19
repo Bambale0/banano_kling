@@ -40,8 +40,26 @@ export function clearBrowserAccountCredentials(): void {
   }
 }
 
-export function signOutBrowserAccount(): void {
+/** Revoke the httpOnly web-auth cookie on the server before removing the
+ * browser-signed Telegram payload. A local-only clear would silently re-login
+ * a Yandex/email user whose web-auth cookie was still valid. */
+export async function revokeBrowserAccountSession(): Promise<void> {
+  const response = await fetch('/mini-app/api/web-auth/logout', {
+    method: 'POST',
+    credentials: 'same-origin',
+    cache: 'no-store',
+    headers: { Accept: 'application/json' },
+  })
+  const result = await response.json().catch(() => null) as { ok?: boolean } | null
+  if (!response.ok || result?.ok !== true) {
+    throw new Error('Не удалось выйти из аккаунта. Проверьте соединение и попробуйте ещё раз.')
+  }
+}
+
+export async function signOutBrowserAccount(): Promise<void> {
   if (!isBrowserAccountSession()) return
+  // Do not pretend logout succeeded if the server cannot revoke its cookie.
+  await revokeBrowserAccountSession()
   clearBrowserAccountCredentials()
   window.location.replace('/login')
 }
