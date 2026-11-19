@@ -39,7 +39,7 @@ function studioUrlWithSession(initData: string): string {
   return url.toString()
 }
 
-function TelegramWidget() {
+function LegacyTelegramWidget() {
   const widgetRef = useRef<HTMLDivElement>(null)
   const activeRequest = useRef(false)
   const [botUsername, setBotUsername] = useState('')
@@ -191,6 +191,175 @@ function TelegramWidget() {
   )
 }
 
+
+type TelegramOIDCResult = { id_token?: string; error?: string }
+type TelegramOIDCClient = {
+  auth: (
+    options: { client_id: number; scope: string[]; nonce: string; lang: string },
+    callback: (result: TelegramOIDCResult) => void
+  ) => void
+}
+
+function telegramOIDCClient(): TelegramOIDCClient | null {
+  return (window as unknown as { Telegram?: { Login?: TelegramOIDCClient } }).Telegram?.Login || null
+}
+
+/** Primary one-click login: the official OIDC SDK opens the Telegram approval prompt. */
+function TelegramOIDCLogin() {
+  const [config, setConfig] = useState<{ clientId: number; nonce: string } | null>(null)
+  const [state, setState] = useState<'loading' | 'ready' | 'verifying' | 'error'>('loading')
+  const [message, setMessage] = useState('Готовим быстрый вход через Telegram…')
+  const [showLegacy, setShowLegacy] = useState(false)
+  const activeRequest = useRef(false)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    const controller = new AbortController()
+    const query = new URLSearchParams(window.location.search)
+    const hash = new URLSearchParams(window.location.hash.slice(1))
+    // Native Telegram Mini App launches should never enter a browser auth loop.
+    if (['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'].some(
+      key => query.has(key) || hash.has(key)
+    )) {
+      window.location.replace('/mini-app/' + window.location.search + window.location.hash)
+      return
+    }
+
+    const script = document.createElement('script')
+    script.async = true
+    script.src = 'https://telegram.org/js/telegram-login.js'
+    const prepare = async () => {
+      try {
+        const response = await fetch('/mini-app/api/browser-auth/config', {
+          method: 'GET',
+          headers: { Accept: 'application/json' },
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('config-unavailable')
+        const data = await response.json() as {
+          ok?: boolean; oidc_client_id?: string; oidc_nonce?: string
+        }
+        const clientId = Number(data.oidc_client_id)
+        if (!data.ok || !Number.isSafeInteger(clientId) || clientId <= 0 ||
+            typeof data.oidc_nonce !== 'string' || data.oidc_nonce.length < 24) {
+          throw new Error('oidc-unavailable')
+        }
+        if (!mounted.current) return
+        setConfig({ clientId, nonce: data.oidc_nonce })
+        script.onload = () => {
+          if (!mounted.current) return
+          if (telegramOIDCClient()) {
+            setState('ready')
+            setMessage('Telegram откроет подтверждение входа. Номер вводить не нужно.')
+          } else {
+            setState('error')
+            setMessage('Быстрый вход сейчас недоступен. Попробуйте резервный способ.')
+          }
+        }
+        script.onerror = () => {
+          if (mounted.current) {
+            setState('error')
+            setMessage('Не удалось открыть быстрый вход через Telegram.')
+          }
+        }
+        document.head.appendChild(script)
+      } catch {
+        if (mounted.current && !controller.signal.aborted) {
+          setState('error')
+          setMessage('Не удалось подготовить Telegram-вход. Повторите попытку.')
+        }
+      }
+    }
+    void prepare()
+    return () => {
+      mounted.current = false
+      controller.abort()
+      script.remove()
+    }
+  }, [])
+
+  const startLogin = () => {
+    const sdk = telegramOIDCClient()
+    if (!config || !sdk || state !== 'ready' || activeRequest.current) return
+    // Must run directly in the click handler so mobile browsers allow the popup.
+    setMessage('Подтверди вход в Telegram и вернись сюда…')
+    try {
+      sdk.auth({
+        client_id: config.clientId,
+        scope: ['profile'], // no phone number or bot-write access requested
+        nonce: config.nonce,
+        lang: 'ru',
+      }, (result) => {
+        if (!mounted.current) return
+        if (!result?.id_token) {
+          setState('ready')
+          setMessage(result?.error
+            ? 'Telegram не подтвердил вход. Попробуйте ещё раз.'
+            : 'Вход отменён. Можно попробовать снова.')
+          return
+        }
+        if (activeRequest.current) return
+        activeRequest.current = true
+        setState('verifying')
+        setMessage('Проверяем подтверждение Telegram…')
+        void (async () => {
+          try {
+            const response = await fetch('/mini-app/api/browser-auth', {
+              method: 'POST',
+              headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              cache: 'no-store',
+              body: JSON.stringify({ id_token: result.id_token }),
+            })
+            const data = await response.json() as { ok?: boolean; init_data?: string }
+            if (!response.ok || !data.ok || !data.init_data) throw new Error('auth-failed')
+            if (mounted.current) window.location.replace(studioUrlWithSession(data.init_data))
+          } catch {
+            if (mounted.current) {
+              setState('ready')
+              setMessage('Подтверждение не удалось проверить. Попробуйте снова.')
+            }
+          } finally {
+            activeRequest.current = false
+          }
+        })()
+      })
+    } catch {
+      setState('error')
+      setMessage('Не получилось открыть Telegram. Попробуйте резервный вход.')
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Button
+        type="button"
+        className="h-14 w-full rounded-sm bg-[#e7b154] text-base font-extrabold text-[#18140e] hover:bg-[#f2c477]"
+        onClick={startLogin}
+        disabled={state !== 'ready'}
+        aria-label="Продолжить через Telegram"
+      >
+        {state === 'loading' || state === 'verifying'
+          ? <LoaderCircle aria-hidden="true" className="mr-2 size-4 animate-spin" />
+          : null}
+        Продолжить через Telegram
+        <ArrowRight aria-hidden="true" className="ml-2 size-4" />
+      </Button>
+      <p aria-live="polite" role="status" className="text-center text-xs text-[#b8babd]">
+        {message}
+      </p>
+      <button type="button" className="w-full text-center text-xs text-[#dbb76d] underline underline-offset-4"
+        onClick={() => setShowLegacy(current => !current)}
+        aria-expanded={showLegacy}
+      >
+        {showLegacy ? 'Скрыть резервный способ' : 'Telegram не открылся? Другой способ входа'}
+      </button>
+      {showLegacy ? <LegacyTelegramWidget /> : null}
+    </div>
+  )
+}
+
 export function LoginPanel() {
   return (
     <main className="neuromix-login min-h-svh">
@@ -231,11 +400,11 @@ export function LoginPanel() {
               Продолжить создавать.
             </CardTitle>
             <CardDescription className="max-w-xs text-sm leading-relaxed text-[#b9b6af]">
-              Используй Telegram, чтобы войти в свою студию и сохранить доступ к истории работ.
+              Нажми «Продолжить через Telegram», подтверди вход в приложении — и вернёшься в студию без ввода номера.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
-            <TelegramWidget />
+            <TelegramOIDCLogin />
             <div className="flex items-center gap-3">
               <Separator className="flex-1 bg-[#6f6554]/50" />
               <span className="shrink-0 text-xs text-[#a19c90]">Другие способы входа</span>
