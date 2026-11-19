@@ -40,12 +40,8 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: pip install -r requirements.txt pytest pytest-asyncio
-      - name: Install validated FFmpeg media tools
-        run: |
-          bash scripts/ci/test-prepare-ubuntu-apt.sh
-          bash scripts/ci/prepare-ubuntu-apt.sh
-          sudo timeout 300 apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends ffmpeg
-          ffprobe -version | head -1
+      - name: Install verified FFmpeg and FFprobe for media contracts
+        run: bash scripts/ci/install-verified-ffmpeg.sh
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
   postgres:
