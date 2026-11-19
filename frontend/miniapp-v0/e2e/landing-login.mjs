@@ -147,6 +147,62 @@ try {
   }
 
 
+  // Yandex is surfaced only by server configuration, never as an inert tile.
+  const yandexGuest = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await yandexGuest.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: false, providers: { yandex: true } }),
+  }))
+  const yandexRedirect = []
+  await yandexGuest.route('**/mini-app/api/web-auth/start/yandex?**', route => {
+    yandexRedirect.push(new URL(route.request().url()).searchParams.get('next'))
+    return route.fulfill({ status: 302, headers: { Location: '/login?oauth_started=1' } })
+  })
+  await yandexGuest.goto(origin + '/login?startapp=yandex_ref')
+  await yandexGuest.getByRole('link', { name: 'Продолжить с Яндекс ID' }).click()
+  await yandexGuest.waitForURL('**/login?oauth_started=1')
+  assert.deepEqual(yandexRedirect, ['/login?startapp=yandex_ref'])
+  await yandexGuest.close()
+  console.log('login/Yandex configured -> authorization start with referral: OK')
+
+  const yandexOnly = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await yandexOnly.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, studio_ready: false, providers: { yandex: true } }),
+  }))
+  await yandexOnly.route('**/telegram-widget.js?22', route => route.fulfill({
+    status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/telegram', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, redirect: '/login?linked=telegram' }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: initData }),
+  }))
+  await yandexOnly.goto(origin + '/login')
+  await yandexOnly.getByText('Вход через Яндекс подтверждён').waitFor()
+  await yandexOnly.locator('#ci-telegram-login').click()
+  await yandexOnly.waitForURL('**/mini-app/**')
+  assert.ok(yandexOnly.url().includes('#tgWebAppData='))
+  await yandexOnly.close()
+  console.log('login/Yandex-only -> explicit verified Telegram link -> studio: OK')
+
+  const yandexLinked = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await yandexLinked.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, studio_ready: true, providers: { yandex: true } }),
+  }))
+  await yandexLinked.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: initData }),
+  }))
+  await yandexLinked.goto(origin + '/login?startapp=yandex_ref')
+  await yandexLinked.waitForURL('**/mini-app/**')
+  assert.equal(new URL(yandexLinked.url()).searchParams.get('startapp'), 'yandex_ref')
+  assert.ok(yandexLinked.url().includes('#tgWebAppData='))
+  await yandexLinked.close()
+  console.log('login/Yandex-linked -> existing Telegram wallet with referral: OK')
+
+
   // An already authenticated browser session resumes its exact payment intent
   // without opening the new OIDC approval flow again.
   const activeSession = await browser.newPage({ viewport: { width: 390, height: 844 } })

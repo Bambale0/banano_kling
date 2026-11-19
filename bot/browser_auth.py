@@ -384,6 +384,8 @@ def setup_browser_auth_routes(app: web.Application) -> None:
     # catch-all /mini-app/api/{tail:.*} handler.
     setup_trend_routes(app, miniapp_root)
     setup_shared_account_routes(app, miniapp_root)
+    from bot.web_auth import setup_web_auth_routes
+    setup_web_auth_routes(app, miniapp_root)
     app.router.add_get(
         miniapp_root + "/api/browser-auth/config",
         browser_telegram_auth_config,
