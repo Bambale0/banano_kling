@@ -1,4 +1,4 @@
-import { clearBrowserAccountCredentials, isBrowserAccountSession } from '../browser-account-session'
+import { clearBrowserAccountCredentials, isBrowserAccountSession, revokeBrowserAccountSession, signOutBrowserAccount } from '../browser-account-session'
 import { getInitData, setPlatformSessionToken } from '../api'
 
 const browserSession = 'query_id=browser_test_session&auth_date=1795100000&hash=mock'
@@ -57,4 +57,34 @@ test('no native Telegram account credential is destroyed by signing out of web',
   window.__BANANO_TG_INIT_DATA__ = nativeSession
   expect(isBrowserAccountSession()).toBe(false)
   expect(getInitData()).toBe(nativeSession)
+})
+
+test('web session logout calls the server with cookies before local cleanup', async () => {
+  const originalFetch = global.fetch
+  const mockFetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+  global.fetch = mockFetch as typeof fetch
+  try {
+    await expect(revokeBrowserAccountSession()).resolves.toBeUndefined()
+    expect(mockFetch).toHaveBeenCalledWith('/mini-app/api/web-auth/logout', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+  } finally {
+    global.fetch = originalFetch
+  }
+})
+
+test('failed server revocation leaves browser credentials intact for a retry', async () => {
+  const originalFetch = global.fetch
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: false, status: 503, json: async () => ({ ok: false }),
+  }) as typeof fetch
+  window.__BANANO_TG_INIT_DATA__ = browserSession
+  try {
+    await expect(signOutBrowserAccount()).rejects.toThrow('Не удалось выйти из аккаунта')
+    expect(getInitData()).toBe(browserSession)
+    expect(isBrowserAccountSession()).toBe(true)
+  } finally {
+    global.fetch = originalFetch
+  }
 })
