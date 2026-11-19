@@ -49,7 +49,7 @@ async def _browser_bot_username(request: web.Request) -> str:
 
 
 def _telegram_oidc_client_id() -> str:
-    value = (config.TELEGRAM_OIDC_CLIENT_ID or config.BOT_TOKEN.split(":", 1)[0]).strip()
+    value = config.TELEGRAM_OIDC_CLIENT_ID.strip()
     return value if value.isdecimal() and len(value) <= 20 else ""
 
 
@@ -139,16 +139,17 @@ async def browser_telegram_auth_config(request: web.Request) -> web.Response:
     try:
         username = await _browser_bot_username(request)
         legacy_only = request.query.get("legacy") == "1"
-        nonce = "" if legacy_only else secrets.token_urlsafe(32)
+        client_id = _telegram_oidc_client_id()
+        nonce = "" if legacy_only or not client_id else secrets.token_urlsafe(32)
         response = web.json_response(
             {
                 "ok": True,
                 "bot_username": username,
-                "oidc_client_id": _telegram_oidc_client_id(),
+                "oidc_client_id": client_id,
                 "oidc_nonce": nonce,
             }
         )
-        if not legacy_only:
+        if nonce:
             response.set_cookie(
                 _OIDC_NONCE_COOKIE, nonce, httponly=True, secure=True,
                 samesite="Lax", max_age=_OIDC_NONCE_SECONDS,
