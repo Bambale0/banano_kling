@@ -37,8 +37,11 @@ authenticated web actor, shared wallet/task owner and media-delivery adapter;
 do not manufacture Telegram numeric IDs to work around that.
 
 Linking an unclaimed provider to the current signed-in shared account works.
-If the provider belongs to a different account it is rejected and both
-accounts must explicitly prove ownership before any financial merge is allowed.
+If the provider belongs to a different account, a live browser session of the
+source account plus a fresh verified provider identity on the target are needed.
+The existing LinkService wallet-preserving transactional merge is used. Any
+ambiguous legacy identity, duplicate provider identity, commercial-settings
+conflict or invalid session rejects the merge without transferring funds.
 Equal email must never merge balances. Legacy Telegram/VK flows remain intact.
 
 ## Acceptance checks
