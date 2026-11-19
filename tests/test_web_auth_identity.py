@@ -9,6 +9,8 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import bot.db as db_backend
 from bot import database, web_auth
+from bot.config import config
+from bot.miniapp import _validate_init_data
 from bot.shared_accounts.wallet import WalletService
 
 
@@ -281,12 +283,9 @@ async def test_yandex_only_session_cannot_mint_telegram_credentials(monkeypatch)
 @pytest.mark.asyncio
 async def test_verified_yandex_linked_to_real_telegram_can_mint_signed_studio_login(monkeypatch):
     from aiohttp.test_utils import make_mocked_request
-    from bot.miniapp import _validate_init_data
-    from bot.config import config
-
     monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
     tg_id = 287654321
-    existing = await database.get_or_create_user(tg_id)
+    await database.get_or_create_user(tg_id)
     telegram = await web_auth._complete_identity(
         SimpleNamespace(), "telegram", str(tg_id), _flow(destination="/login"),
     )
