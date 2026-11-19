@@ -24,6 +24,9 @@ export function isBrowserAccountSession(): boolean {
  * Do not claim that clearing this client session invalidates old copied links. */
 export function clearBrowserAccountCredentials(): void {
   if (typeof window === 'undefined') return
+  // In-flight React effects may call getInitData() before location.replace
+  // completes. Prevent the Telegram bridge/snapshot from restoring credentials.
+  window.__BANANO_BROWSER_SIGNOUT__ = true
   try {
     for (const key of BROWSER_AUTH_SNAPSHOT_KEYS) window.sessionStorage.removeItem(key)
   } catch {
