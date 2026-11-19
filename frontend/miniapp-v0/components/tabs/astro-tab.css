@@ -154,9 +154,9 @@
   gap: 8px;
   position: fixed;
   z-index: 55;
-  left: 16px;
+  left: max(16px, var(--miniapp-safe-left));
   top: auto;
-  bottom: calc(6rem + env(safe-area-inset-bottom, 0px));
+  bottom: calc(6rem + var(--miniapp-safe-bottom));
   min-height: 44px;
   padding: 10px 14px;
   color: #ffe2a1;
