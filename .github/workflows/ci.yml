@@ -11,7 +11,9 @@ permissions:
   statuses: write
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # v2 leaves the stale, unresponsive PR concurrency lock behind while still
+  # canceling superseded runs within this workflow/ref.
+  group: ci-v2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
