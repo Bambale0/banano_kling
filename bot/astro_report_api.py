@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
+import unicodedata
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -30,6 +32,26 @@ def _place_id(value):
     if type(value) is not int or not 1 <= value <= 2147483647:
         raise ValueError("Выберите город из справочника GeoNames.")
     return value
+
+
+def _verified_place_label(place: dict) -> str:
+    """Canonical GeoNames label, never a free-text city supplied by the client.
+
+    A place ID is authoritative only after server-side resolution against the
+    offline GeoNames catalog. Fail closed on unexpected names or country codes.
+    """
+    name = place.get("name")
+    country = place.get("country_code")
+    if (
+        not isinstance(name, str)
+        or not 1 <= len(name) <= 120
+        or name != name.strip()
+        or any(unicodedata.category(char).startswith("C") for char in name)
+        or not isinstance(country, str)
+        or re.fullmatch(r"[A-Z]{2}", country) is None
+    ):
+        raise ValueError("Некорректное название места из GeoNames.")
+    return f"{name}, {country}"
 
 
 def _birth_profile(raw: dict, location: dict) -> dict:
@@ -63,7 +85,9 @@ async def calculate_verified_facts(service: str, values: dict) -> dict:
         period = values.get("period")
         parse_period(period)
         zone = await asyncio.to_thread(get_place, _place_id(values.get("place_id")))
-        return await asyncio.to_thread(build_lunar_calendar, period, zone["timezone"])
+        city_name = _verified_place_label(zone)
+        calendar = await asyncio.to_thread(build_lunar_calendar, period, zone["timezone"])
+        return {**calendar, "calendar_place_name": city_name}
     if service == "compatibility":
         first_raw, second_raw = values.get("person_a"), values.get("person_b")
         if not isinstance(first_raw, dict) or not isinstance(second_raw, dict):
@@ -72,25 +96,37 @@ async def calculate_verified_facts(service: str, values: dict) -> dict:
         first, second = await asyncio.gather(
             asyncio.to_thread(get_place, a_id), asyncio.to_thread(get_place, b_id),
         )
-        return await asyncio.to_thread(
+        first_name = _verified_place_label(first)
+        second_name = _verified_place_label(second)
+        facts = await asyncio.to_thread(
             build_synastry_facts, _birth_profile(first_raw, first),
             _birth_profile(second_raw, second),
         )
+        return {**facts, "first_birth_place_name": first_name,
+                "second_birth_place_name": second_name}
     place = await asyncio.to_thread(get_place, _place_id(values.get("place_id")))
+    city_name = _verified_place_label(place)
     profile = _birth_profile(values, place)
     if service == "natal":
-        return await asyncio.to_thread(build_natal_facts, profile)
+        facts = await asyncio.to_thread(build_natal_facts, profile)
+        return {**facts, "birth_place_name": city_name}
     if service == "karma":
-        return await asyncio.to_thread(build_karma_indicators, profile)
+        facts = await asyncio.to_thread(build_karma_indicators, profile)
+        return {**facts, "birth_place_name": city_name}
     if service in ("year", "month"):
         year, month = _period(values.get("period"), kind=service)
-        return await asyncio.to_thread(build_transit_snapshots, profile, year=year, month=month)
+        facts = await asyncio.to_thread(build_transit_snapshots, profile, year=year, month=month)
+        return {**facts, "birth_place_name": city_name}
     year, _ = _period(values.get("period"), kind="solar")
     ret = await asyncio.to_thread(get_place, _place_id(values.get("return_place_id")))
+    return_city_name = _verified_place_label(ret)
     location = {name: ret[name] for name in ("latitude", "longitude", "timezone")}
     facts = await asyncio.to_thread(build_solar_return_facts, profile, target_year=year,
                                     return_location=location)
-    return build_solar_report_periods(facts)
+    return build_solar_report_periods({
+        **facts, "birth_place_name": city_name,
+        "solar_return_place_name": return_city_name,
+    })
 
 
 async def _admin_actor(request: web.Request, body: dict) -> int:

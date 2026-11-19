@@ -65,6 +65,11 @@ from bot.services.admin_ai_service import (
     summarize_plan_actions,
     validate_plan,
 )
+from bot.services.astro_pricing import (
+    ASTRO_SERVICE_LABELS,
+    get_astro_service_price,
+    update_astro_service_price,
+)
 from bot.services.partner_approval_service import (
     count_pending_partner_applications,
     get_pending_partner_applications,
@@ -419,11 +424,31 @@ def _admin_price_menu_keyboard() -> types.InlineKeyboardMarkup:
                 )
             ],
             [types.InlineKeyboardButton(
+                text="🪐 Astro — тарифы", callback_data="admin_prices_astro"
+            )],
+            [types.InlineKeyboardButton(
                 text="🎬 Тариф креатора", callback_data="admin_creator_tariff"
             )],
             [types.InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")],
         ]
     )
+
+
+
+def _admin_astro_prices_keyboard() -> types.InlineKeyboardMarkup:
+    """All seven Astro service prices, without implying enabled user billing."""
+    config = preset_manager.get_price_config()
+    rows = []
+    for service_id, title in ASTRO_SERVICE_LABELS.items():
+        price = get_astro_service_price(config, service_id)
+        label = f"{title} — {price:g}🍌" if price is not None else f"{title} — не настроена"
+        rows.append([types.InlineKeyboardButton(
+            text=label, callback_data=f"admin_price_astro_{service_id}",
+        )])
+    rows.append([types.InlineKeyboardButton(
+        text="🔙 К разделам", callback_data="admin_prices",
+    )])
+    return types.InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _promo_rules_lines(bonus_by_credits: dict | None = None) -> list[str]:
@@ -3272,6 +3297,55 @@ async def admin_prices_videos_group(callback: types.CallbackQuery):
     await callback.answer()
 
 
+
+@router.callback_query(F.data == "admin_prices_astro")
+async def admin_prices_astro(callback: types.CallbackQuery, state: FSMContext):
+    """Admin-only catalog of prices for the seven Astro report services."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    await state.clear()
+    await callback.message.edit_text(
+        "🪐 <b>Тарифы Astro</b>\n\n"
+        "Выберите услугу и установите цену в бананах.\n\n"
+        "⚠️ Пока Astro доступен только администраторам, "
+        "списание баланса за отчёты отключено. "
+        "Здесь настраивается прайс для будущего платного запуска.",
+        reply_markup=_admin_astro_prices_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_price_astro_"))
+async def admin_astro_price_edit(callback: types.CallbackQuery, state: FSMContext):
+    """Start existing price-entry FSM; revalidate the service id server-side."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Нет доступа")
+        return
+    service_id = str(callback.data or "").removeprefix("admin_price_astro_")
+    if service_id not in ASTRO_SERVICE_LABELS:
+        await callback.answer("Неизвестная услуга", show_alert=True)
+        return
+    old_price = get_astro_service_price(preset_manager.get_price_config(), service_id)
+    await state.set_state(AdminStates.waiting_price_value)
+    await state.update_data(
+        price_target="astro", price_key=service_id, price_field="cost",
+        current_price_value=old_price, return_to="admin_prices_astro",
+    )
+    title = ASTRO_SERVICE_LABELS[service_id]
+    current = f"{old_price:g} 🍌" if old_price is not None else "не настроена"
+    await callback.message.edit_text(
+        f"🪐 <b>{title}</b>\n\n"
+        f"Текущая стоимость: <code>{current}</code>\n\n"
+        "Введите новую цену в бананах. Допустимы две цифры после запятой.\n"
+        "Это только настройка прайса — автоматическое списание Astro отключено.",
+        reply_markup=get_back_keyboard("admin_prices_astro"),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "admin_prices_partner_exchange")
 async def admin_prices_partner_exchange(callback: types.CallbackQuery, state: FSMContext):
     """Экран настройки курса обмена партнёрского баланса в бананы."""
@@ -3614,7 +3688,16 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
 
     try:
         new_value = _parse_price_value(message.text or "", current_value)
-        old_value = _update_price_value(target, key, field, new_value)
+        if target == "astro":
+            old_value = await update_astro_service_price(
+                preset_manager, key, new_value, expected_old=current_value,
+            )
+            logger.info(
+                "astro_admin_price_changed actor_id=%s service=%s old=%s new=%s",
+                message.from_user.id, key, old_value, new_value,
+            )
+        else:
+            old_value = _update_price_value(target, key, field, new_value)
         if target == "video" and key == "kling_4" and field in ADMIN_RATE_FIELDS:
             category, quality, _label = ADMIN_RATE_FIELDS[field]
             logger.info(
@@ -3625,11 +3708,17 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
                 old_value,
                 new_value,
             )
-    except ValueError:
+    except ValueError as exc:
+        is_stale = target == "astro" and "changed" in str(exc)
         await message.answer(
-            "❌ Неверное значение. Отправьте положительное число.",
+            ("⚠️ Цена уже изменилась в другой сессии. "
+             "Откройте услугу снова, чтобы не перезаписать чужое изменение.")
+            if is_stale else
+            "❌ Неверная цена. Введите положительное число не более чем с двумя знаками после запятой.",
             reply_markup=get_back_keyboard(return_to),
         )
+        if is_stale:
+            await state.clear()
         return
     except Exception as e:
         logger.exception("Failed to update price: %s", e)
@@ -3659,6 +3748,8 @@ async def admin_process_price_value(message: types.Message, state: FSMContext):
             f"Было: {old_text}\n"
             f"Стало: <code>{new_value}</code>"
         )
+        if target == "astro":
+            success_text += "\n\nЦена сохранена. Списания за Astro пока выключены."
 
     await message.answer(
         success_text,

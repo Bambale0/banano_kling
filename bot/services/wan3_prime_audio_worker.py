@@ -34,7 +34,8 @@ def transcode(source: Path, destination: Path, maximum_seconds: float, maximum_b
     # The regular media validator rejects any actual output beyond the limit.
     subprocess.run(
         ['ffmpeg', '-nostdin', '-v', 'error', '-protocol_whitelist', 'file,pipe',
-         '-format_whitelist', 'ogg,mov,wav,mp3,aac', '-threads', '1', '-i', str(source),
+         '-format_whitelist', 'ogg,mov,wav,mp3,aac', '-filter_threads', '1',
+         '-threads', '1', '-i', str(source),
          '-map', '0:a:0', '-vn', '-threads', '1', '-c:a', 'libmp3lame', '-b:a', '128k',
          '-t', str(maximum_seconds + 1), '-fs', str(maximum_bytes), '-y', str(destination)],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=True,
