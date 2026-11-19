@@ -1,8 +1,5 @@
 """Browser identity regression: redirect safety, provider gating and HTML contract."""
-import asyncio
-import hashlib
-import os
-import re
+
 from pathlib import Path
 
 import pytest
