@@ -13,6 +13,8 @@ load_project_env()
 class Config:
     # Telegram
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    # OIDC Client ID from BotFather; defaults to the numeric ID embedded in BOT_TOKEN.
+    TELEGRAM_OIDC_CLIENT_ID: str = os.getenv("TELEGRAM_OIDC_CLIENT_ID", "")
     # Transport secret only; community/routing policy belongs to audited controls.
     VK_GROUP_TOKEN: str = field(default_factory=lambda: os.getenv("VK_GROUP_TOKEN", ""), repr=False)
     VK_GROUP_TOKEN_COMMUNITY_ID: str = os.getenv("VK_GROUP_TOKEN_COMMUNITY_ID", "")
