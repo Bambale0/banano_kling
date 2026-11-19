@@ -7,6 +7,8 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { NoiseTexture } from '@/components/magicui/noise-texture'
+import { getInitData } from '@/lib/api'
+import { isBrowserPaymentSession, safePaymentReturnTo } from '@/lib/web-payments'
 
 type TelegramLoginUser = {
   id: number
@@ -32,7 +34,8 @@ function browserStartParam(): string | null {
 }
 
 function studioUrlWithSession(initData: string): string {
-  const url = new URL('/mini-app/', window.location.origin)
+  const query = new URLSearchParams(window.location.search)
+  const url = new URL(safePaymentReturnTo(query.get('return_to')), window.location.origin)
   const startapp = browserStartParam()
   if (startapp) url.searchParams.set('startapp', startapp)
   url.hash = new URLSearchParams({ tgWebAppData: initData }).toString()
@@ -45,12 +48,20 @@ function LegacyTelegramWidget() {
   const [botUsername, setBotUsername] = useState('')
   const [state, setState] = useState<LoginState>('loading-config')
   const [message, setMessage] = useState('Получаем настройки безопасного входа…')
+  const [fallbackStudioUrl, setFallbackStudioUrl] = useState('/mini-app/')
 
   useEffect(() => {
     // Legacy signed Telegram launches must continue to the existing Mini App;
     // never parse, log or persist their credentials on the marketing page.
     const query = new URLSearchParams(window.location.search)
+    setFallbackStudioUrl(safePaymentReturnTo(query.get('return_to')))
     const hash = new URLSearchParams(window.location.hash.slice(1))
+    const session = new URLSearchParams(getInitData())
+    const age = Date.now() / 1000 - Number(session.get('auth_date'))
+    if (isBrowserPaymentSession() && age >= 0 && age < 86400) {
+      window.location.replace(studioUrlWithSession(getInitData()))
+      return
+    }
     if (['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'].some(
       key => query.has(key) || hash.has(key)
     )) {
@@ -182,7 +193,7 @@ function LegacyTelegramWidget() {
       </p>
       {loading ? <div className="h-1 w-full overflow-hidden bg-white/10"><div className="h-full w-1/3 animate-pulse bg-[#dfac56]" /></div> : null}
       <Button asChild variant="outline" className="h-11 w-full rounded-sm border-[#907647] bg-transparent text-[#f4ebdd] hover:bg-[#dba64b]/10 hover:text-white">
-        <a href="/mini-app/">
+          <a href={fallbackStudioUrl}>
           Или откройте существующую студию
           <ExternalLink aria-hidden="true" className="ml-1 h-4 w-4" />
         </a>
@@ -215,9 +226,18 @@ function TelegramOIDCLogin() {
 
   useEffect(() => {
     mounted.current = true
-    const controller = new AbortController()
     const query = new URLSearchParams(window.location.search)
     const hash = new URLSearchParams(window.location.hash.slice(1))
+    const initData = getInitData()
+    const session = new URLSearchParams(initData)
+    const age = Date.now() / 1000 - Number(session.get('auth_date'))
+    // A valid browser session resumes the requested payment intent without
+    // opening Telegram approval again.
+    if (isBrowserPaymentSession() && age >= 0 && age < 86400) {
+      window.location.replace(studioUrlWithSession(initData))
+      return
+    }
+    const controller = new AbortController()
     // Native Telegram Mini App launches should never enter a browser auth loop.
     if (['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'].some(
       key => query.has(key) || hash.has(key)

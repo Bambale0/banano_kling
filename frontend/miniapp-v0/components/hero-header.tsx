@@ -4,6 +4,7 @@ import { useApp } from '@/lib/app-context'
 import { Banana, RefreshCw, Wifi } from 'lucide-react'
 import { BRAND_NAME } from '@/lib/brand'
 import { cn } from '@/lib/utils'
+import { isTelegramPaymentSurface } from '@/lib/web-payments'
 
 export function HeroHeader() {
   const { state, refreshTasks, openBalance } = useApp()
@@ -33,6 +34,10 @@ export function HeroHeader() {
           </div>
 
           <div className="flex items-center gap-2">
+            {isTelegramPaymentSurface() ? (
+              <button aria-label="Оплатить Stars" onClick={() => openBalance({ nativeStars: true })}
+                className="rounded-full border border-gold/25 px-2 py-1.5 text-xs text-gold">⭐ Stars</button>
+            ) : null}
             <button
               onClick={refreshTasks}
               disabled={isLoading}

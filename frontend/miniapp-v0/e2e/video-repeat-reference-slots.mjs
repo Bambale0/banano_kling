@@ -73,7 +73,9 @@ try {
     page.on('pageerror', error => errors.push(error.message))
     page.on('dialog', dialog => dialog.accept())
     await page.addInitScript(() => {
-      window.Telegram = { WebApp: { initData: 'query_id=video-repeat-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
+      // This journey covers the web funding sheet; native TG website handoff
+      // and Stars-only checkout are covered independently in payment-browser.
+      window.Telegram = { WebApp: { initData: 'query_id=browser_video-repeat-e2e', initDataUnsafe: {}, ready() {}, expand() {}, onEvent() {}, offEvent() {} } }
     })
     await page.route('**/*', async route => {
       const url = new URL(route.request().url())

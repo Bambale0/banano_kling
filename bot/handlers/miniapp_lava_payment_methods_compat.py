@@ -220,7 +220,16 @@ def install_miniapp_lava_payment_methods() -> None:
     ) -> web.Response:
         try:
             body = await request.json()
-            raw_provider = str(body.get("provider") or "").strip().lower()
+            raw_provider = str(body.get("provider") or "telegram_stars").strip().lower()
+
+            # Guard before dispatching to *any* explicit/legacy provider. This
+            # includes Lava methods which otherwise bypass the base handler.
+            _, payment_ctx = await miniapp_module._get_user_context(
+                request.app, body.get("init_data", ""), body.get("start_param_fallback"),
+            )
+            denied = vk_payment_provider_denied(payment_ctx, raw_provider)
+            if denied is not None:
+                return denied
 
             freekassa_method = _FREEKASSA_MINIAPP_METHODS.get(raw_provider)
             if freekassa_method is not None:

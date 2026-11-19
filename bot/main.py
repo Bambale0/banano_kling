@@ -599,6 +599,10 @@ class AccessGuardMiddleware(BaseMiddleware):
         event: types.TelegramObject,
         data: dict[str, Any],
     ) -> Any:
+        # Settlement is a financial service event, not a new access request.
+        # Never discard an accepted charge because policy changed after invoicing.
+        if isinstance(event, types.Message) and event.successful_payment:
+            return await handler(event, data)
         user = getattr(event, "from_user", None)
         if not user:
             return await handler(event, data)
@@ -3027,6 +3031,9 @@ def setup_dispatcher() -> Dispatcher:
     access_guard = AccessGuardMiddleware()
     dp.message.outer_middleware(access_guard)
     dp.callback_query.outer_middleware(access_guard)
+    from bot.telegram_payment_surface import install_telegram_payment_surface
+
+    install_telegram_payment_surface(dp)
 
     # ⭐ КРИТИЧЕСКИ ВАЖНО: Порядок роутеров в aiogram 3.x
     # Первый зарегистрированный роутер имеет НАИВЫСШИЙ приоритет!
@@ -5915,6 +5922,10 @@ async def main():
     bot = Bot(
         token=config.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
     )
+    from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
+
+    telegram_payment_request_middleware = TelegramPaymentRequestMiddleware()
+    bot.session.middleware(telegram_payment_request_middleware)
 
     # Watchdog is a recovery path for provider tasks that escaped normal
     # webhook/poller handling. A recovered failure must not refund silently.
@@ -5942,6 +5953,7 @@ async def main():
 
     # Настраиваем диспатчер
     dp = setup_dispatcher()
+    telegram_payment_request_middleware.fsm = dp.fsm
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 

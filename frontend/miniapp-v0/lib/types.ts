@@ -132,6 +132,7 @@ export interface PaymentPackage {
 }
 
 export type PaymentProvider =
+  | 'tribute'
   | 'telegram_stars'
   | 'yookassa'
   | 'lava'

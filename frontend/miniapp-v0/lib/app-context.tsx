@@ -9,8 +9,13 @@ import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 import { ASTRO_TAB_ID, isAstroVisible } from './astro-access'
+import { isTelegramPaymentSurface, openWebPayment } from './web-payments'
+import { WebPaymentHandoff } from '@/components/web-payment-handoff'
 
 export interface BalanceRequest {
+  nativeStars?: boolean
+  provider?: string
+  promoCode?: string
   packageId?: string
   requiredCredits?: number
   reason?: 'video-repeat'
@@ -336,10 +341,32 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyTaskDetail])
 
   const openBalance = useCallback((request?: BalanceRequest) => {
+    if (!request?.nativeStars && isTelegramPaymentSurface()) {
+      openWebPayment(request)
+      return
+    }
     cancelStartNavigation()
     setBalanceRequest(request ?? null)
     setIsBalanceOpen(true)
   }, [cancelStartNavigation])
+
+  const paymentIntentConsumed = useRef(false)
+  useEffect(() => {
+    if (state.mode !== 'live' || paymentIntentConsumed.current) return
+    const query = new URLSearchParams(window.location.search)
+    const start = new URLSearchParams(getInitData()).get('start_param') || getStartParamFallback()
+    const intent = query.get('intent') || start
+    if (!['topup', 'balance', 'wallet', 'payment', 'stars'].includes(intent || '')) return
+    paymentIntentConsumed.current = true
+    const required = Number(query.get('required_credits'))
+    openBalance({ packageId: query.get('package_id') || undefined,
+      provider: query.get('provider') || undefined, promoCode: query.get('promo_code') || undefined,
+      nativeStars: intent === 'stars',
+      requiredCredits: Number.isFinite(required) && required > 0 ? required : undefined })
+    // Keep intent until authentication/bootstrap succeeds; never create a charge automatically.
+    for (const key of ['intent', 'package_id', 'provider', 'required_credits', 'promo_code']) query.delete(key)
+    window.history.replaceState(null, '', window.location.pathname + (query.size ? `?${query}` : '') + window.location.hash)
+  }, [state.mode, openBalance])
 
   const closeBalance = useCallback(() => {
     setIsBalanceOpen(false)
@@ -763,6 +790,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <WebPaymentHandoff />
     </AppContext.Provider>
   )
 }
