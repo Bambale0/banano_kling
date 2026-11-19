@@ -13,6 +13,12 @@ SCHEMA = (
         account_id TEXT NOT NULL REFERENCES shared_accounts(id),
         verified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY(platform, external_id), UNIQUE(account_id, platform))''',
+    '''CREATE TABLE IF NOT EXISTS web_auth_identities (
+        provider TEXT NOT NULL CHECK(provider IN ('google', 'yandex', 'email')),
+        subject TEXT NOT NULL,
+        account_id TEXT NOT NULL REFERENCES shared_accounts(id),
+        verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(provider, subject), UNIQUE(account_id, provider))''',
     '''CREATE TABLE IF NOT EXISTS shared_account_legacy_links (
         source TEXT NOT NULL CHECK(source IN ('telegram', 'vk')),
         legacy_user_id BIGINT NOT NULL,

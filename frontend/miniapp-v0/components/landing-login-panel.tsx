@@ -41,7 +41,7 @@ function studioUrlWithSession(initData: string): string {
   return url.toString()
 }
 
-function LegacyTelegramWidget() {
+function LegacyTelegramWidget({ linkYandex = false }: { linkYandex?: boolean } = {}) {
   const widgetRef = useRef<HTMLDivElement>(null)
   const activeRequest = useRef(false)
   const [botUsername, setBotUsername] = useState('')
@@ -117,26 +117,40 @@ function LegacyTelegramWidget() {
       try {
         // This is the existing production server-side signature verifier,
         // not a fabricated Telegram ID or a separate authentication system.
-        const response = await fetch('/mini-app/api/browser-auth', {
+        const response = await fetch(
+          linkYandex ? '/mini-app/api/web-auth/telegram' : '/mini-app/api/browser-auth', {
           method: 'POST',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
           credentials: 'same-origin',
           cache: 'no-store',
           signal: controller.signal,
-          body: JSON.stringify({ telegram_auth: user }),
+          body: JSON.stringify(linkYandex ? { telegram_auth: user, intent: 'link' } : { telegram_auth: user }),
         })
         const data = await response.json() as {
           ok?: boolean
           init_data?: string
         }
-        if (!response.ok || !data.ok || typeof data.init_data !== 'string' || !data.init_data) {
-          throw new Error('verification-failed')
+        if (!response.ok || !data.ok) throw new Error('verification-failed')
+        if (linkYandex) {
+          const studio = await fetch('/mini-app/api/web-auth/studio', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { Accept: 'application/json' }, cache: 'no-store',
+            signal: controller.signal,
+          })
+          const payload = await studio.json() as { ok?: boolean; init_data?: string }
+          if (!studio.ok || !payload.ok || !payload.init_data) throw new Error('studio-unavailable')
+          if (!cancelled) window.location.replace(studioUrlWithSession(payload.init_data))
+        } else if (typeof data.init_data === 'string' && data.init_data && !cancelled) {
+          window.location.replace(studioUrlWithSession(data.init_data))
+        } else {
+          throw new Error('missing-session')
         }
-        if (!cancelled) window.location.replace(studioUrlWithSession(data.init_data))
       } catch {
         if (!cancelled) {
           setState('error')
-          setMessage('Не удалось подтвердить вход. Попробуйте ещё раз или войдите из студии.')
+          setMessage(linkYandex
+            ? 'Не удалось связать аккаунты. Попробуй ещё раз или открой студию через Telegram.'
+            : 'Не удалось подтвердить вход. Попробуйте ещё раз или войдите из студии.')
         }
       } finally {
         activeRequest.current = false
@@ -171,7 +185,7 @@ function LegacyTelegramWidget() {
       delete window.onNeuromixLandingTelegramAuth
       container.replaceChildren()
     }
-  }, [botUsername])
+  }, [botUsername, linkYandex])
 
   const loading = state === 'loading-config' || state === 'loading-widget' || state === 'verifying'
 
@@ -382,7 +396,83 @@ function TelegramOIDCLogin() {
   )
 }
 
+type YandexConfig = {
+  ok?: boolean
+  authenticated?: boolean
+  studio_ready?: boolean
+  providers?: { yandex?: boolean }
+}
+
+function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticated: boolean) => void }) {
+  const [config, setConfig] = useState<YandexConfig | null>(null)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    const controller = new AbortController()
+    const load = async () => {
+      try {
+        const response = await fetch('/mini-app/api/web-auth/config', {
+          credentials: 'same-origin', cache: 'no-store',
+          headers: { Accept: 'application/json' }, signal: controller.signal,
+        })
+        if (!response.ok) return
+        const data = await response.json() as YandexConfig
+        if (!controller.signal.aborted) {
+          setConfig(data)
+          onSessionDetected(Boolean(data.authenticated))
+        }
+        if (data.authenticated && data.studio_ready) {
+          const studio = await fetch('/mini-app/api/web-auth/studio', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { Accept: 'application/json' }, signal: controller.signal,
+          })
+          const session = await studio.json() as { ok?: boolean; init_data?: string }
+          if (studio.ok && session.ok && session.init_data && !controller.signal.aborted) {
+            window.location.replace(studioUrlWithSession(session.init_data))
+          } else if (!controller.signal.aborted) {
+            setError('Не получилось открыть студию. Попробуй ещё раз.')
+          }
+        }
+      } catch {
+        if (!controller.signal.aborted) setError('Не удалось проверить вход через Яндекс.')
+      }
+    }
+    void load()
+    return () => controller.abort()
+  }, [onSessionDetected])
+
+  if (!config?.providers?.yandex && !config?.authenticated) return null
+  if (config.authenticated && !config.studio_ready) {
+    return (
+      <section className="space-y-3 border border-[#d5af60]/40 bg-[#d5af60]/[0.055] p-4" aria-label="Вход через Яндекс">
+        <p className="font-semibold text-[#f3d392]">Вход через Яндекс подтверждён</p>
+        <p className="text-sm text-[#ddd6c8]">
+          Чтобы пользоваться генерациями и своим балансом, один раз свяжи этот аккаунт с Telegram.
+          После привязки ты сможешь входить через Яндекс.
+        </p>
+        <LegacyTelegramWidget linkYandex />
+        {error ? <p role="status" className="text-xs text-amber-300">{error}</p> : null}
+      </section>
+    )
+  }
+  if (config.authenticated) return <p role="status" className="text-sm text-[#d7b56f]">Открываем студию… {error}</p>
+
+  return (
+    <a
+      href="/mini-app/api/web-auth/start/yandex"
+      onClick={event => {
+        event.preventDefault()
+        window.location.assign('/mini-app/api/web-auth/start/yandex?next=' +
+          encodeURIComponent('/login' + window.location.search))
+      }}
+      className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
+    >
+      Продолжить с Яндекс ID
+    </a>
+  )
+}
+
 export function LoginPanel() {
+  const [webAuthenticated, setWebAuthenticated] = useState(false)
   return (
     <main className="neuromix-login min-h-svh">
       <NoiseTexture className="login-noise" />
@@ -426,7 +516,8 @@ export function LoginPanel() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
-            <TelegramOIDCLogin />
+            {!webAuthenticated ? <TelegramOIDCLogin /> : null}
+            <YandexWebLogin onSessionDetected={setWebAuthenticated} />
             <div className="flex items-start gap-3 border-t border-[#998054]/30 pt-5">
               <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-[#e5b25c]" />
               <p className="text-xs leading-relaxed text-[#a8a8a3]">
