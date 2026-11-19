@@ -12,7 +12,13 @@ import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
 import { platformMiniAppUrl } from '@/lib/account-platform'
+import { isBrowserAccountSession, signOutBrowserAccount } from '@/lib/browser-account-session'
 import { Button } from '@/components/ui/button'
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   addFeedComment,
@@ -36,6 +42,7 @@ import {
   ImageOff,
   Link2,
   Loader2,
+  LogOut,
   MessageCircle,
   Play,
   Radio,
@@ -713,6 +720,29 @@ export function ProfileTab() {
           ) : null}
         </div>
 
+        {isOwnProfile && isLive && isBrowserAccountSession() ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button type="button" variant="outline" className="min-h-11 w-full justify-center gap-2 rounded-xl border-border/60">
+                <LogOut className="h-4 w-4" />
+                Выйти из аккаунта
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Выйти из аккаунта?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Веб-сессия на этом устройстве завершится. Чтобы войти снова, понадобится авторизация.
+                  В Telegram вход останется без изменений.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Отмена</AlertDialogCancel>
+                <AlertDialogAction onClick={signOutBrowserAccount}>Выйти</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
         {isOwnProfile ? <PersonalReferenceLibrary /> : null}
         {isOwnProfile ? <SharedAccountPreview isAdmin={state.user.isAdmin} telegramBotUsername={state.user.botUsername} /> : null}
         {isOwnProfile ? (
