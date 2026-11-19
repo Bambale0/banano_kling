@@ -63,7 +63,7 @@ export function WorkspaceSheet() {
   return (
     <Sheet open={Boolean(activeWorkspace)} onOpenChange={(open) => !open && closeWorkspace()}>
       <SheetContent side="bottom" className="h-[86vh] rounded-t-[28px] border-border/50 bg-background/95 px-0">
-        <SheetHeader className="px-5 pt-3 text-left">
+        <SheetHeader className="pl-5 pr-16 pt-3 text-left">
           <div className="mb-2">
             <div className="mb-3 h-1 w-10 rounded-full bg-border/80" />
             <div className="flex items-start gap-3">
