@@ -5,7 +5,6 @@ import { ArrowLeft, ArrowRight, ExternalLink, LoaderCircle, LockKeyhole, ShieldC
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { NoiseTexture } from '@/components/magicui/noise-texture'
 import { getInitData } from '@/lib/api'
 import { isBrowserPaymentSession, safePaymentReturnTo } from '@/lib/web-payments'
@@ -275,14 +274,14 @@ function TelegramOIDCLogin() {
           } else {
             setState('error')
             setShowLegacy(true)
-            setMessage('Быстрый вход сейчас недоступен. Используйте вход через Telegram ниже.')
+            setMessage('Сейчас этот способ не работает. Попробуй другой ниже.')
           }
         }
         script.onerror = () => {
           if (mounted.current) {
             setState('error')
             setShowLegacy(true)
-            setMessage('Не удалось открыть быстрый вход через Telegram. Используйте резервный способ.')
+            setMessage('Не удалось открыть Telegram. Попробуй другой способ ниже.')
           }
         }
         document.head.appendChild(script)
@@ -290,7 +289,7 @@ function TelegramOIDCLogin() {
         if (mounted.current && !controller.signal.aborted) {
           setState('error')
           setShowLegacy(true)
-          setMessage('Быстрый вход не настроен или недоступен. Используйте вход через Telegram ниже.')
+          setMessage('Не получилось войти сразу. Попробуй другой способ ниже.')
         }
       }
     }
@@ -423,28 +422,15 @@ export function LoginPanel() {
               Продолжить создавать.
             </CardTitle>
             <CardDescription className="max-w-xs text-sm leading-relaxed text-[#b9b6af]">
-              Нажми «Продолжить через Telegram», подтверди вход в приложении — и вернёшься в студию без ввода номера.
+              Нажми кнопку и подтверди вход в Telegram — и можно снова создавать.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
             <TelegramOIDCLogin />
-            <div className="flex items-center gap-3">
-              <Separator className="flex-1 bg-[#6f6554]/50" />
-              <span className="shrink-0 text-xs text-[#a19c90]">Другие способы входа</span>
-              <Separator className="flex-1 bg-[#6f6554]/50" />
-            </div>
-            <div className="grid grid-cols-3 gap-2" aria-label="Другие способы входа пока недоступны">
-              {['Почта', 'Google', 'Яндекс ID'].map(method => (
-                <div key={method} className="flex min-h-18 flex-col items-center justify-center gap-1 border border-white/10 bg-white/[0.025] px-2 text-center">
-                  <span className="text-xs font-semibold text-[#ddd7cc]">{method}</span>
-                  <span className="text-[11px] text-[#959186]">скоро</span>
-                </div>
-              ))}
-            </div>
             <div className="flex items-start gap-3 border-t border-[#998054]/30 pt-5">
               <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-[#e5b25c]" />
               <p className="text-xs leading-relaxed text-[#a8a8a3]">
-                Вход подтверждается Telegram. Мы не запрашиваем пароль и не создаём отдельный аккаунт без подтверждения.
+                Мы не просим пароль от Telegram. Вход подтверждается в самом Telegram.
               </p>
             </div>
           </CardContent>

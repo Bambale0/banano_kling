@@ -126,15 +126,6 @@
     .telegram-icon{display:grid;place-items:center;width:26px;height:26px;flex:none;border-radius:50%;background:#2b9cce}
     .telegram-icon svg{height:16px;width:16px;fill:white}
     .telegram-entry .arrow{margin-left:auto;color:#bfe7f2}
-    .auth-status{display:flex;align-items:center;gap:11px;margin-top:20px;color:#9097a2;font-size:12px}
-    .auth-status::before{content:"";height:1px;background:#343a44;flex:1}
-    .auth-status::after{content:"";height:1px;background:#343a44;flex:1}
-    .auth-soon{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
-    .auth-soon>div{border:1px solid rgba(255,255,255,.085);border-radius:9px;padding:14px 7px 12px;text-align:center;background:rgba(255,255,255,.015)}
-    .auth-soon strong{display:block;font-size:12px;font-weight:600;color:#b4b6bd}
-    .auth-soon small{display:block;font-size:10px;color:#76808b;margin-top:5px}
-    .account-note{margin-top:21px;display:flex;gap:11px;padding-top:17px;border-top:1px solid var(--hairline);font-size:12px;line-height:1.55;color:#9aa0a9}
-    .account-note svg{width:17px;height:17px;flex:none;color:var(--primary);margin-top:2px}
     .foot{border-top:1px solid var(--hairline);padding:25px 0 33px}
     .foot-inner{display:flex;gap:20px;justify-content:space-between;align-items:center;color:#838b95;font-size:11px}
     .foot strong{color:var(--primary);letter-spacing:.15em;font-size:11px;font-weight:750}
@@ -382,7 +373,7 @@
 <body>
   <section class="grunge-stage" id="top" aria-labelledby="hero-title">
     <h1 id="hero-title" class="screenreader-only">Превращай идеи в фото и видео — NEUROMIX, AI-студия в браузере</h1>
-    <p class="screenreader-only">Фото, референсы, генерация видео и тренды — в одной AI-студии. Открыть приложение можно через Telegram.</p>
+    <p class="screenreader-only">Фото, видео и тренды — всё для твоих идей в одном месте. Войти можно через Telegram.</p>
 
     <!-- Desktop composition is the approved art itself, rather than a generic approximation.
          Link hitboxes align with the pictured typography and CTAs. -->
@@ -398,7 +389,7 @@
       <a class="hotspot hot-hero-cta" href="/login" aria-label="Открыть AI-студию"></a>
       <a class="hotspot hot-more" href="#possibilities" aria-label="Посмотреть возможности"></a>
       <nav class="grunge-desktop-categories" aria-label="Разделы NEUROMIX">
-        <a class="hotspot hot-photo" href="#benefits" aria-label="Фото генерация"></a>
+        <a class="hotspot hot-photo" href="#benefits" aria-label="Создание фото"></a>
         <a class="hotspot hot-video" href="#benefits" aria-label="Видео генерация"></a>
         <a class="hotspot hot-refs" href="#benefits" aria-label="Референсы и стили"></a>
         <a class="hotspot hot-trends" href="#examples" aria-label="Тренды и идеи"></a>
@@ -423,12 +414,12 @@
           <span>В ФОТО</span>
           <span class="grunge-mobile-video">И ВИДЕО</span>
         </div>
-        <p class="grunge-mobile-description">Фото, референсы, генерация видео и тренды — в одной AI-студии.</p>
+        <p class="grunge-mobile-description">Фото, видео и тренды — всё для твоих идей в одном месте.</p>
         <a class="mobile-grunge-cta" href="/login">ОТКРЫТЬ AI-СТУДИЮ <span aria-hidden="true">→</span></a>
         <a class="grunge-mobile-more" href="#possibilities">Посмотреть возможности <span aria-hidden="true">↓</span></a>
         <div class="grunge-mobile-art" aria-hidden="true">
           <img src="grunge-mobile-art-v1.webp" width="975" height="719" decoding="async" fetchpriority="low" alt="">
-          <span class="grunge-art-label">AI GENERATION / 001</span>
+          <span class="grunge-art-label">ТВОЁ ВООБРАЖЕНИЕ</span>
           <span class="grunge-art-cross">✕</span>
         </div>
       </div>
@@ -445,23 +436,23 @@
         <div class="story-lead">
           <p class="section-context">Когда хочется создавать</p>
           <h2 id="problems-title">Идей много.<br>Лишних шагов — тоже.</h2>
-          <p>От первого промпта до повтора понравившегося формата. Убери лишние переключения и сосредоточься на результате.</p>
+          <p>От первой идеи до любимого результата — всё в одном месте. Создавай, пробуй и находи свой стиль.</p>
           <a class="subtle-link" href="#benefits">Что можно сделать <span aria-hidden="true">↗</span></a>
         </div>
         <div class="story-rows">
           <article class="story-row"><span aria-hidden="true">01</span><div><h3>Для фото одно приложение, для видео — другое?</h3><p>Фото, видео и тренды собраны в одной студии.</p></div></article>
-          <article class="story-row"><span aria-hidden="true">02</span><div><h3>Есть пример, но трудно описать его словами?</h3><p>Добавляй референсы в режимах, которые их поддерживают.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">02</span><div><h3>Есть пример, но трудно описать его словами?</h3><p>Покажи пример — так проще передать настроение и стиль.</p></div></article>
           <article class="story-row"><span aria-hidden="true">03</span><div><h3>Хочется повторить формат, а не собирать всё заново?</h3><p>В трендах есть сценарии, от которых можно оттолкнуться.</p></div></article>
-          <article class="story-row"><span aria-hidden="true">04</span><div><h3>Нужно найти прошлый результат?</h3><p>Возвращайся к работам и статусам задач в приложении.</p></div></article>
+          <article class="story-row"><span aria-hidden="true">04</span><div><h3>Нужно найти прошлый результат?</h3><p>Все твои работы можно найти в личной истории.</p></div></article>
         </div>
       </div>
     </section>
     <section class="section-benefits" id="benefits" aria-labelledby="benefits-title">
       <div class="container">
-        <div class="section-heading"><p class="section-context">Выбирай свой сценарий</p><h2 id="benefits-title">Меньше рутины.<br>Больше места для идеи.</h2><p>NEUROMIX помогает перейти от замысла к конкретной задаче — для контента, видео или эксперимента.</p></div>
+        <div class="section-heading"><p class="section-context">Выбирай свой сценарий</p><h2 id="benefits-title">Меньше рутины.<br>Больше места для идеи.</h2><p>Создавай контент, пробуй новые идеи и воплощай то, что раньше оставалось только в голове.</p></div>
         <div class="benefits-grid">
-          <article class="benefit benefit-primary"><span class="benefit-tag">Фото</span><div class="benefit-visual" aria-hidden="true"><span class="visual-frame visual-frame-one"></span><span class="visual-frame visual-frame-two"></span><span class="visual-orb"></span></div><div><h3>Преврати описание в изображение</h3><p>Собирай идеи для публикаций, пробуй стили и уточняй результат референсами.</p></div></article>
-          <article class="benefit benefit-video"><span class="benefit-tag">Видео</span><div><h3>Дай идее движение</h3><p>Выбирай видеорежим, настраивай сцену и добавляй доступные референсы.</p></div><span class="benefit-glyph" aria-hidden="true">▶</span></article>
+          <article class="benefit benefit-primary"><span class="benefit-tag">Фото</span><div class="benefit-visual" aria-hidden="true"><span class="visual-frame visual-frame-one"></span><span class="visual-frame visual-frame-two"></span><span class="visual-orb"></span></div><div><h3>Преврати описание в изображение</h3><p>Пробуй новые образы, цвета и стили. Есть пример? Покажи его.</p></div></article>
+          <article class="benefit benefit-video"><span class="benefit-tag">Видео</span><div><h3>Дай идее движение</h3><p>Превращай задумки в яркие ролики. Добавляй движение, настроение и детали.</p></div><span class="benefit-glyph" aria-hidden="true">▶</span></article>
           <article class="benefit benefit-trends"><span class="benefit-tag">Тренды</span><div><h3>Не начинай каждый раз с нуля</h3><p>Пробуй готовые сценарии, повторяй форматы и возвращайся к своим работам.</p></div><span class="benefit-glyph" aria-hidden="true">↗</span></article>
         </div>
         <a class="subtle-link section-tail" href="/login">Открыть инструменты <span aria-hidden="true">↗</span></a>
@@ -473,27 +464,27 @@
         <ol class="steps">
           <li><span class="step-number">01</span><h3>Открой студию</h3><p>Войди в браузере через Telegram.</p></li>
           <li><span class="step-number">02</span><h3>Выбери задачу</h3><p>Фото, видео или подходящий тренд.</p></li>
-          <li><span class="step-number">03</span><h3>Настрой генерацию</h3><p>Опиши идею, выбери параметры и добавь референс, если он поддерживается.</p></li>
-          <li><span class="step-number">04</span><h3>Забери результат</h3><p>Следи за статусом и возвращайся к своим задачам в истории.</p></li>
+          <li><span class="step-number">03</span><h3>Добавь детали</h3><p>Расскажи, что хочешь увидеть, и при желании добавь пример.</p></li>
+          <li><span class="step-number">04</span><h3>Забери результат</h3><p>Смотри готовые работы и возвращайся к ним когда захочешь.</p></li>
         </ol>
         <a class="subtle-link section-tail" href="/login">Начать создавать <span aria-hidden="true">↗</span></a>
       </div>
     </section>
     <section class="section-proof" id="examples" aria-labelledby="examples-title">
       <div class="container proof-grid">
-        <div class="proof-lead"><p class="section-context">Вместо обещаний</p><h2 id="examples-title">Работающая студия, а не картинка будущего.</h2><p>Фото, видео, тренды, лента и история задач уже находятся внутри NEUROMIX. Можешь открыть интерфейс и посмотреть сам.</p><a class="subtle-link" href="/login">Заглянуть в студию <span aria-hidden="true">↗</span></a></div>
+        <div class="proof-lead"><p class="section-context">Вместо обещаний</p><h2 id="examples-title">Твои идеи уже ждут воплощения.</h2><p>Фото, видео, тренды, лента и твои работы — всё под рукой. Заходи и вдохновляйся.</p><a class="subtle-link" href="/login">Заглянуть в студию <span aria-hidden="true">↗</span></a></div>
         <div class="proof-sheet" aria-label="Реальные разделы приложения NEUROMIX">
-          <div><span class="proof-index">Форматы</span><strong>Фото и видео</strong><small>Генерация и настройки</small></div>
+          <div><span class="proof-index">Форматы</span><strong>Фото и видео</strong><small>Создавай своё</small></div>
           <div><span class="proof-index">Повтор</span><strong>Тренды</strong><small>Готовые сценарии</small></div>
-          <div><span class="proof-index">Возврат</span><strong>История задач</strong><small>Статусы и результаты</small></div>
-          <p>Здесь показаны реальные разделы продукта, а не выдуманные отзывы или результаты пользователей.</p>
+          <div><span class="proof-index">Возврат</span><strong>Твои работы</strong><small>Твои любимые работы</small></div>
+          <p>Все возможности студии можно попробовать самому.</p>
         </div>
       </div>
     </section>
     <section class="section-terms" id="pricing" aria-labelledby="pricing-title">
       <div class="container terms-grid">
         <div><p class="section-context">Условия</p><h2 id="pricing-title">Сначала выбери задачу. Стоимость — в студии.</h2></div>
-        <div class="terms-copy"><p>У разных моделей и режимов отличаются параметры и стоимость генерации. Актуальные пакеты пополнения, баланс и способы оплаты находятся в приложении.</p><p>Мы не дублируем суммы здесь, чтобы устаревшая цена не повлияла на твой выбор.</p><a class="subtle-link" href="/login">Посмотреть условия в студии <span aria-hidden="true">↗</span></a></div>
+        <div class="terms-copy"><p>Стоимость зависит от того, что ты хочешь создать. Актуальные цены, баланс и способы пополнения увидишь в студии.</p><a class="subtle-link" href="/login">Посмотреть условия в студии <span aria-hidden="true">↗</span></a></div>
       </div>
     </section>
     <section class="section-faq" id="faq" aria-labelledby="faq-title">
@@ -501,10 +492,10 @@
         <div><p class="section-context">Без мелкого шрифта</p><h2 id="faq-title">Коротко о главном.</h2><p class="faq-intro">Ответы перед первым запуском.</p></div>
         <div class="faq-items">
           <details><summary>Нужно устанавливать приложение?</summary><p>Нет. NEUROMIX работает в браузере — на телефоне и компьютере.</p></details>
-          <details><summary>Можно войти без Telegram?</summary><p>Сейчас веб-версия использует вход через Telegram. Почта, Google и Яндекс ID пока не подключены.</p></details>
-          <details><summary>Нужен опыт работы с нейросетями?</summary><p>Можно начать с простого описания или готового тренда. Выбери раздел и следуй подсказкам интерфейса.</p></details>
-          <details><summary>Могу использовать свои фото и видео?</summary><p>Да, в тех моделях и сценариях, где предусмотрены референсы. Доступные форматы указаны в настройках генерации.</p></details>
-          <details><summary>Где посмотреть стоимость и готовые работы?</summary><p>Актуальные условия, пополнение и история задач находятся в приложении. Параметры зависят от выбранного режима.</p></details>
+          <details><summary>Можно войти без Telegram?</summary><p>Пока нет. Сейчас для входа нужен Telegram.</p></details>
+          <details><summary>Нужен опыт работы с нейросетями?</summary><p>Нет. Просто расскажи, что хочешь увидеть, или выбери понравившийся тренд.</p></details>
+          <details><summary>Могу использовать свои фото и видео?</summary><p>Да, для многих задач можно загрузить свои изображения или примеры. Возможности зависят от выбранного инструмента.</p></details>
+          <details><summary>Где посмотреть стоимость и готовые работы?</summary><p>Цены, пополнение баланса и готовые работы ждут тебя в студии.</p></details>
         </div>
       </div>
     </section>
@@ -513,7 +504,7 @@
         <div class="access-lead">
           <span class="overline">Одна идея — один шаг до студии</span>
           <h2 id="login-title">Есть идея? <em>Начни с неё.</em></h2>
-          <p>Открой NEUROMIX в браузере и выбери нужный инструмент. Сейчас вход в веб-студию работает через Telegram; почту, Google и Яндекс ID подключим отдельно.</p>
+          <p>Входи через Telegram — и начинай создавать фото и видео. Все твои идеи и готовые работы будут под рукой.</p>
         </div>
         <div class="auth-box">
           <div class="auth-head"><strong>Вход в NEUROMIX</strong><span>Веб-студия</span></div>
@@ -524,16 +515,6 @@
             Продолжить с Telegram
             <svg class="arrow" viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 10h12m-5-5 5 5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
-          <div class="auth-status">Другие способы входа</div>
-          <div class="auth-soon" aria-label="Дополнительные способы входа пока недоступны">
-            <div><strong>Почта</strong><small>скоро</small></div>
-            <div><strong>Google</strong><small>скоро</small></div>
-            <div><strong>Яндекс ID</strong><small>скоро</small></div>
-          </div>
-          <div class="account-note">
-            <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M7.5 12.5a3.5 3.5 0 0 0 5 .3l2.2-2.2a3.5 3.5 0 0 0-4.9-5L8 7.4m4.5 0a3.5 3.5 0 0 0-5-.3L5.3 9.3a3.5 3.5 0 0 0 4.9 5L12 12.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            Привязка нескольких способов входа к одному аккаунту появится после подключения серверной авторизации.
-          </div>
         </div>
       </div>
     </section>

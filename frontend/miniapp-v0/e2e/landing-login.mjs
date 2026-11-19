@@ -126,6 +126,8 @@ try {
     assert.equal(metrics.headings, 1)
     assert.ok(metrics.shadcn >= 4, 'shadcn UI components should render')
     assert.ok(metrics.scripts >= 2, 'Next.js bundles must load at /login')
+    assert.equal(await page.getByText('Почта', { exact: true }).count(), 0, 'inactive sign-in previews must not be displayed')
+    assert.equal(await page.getByText('Яндекс ID', { exact: true }).count(), 0, 'inactive provider must not be advertised')
     assert.deepEqual(errors, [], 'React/Next hydration errors')
     if (width === 390) {
       await page.getByRole('button', { name: 'Продолжить через Telegram' }).click()
@@ -179,6 +181,10 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 900 } })
     const response = await page.goto(origin + '/', { waitUntil: 'load' })
     assert.equal(response.status(), 200)
+    const visibleText = (await page.locator('body').innerText()).toLowerCase()
+    for (const term of ['промпт', 'статусы задач', 'серверной авторизации', 'ai generation / 001', 'скоро']) {
+      assert.ok(!visibleText.includes(term), 'internal copy leaked to public landing: ' + term)
+    }
     assert.equal(await page.locator(selector).getAttribute('href'), '/login')
     assert.equal(await page.locator(width === 1440 ? '.hot-hero-cta' : '.mobile-grunge-cta').getAttribute('href'), '/login')
     await page.locator(selector).click()
@@ -204,7 +210,7 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
-  await failed.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
+  await failed.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
   console.log('login/auth-failure fallback: OK')
@@ -219,7 +225,7 @@ try {
     status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
   }))
   await withoutOidc.goto(origin + '/login')
-  await withoutOidc.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
+  await withoutOidc.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await withoutOidc.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await withoutOidc.close()
   console.log('login/oidc-unconfigured -> legacy widget: OK')
