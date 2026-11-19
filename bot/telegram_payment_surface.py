@@ -21,6 +21,11 @@ def website_keyboard(package_id: str = "", provider: str = "") -> InlineKeyboard
 
 class TelegramPaymentSurfaceMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
+        # Financial service updates must always reach the idempotent settlement
+        # handler, regardless of a user's stale conversation state.
+        if isinstance(event, types.Message) and event.successful_payment:
+            return await handler(event, data)
+        words = (event.text or '').split() if isinstance(event, types.Message) else []
         target = payment_callback_target(event.data or "") if isinstance(event, types.CallbackQuery) else None
         if isinstance(event, types.CallbackQuery) and event.data == "menu_stars":
             rows = []
@@ -37,9 +42,10 @@ class TelegramPaymentSurfaceMiddleware(BaseMiddleware):
             return
         raw_state = data.get("raw_state")
         legacy_email = isinstance(event, types.Message) and raw_state == PaymentStates.waiting_lava_email.state
-        deep_link = isinstance(event, types.Message) and bool(event.text) and event.text.split()[0].split('@')[0] in {"/balance", "/wallet", "/topup", "/pay"}
-        if isinstance(event, types.Message) and event.text and event.text.startswith("/start "):
-            argument = event.text.split(maxsplit=1)[1]
+        command = words[0].split('@')[0] if words else ''
+        deep_link = command in {"/balance", "/wallet", "/topup", "/pay"}
+        if command == '/start' and len(words) > 1:
+            argument = words[1]
             deep_link = argument in {"balance", "wallet", "topup", "payment", "pay"} or argument.startswith(("buy_", "choose_pay_"))
             if deep_link:
                 target = payment_callback_target(argument)
@@ -86,3 +92,17 @@ class TelegramPaymentRequestMiddleware(BaseRequestMiddleware):
         if isinstance(markup, InlineKeyboardMarkup):
             method = method.model_copy(update={"reply_markup": website_payment_markup(markup)})
         return await make_request(bot, method)
+
+
+def install_telegram_payment_surface(dp) -> None:
+    from bot.handlers.payments import process_successful_stars_payment
+
+    payment_surface = TelegramPaymentSurfaceMiddleware()
+    dp.callback_query.outer_middleware(payment_surface)
+    dp.message.outer_middleware(payment_surface)
+    # Root observers run before generation/email FSM catch-all routers. A paid
+    # invoice must settle even while the user is in an unrelated conversation.
+    dp.message.register(
+        process_successful_stars_payment,
+        lambda message: message.successful_payment is not None,
+    )

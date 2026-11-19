@@ -126,12 +126,15 @@ export interface PaymentPackage {
   lava_foreign_currency?: string
   robokassa_enabled?: boolean
   freekassa_enabled?: boolean
+  prodamus_enabled?: boolean
   bonus_credits?: number
   popular?: boolean
   description?: string
 }
 
 export type PaymentProvider =
+  | 'prodamus'
+  | 'tribute'
   | 'telegram_stars'
   | 'yookassa'
   | 'lava'

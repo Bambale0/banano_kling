@@ -10,6 +10,7 @@ import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 import { ASTRO_TAB_ID, isAstroVisible } from './astro-access'
 import { isTelegramPaymentSurface, openWebPayment } from './web-payments'
+import { WebPaymentHandoff } from '@/components/web-payment-handoff'
 
 export interface BalanceRequest {
   nativeStars?: boolean
@@ -789,6 +790,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <WebPaymentHandoff />
     </AppContext.Provider>
   )
 }

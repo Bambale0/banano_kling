@@ -56,13 +56,13 @@ def test_bot_buttons_use_website_without_auth_credentials(monkeypatch):
 
 
 async def test_bot_old_callback_never_reaches_checkout():
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     from aiogram.types import CallbackQuery, Chat, Message, User
 
     from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
 
-    event = CallbackQuery(id='test', from_user=User(id=123, is_bot=False, first_name='test'), chat_instance='test', data='buy_lava_card_mini', message=Message(message_id=1, date=datetime.now(timezone.utc), chat=Chat(id=123, type='private')))
+    event = CallbackQuery(id='test', from_user=User(id=123, is_bot=False, first_name='test'), chat_instance='test', data='buy_lava_card_mini', message=Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private')))
     handler = AsyncMock()
     # Bind a fake Bot API at the model seam; no Telegram network calls.
     bot = AsyncMock()
@@ -84,6 +84,69 @@ async def test_native_non_xtr_invoice_is_rejected():
     with pytest.raises(ValueError, match='XTR'):
         await TelegramPaymentRequestMiddleware()(send, AsyncMock(), method)
     send.assert_not_awaited()
+
+
+async def test_successful_stars_reaches_settlement_even_in_legacy_lava_email_state():
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message, SuccessfulPayment
+
+    from bot.states import PaymentStates
+    from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
+
+    payment = SuccessfulPayment(currency='XTR', total_amount=10, invoice_payload='stars:order:10', telegram_payment_charge_id='charge', provider_payment_charge_id='')
+    event = Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private'), successful_payment=payment)
+    settlement = AsyncMock(return_value='settled')
+    state = AsyncMock()
+    result = await TelegramPaymentSurfaceMiddleware()(settlement, event, {'raw_state': PaymentStates.waiting_lava_email.state, 'state': state})
+    assert result == 'settled'
+    settlement.assert_awaited_once()
+    state.clear.assert_not_awaited()
+
+
+async def test_dispatcher_settles_stars_before_legacy_email_catchall(monkeypatch):
+    from datetime import UTC, datetime
+
+    from aiogram import Bot, Dispatcher, Router
+    from aiogram.types import Chat, Message, SuccessfulPayment, Update, User
+
+    from bot.handlers import payments
+    from bot.states import PaymentStates
+    from bot.telegram_payment_surface import install_telegram_payment_surface
+
+    settle = AsyncMock()
+    monkeypatch.setattr(payments, 'process_successful_stars_payment', settle)
+    dp = Dispatcher()
+    install_telegram_payment_surface(dp)
+    legacy = Router()
+    catchall = AsyncMock()
+    legacy.message.register(catchall, PaymentStates.waiting_lava_email)
+    dp.include_router(legacy)
+    bot = Bot('123456:TEST_TOKEN')
+    try:
+        state = dp.fsm.get_context(bot=bot, chat_id=123, user_id=123)
+        await state.set_state(PaymentStates.waiting_lava_email)
+        message = Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private'), from_user=User(id=123, is_bot=False, first_name='test'), successful_payment=SuccessfulPayment(currency='XTR', total_amount=10, invoice_payload='stars:order:10', telegram_payment_charge_id='charge', provider_payment_charge_id=''))
+        await dp.feed_update(bot, Update(update_id=1, message=message))
+        settle.assert_awaited_once()
+        catchall.assert_not_awaited()
+    finally:
+        await bot.session.close()
+        await dp.storage.close()
+
+
+@pytest.mark.parametrize('text', [' ', '\n\t', '/start ', '/start@Bot '])
+async def test_empty_message_or_start_argument_does_not_crash(text):
+    from datetime import UTC, datetime
+
+    from aiogram.types import Chat, Message
+
+    from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
+
+    event = Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private'), text=text)
+    handler = AsyncMock()
+    await TelegramPaymentSurfaceMiddleware()(handler, event, {})
+    handler.assert_awaited_once()
 
 
 @pytest.mark.parametrize('provider', ['lava', 'lava_card', 'lava_sbp', 'lava_foreign_card', 'freekassa', 'freekassa_card', 'yookassa', 'cryptobot', 'robokassa', 'prodamus', 'tribute'])

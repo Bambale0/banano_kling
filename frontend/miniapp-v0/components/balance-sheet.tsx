@@ -84,6 +84,17 @@ export function BalanceSheet() {
   const [vkCheckoutAttempt, setVkCheckoutAttempt] = useState<VkCheckoutAttempt | null>(null)
   const selectedPackageId = balanceRequest?.packageId
   const selectedPackage = paymentPackages.find((pkg) => pkg.id === selectedPackageId)
+  const requestedProvider = ({ lava: 'lava_card', yookassa: 'freekassa_card', freekassa: 'freekassa_card' } as Record<string, string>)[balanceRequest?.provider || ''] || balanceRequest?.provider
+  const requestedProviderAvailable = selectedPackage && requestedProvider && (
+    requestedProvider === 'telegram_stars'
+    || requestedProvider === 'tribute' && Boolean(TRIBUTE_LINKS[selectedPackage.id])
+    || ['lava_card', 'lava_sbp'].includes(requestedProvider) && Boolean(selectedPackage.lava_offer_id)
+    || ['lava_foreign', 'lava_foreign_card', 'lava_foreign_paypal'].includes(requestedProvider) && Boolean(selectedPackage.lava_foreign_offer_id || selectedPackage.lava_foreign_product_id)
+    || ['freekassa_card', 'freekassa_sbp'].includes(requestedProvider) && selectedPackage.freekassa_enabled
+    || requestedProvider === 'prodamus' && selectedPackage.prodamus_enabled
+    || requestedProvider === 'robokassa' && selectedPackage.robokassa_enabled
+  )
+  const requestedProviderLabel = ({ telegram_stars: 'Stars', lava_card: 'Карта', lava_sbp: 'СБП', freekassa_card: 'Карта KASSA', freekassa_sbp: 'СБП KASSA', lava_foreign: 'Зарубежная карта', lava_foreign_card: 'Зарубежная карта', lava_foreign_paypal: 'PayPal', tribute: 'Зарубежная / СНГ', prodamus: 'Prodamus', robokassa: 'Robokassa' } as Record<string, string>)[requestedProvider || '']
   const orderedPackages = selectedPackageId
     ? [...paymentPackages].sort((a, b) => Number(b.id === selectedPackageId) - Number(a.id === selectedPackageId))
     : paymentPackages
@@ -148,7 +159,7 @@ export function BalanceSheet() {
   const missingCredits = Math.max(0, requiredCredits - user.credits)
   const selectedCredits = selectedPackage ? totalPackageCredits(selectedPackage) : 0
   const selectedProvider = selectedPackage
-    ? starsOnly ? 'telegram_stars' : preferredProviderForPackage(selectedPackage, vkPaymentsOnly ? 'vk' : 'telegram')
+    ? starsOnly ? 'telegram_stars' : requestedProviderAvailable ? requestedProvider as PaymentProvider : preferredProviderForPackage(selectedPackage, vkPaymentsOnly ? 'vk' : 'telegram')
     : null
   const selectedPrice = selectedPackage && selectedProvider
     ? paymentPriceLabel(selectedPackage, selectedProvider)
@@ -566,7 +577,10 @@ export function BalanceSheet() {
 
               <div ref={packagesRef}>
                 {starsOnly ? <Button onClick={() => openWebPayment(balanceRequest || {})} variant="outline" className="mb-4 w-full">Баланс и пополнение на сайте</Button> : null}
-                {balanceRequest?.provider && !starsOnly ? <p className="mb-3 text-sm text-muted-foreground">Выберите способ оплаты для выбранного пакета. Счёт появится после нажатия кнопки.</p> : null}
+                {balanceRequest?.provider && !starsOnly && !vkPaymentsOnly ? (
+                  requestedProviderAvailable ? <Button className="mb-3 w-full" disabled={Boolean(loadingPayment)} onClick={() => handleTopup(selectedPackage!.id, requestedProvider as PaymentProvider)}>Продолжить: {requestedProviderLabel}</Button>
+                    : <p role="status" className="mb-3 text-sm text-muted-foreground">Ранее выбранный способ сейчас недоступен. Выберите другой способ оплаты ниже.</p>
+                ) : null}
                 {vkPaymentsOnly ? (
                   <VkSharedBalanceCheckout isOpen={isBalanceOpen}
                     attempt={vkCheckoutAttempt} onAttemptChange={setVkCheckoutAttempt} />

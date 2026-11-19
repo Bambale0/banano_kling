@@ -3027,11 +3027,9 @@ def setup_dispatcher() -> Dispatcher:
     access_guard = AccessGuardMiddleware()
     dp.message.outer_middleware(access_guard)
     dp.callback_query.outer_middleware(access_guard)
-    from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
+    from bot.telegram_payment_surface import install_telegram_payment_surface
 
-    payment_surface = TelegramPaymentSurfaceMiddleware()
-    dp.callback_query.outer_middleware(payment_surface)
-    dp.message.outer_middleware(payment_surface)
+    install_telegram_payment_surface(dp)
 
     # ⭐ КРИТИЧЕСКИ ВАЖНО: Порядок роутеров в aiogram 3.x
     # Первый зарегистрированный роутер имеет НАИВЫСШИЙ приоритет!

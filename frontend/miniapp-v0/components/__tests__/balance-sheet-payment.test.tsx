@@ -38,6 +38,21 @@ it('exposes only Stars in Telegram even when fiat packages are configured', () =
   expect(screen.getByRole('button', { name: /Stars/ })).toBeInTheDocument()
 })
 
+it('resumes the selected web payment method after login without creating a charge automatically', async () => {
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, balanceRequest: { packageId: 'start', provider: 'lava_sbp' } })
+  render(<BalanceSheet />)
+  expect(createPayment).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Продолжить: СБП' }))
+  await waitFor(() => expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({ packageId: 'start', provider: 'lava_sbp' })))
+})
+
+it('explains when a retired legacy payment method needs another selection', () => {
+  ;(useApp as jest.Mock).mockReturnValue({ ...fixture, balanceRequest: { packageId: 'start', provider: 'cryptobot' } })
+  render(<BalanceSheet />)
+  expect(screen.getByText(/Ранее выбранный способ сейчас недоступен/)).toBeInTheDocument()
+  expect(createPayment).not.toHaveBeenCalled()
+})
+
 it('opens an iPhone checkout externally on a fresh tap and reuses the exact signed URL', async () => {
   render(<BalanceSheet />)
   fireEvent.click(screen.getByRole('button', { name: 'Карта' }))

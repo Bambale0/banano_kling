@@ -140,7 +140,8 @@ async def test_webhook_retries_outage_then_credits_once_after_provider_recovery(
 async def test_signed_checkout_outage_has_safe_503_without_post_replay(monkeypatch, method):
     import bot.handlers  # noqa: F401
     from bot import miniapp
-    from tests.test_miniapp_task_history import signed
+    from bot.browser_auth import _build_browser_init_data
+    from bot.config import config
 
     posts = []
 
@@ -162,7 +163,7 @@ async def test_signed_checkout_outage_has_safe_503_without_post_replay(monkeypat
         monkeypatch.setattr(lava_service, 'base_url', str(provider.make_url('')).rstrip('/'))
         try:
             response = await client.post('/mini-app/api/create-payment', json={
-                'init_data': signed(1234569), 'package_id': 'test', 'provider': method,
+                'init_data': _build_browser_init_data({'id': 1234569}, config.BOT_TOKEN), 'package_id': 'test', 'provider': method,
                 'customer_email': 'synthetic@gmail.com',
             })
             body = await response.json()

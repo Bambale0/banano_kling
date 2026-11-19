@@ -1,5 +1,5 @@
 import { getInitData } from '../api'
-import { isBrowserPaymentSession, isTelegramPaymentSurface, paymentDestination, safePaymentReturnTo, webPaymentUrl } from '../web-payments'
+import { isBrowserPaymentSession, isTelegramPaymentSurface, openWebPayment, paymentDestination, safePaymentReturnTo, webPaymentUrl } from '../web-payments'
 
 jest.mock('../api', () => ({ getInitData: jest.fn() }))
 
@@ -22,3 +22,24 @@ it('recognizes the signed browser session and preserves the local checkout inten
 it.each(['https://evil.test/mini-app/', '//evil.test/mini-app/', '/mini-app/../login', '/mini-app/%2e%2e/login', '/mini-app/\\evil', '/mini-app/#tgWebAppData=bad', '/mini-app/?x=1#evil', 'javascript:alert(1)'])(
   'rejects an unsafe return destination %s', raw => expect(safePaymentReturnTo(raw)).toBe('/mini-app/'),
 )
+
+it('keeps the Telegram page and a manual link when external navigation fails', () => {
+  ;(getInitData as jest.Mock).mockReturnValue('query_id=tg&hash=signed')
+  const open = jest.spyOn(window, 'open').mockReturnValue(null)
+  const original = window.Telegram!.WebApp!
+  const broken = { ...original, openLink: () => { throw new Error('unavailable') } }
+  window.Telegram = { WebApp: broken }
+  const listener = jest.fn()
+  window.addEventListener('neuromix-web-payment', listener)
+  const before = window.location.href
+  try {
+    openWebPayment({ packageId: 'mini' })
+    expect(window.location.href).toBe(before)
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/login?'), '_blank', 'noopener,noreferrer')
+    expect(listener).toHaveBeenCalledTimes(1)
+  } finally {
+    open.mockRestore()
+    window.Telegram = { WebApp: original }
+    window.removeEventListener('neuromix-web-payment', listener)
+  }
+})

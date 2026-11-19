@@ -29,7 +29,7 @@ def decoded_receipt(url):
 async def test_miniapp_receipt_and_config_guard(service, tax):
     service.receipt_tax = tax
     module = SimpleNamespace(
-        _get_user_context=AsyncMock(return_value=(1, {"user": SimpleNamespace(id=7)})),
+        _get_user_context=AsyncMock(return_value=(1, {"user": SimpleNamespace(id=7), "platform": "telegram", "payload": {"query_id": "browser_fixture"}})),
         preset_manager=SimpleNamespace(get_package=Mock(return_value={
             "name": "Старт", "credits": 25, "price_rub": "250.01",
         })),

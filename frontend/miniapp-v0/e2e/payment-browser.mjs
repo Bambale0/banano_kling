@@ -123,10 +123,12 @@ try {
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
     // Actual TG wallet entry leaves the Mini App for the website; no fiat API.
     await page.evaluate(() => { window.Telegram.WebApp.initData = 'query_id=tg_native' })
-    await page.locator('header button').last().click()
-    const website = await page.evaluate(() => window.__openedPayments[0])
-    assert.equal(new URL(website).pathname, '/login')
-    assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
+    if (bridge === 'native') {
+      await page.locator('header button').last().click()
+      const website = await page.evaluate(() => window.__openedPayments[0])
+      assert.equal(new URL(website).pathname, '/login')
+      assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
+    }
     assert.equal(paymentRequests, 0)
     await page.getByRole('button', { name: 'Оплатить Stars', exact: true }).click()
     assert.equal(await page.getByRole('button', { name: 'Карта', exact: true }).count(), 0)

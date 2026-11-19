@@ -42,10 +42,16 @@ export function webPaymentUrl(request: PaymentIntent = {}): string {
 
 export function openWebPayment(request: PaymentIntent = {}): void {
   const url = webPaymentUrl(request)
+  if (!getInitData()) {
+    window.location.assign(url)
+    return
+  }
+  // Retain a user-tappable external link even when the bridge silently ignores
+  // navigation or the browser blocks a popup. Never replace the TG WebView.
+  window.dispatchEvent(new CustomEvent('neuromix-web-payment', { detail: url }))
   const bridge = window.Telegram?.WebApp as (NonNullable<NonNullable<Window['Telegram']>['WebApp']> & { openLink?: (url: string) => void }) | undefined
   if (bridge?.openLink) {
     try { bridge.openLink(url); return } catch { /* Use browser navigation. */ }
   }
-  // Same-window fallback works when popup blocking prevents external tabs.
-  window.location.assign(url)
+  window.open(url, '_blank', 'noopener,noreferrer')
 }
