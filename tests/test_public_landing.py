@@ -116,6 +116,12 @@ class LandingPublicContractTest(unittest.TestCase):
         self.assertIn("location ^~ /mini-app/api/", self.nginx)
         self.assertIn("location /mini-app/", self.nginx)
 
+    def test_landing_release_gate_enforces_login_not_direct_app(self):
+        self.assertIn('assert p.links.count("/mini-app/") == 0', self.publisher)
+        self.assertIn('assert p.links.count("/login") >= 10', self.publisher)
+        self.assertIn('[landing] $mode root missing login entry', self.publisher)
+        self.assertIn('[landing] $mode root bypasses login', self.publisher)
+
     def test_legacy_telegram_webview_launch_bypasses_public_landing(self):
         self.assertIn("tgWebAppData", self.html)
         self.assertIn("tgWebAppVersion", self.html)
