@@ -10,6 +10,7 @@ from types import ModuleType
 from typing import Any
 from uuid import UUID
 
+from bot.config import config
 from bot.services import lava_payment_safety as safety
 from bot.services.lava_service import LavaProviderUnavailable, LavaService, lava_service
 
@@ -69,21 +70,36 @@ async def _list_verified_invoice(transaction: Any) -> dict[str, Any] | None:
             begin = (datetime.now(UTC) -
                      timedelta(days=_LIST_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
             records: dict[str, dict[str, Any]] = {}
+            # Bound the entire vendor pagination operation. A provider outage
+            # should produce a retryable 503 instead of a minutes-long webhook.
+            deadline = time.monotonic() + max(
+                0.05, float(config.LAVA_INVOICE_LIST_TIMEOUT_SECONDS)
+            )
             total = None
             complete = False
             for page in range(1, _LIST_MAX_PAGES + 1):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    logger.warning("Lava invoice listing timed out page=%s", page)
+                    raise LavaProviderUnavailable(None)
                 try:
-                    response = await lava_service._request(
-                        "GET", "/api/v2/invoices",
-                        params={
-                            # Vendor currently includes all lifecycle states in
-                            # this query; always validate each returned status.
-                            "invoiceStatuses": "IN_PROGRESS",
-                            "beginDate": begin,
-                            "page": page,
-                            "size": _LIST_PAGE_SIZE,
-                        },
+                    response = await asyncio.wait_for(
+                        lava_service._request(
+                            "GET", "/api/v2/invoices",
+                            params={
+                                # The provider currently returns all lifecycle
+                                # states; validate every returned status.
+                                "invoiceStatuses": "IN_PROGRESS",
+                                "beginDate": begin,
+                                "page": page,
+                                "size": _LIST_PAGE_SIZE,
+                            },
+                        ),
+                        timeout=remaining,
                     )
+                except asyncio.TimeoutError as exc:
+                    logger.warning("Lava invoice listing timed out page=%s", page)
+                    raise LavaProviderUnavailable(None) from exc
                 except Exception as exc:
                     logger.warning("Lava invoice listing unavailable: %s",
                                    type(exc).__name__)
@@ -279,22 +295,31 @@ async def _provider_status_compatible(
         # Prefer verified list lookup for recent local invoices. The provider's
         # detail endpoint sometimes answers 404 for valid contract IDs.
         invoice = await _list_verified_invoice(transaction)
+        # Keep the successful *lookup identifier*, not the last item in the
+        # candidate-building loop. A provider list hit always uses payment_id.
+        resolved_lookup_id = payment_id if invoice is not None else None
         if invoice is None:
             for candidate in candidates:
                 invoice = await lava_service.get_invoice(candidate)
                 if invoice:
+                    resolved_lookup_id = candidate
                     break
         if not invoice:
             continue
 
-        extracted_invoice_id = lava_service.extract_invoice_id(invoice)
-        if extracted_invoice_id:
-            resolved_invoice_id = str(extracted_invoice_id)
-        elif candidate == payment_id:
-            # Current transactions persist the invoice ID directly. Some
-            # status endpoints omit it from the response body, so keep the
-            # identifier that successfully resolved the invoice.
+        # GET /api/v2/invoices/{invoice_id} may return the contract ID
+        # as the top-level "id". Do not overwrite the invoice ID used in
+        # the successful lookup with that unrelated response identifier.
+        # Otherwise a webhook can poison contract -> invoice bindings and
+        # cause later status requests to return 404.
+        if resolved_lookup_id == payment_id:
             resolved_invoice_id = payment_id
+        else:
+            # For legacy contract-based transactions, only accept an
+            # explicitly named invoice identifier from the response.
+            explicit_invoice_id = invoice.get("invoiceId") or invoice.get("invoice_id")
+            if explicit_invoice_id:
+                resolved_invoice_id = str(explicit_invoice_id)
 
         if contract and resolved_invoice_id and contract != resolved_invoice_id:
             try:

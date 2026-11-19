@@ -79,7 +79,18 @@ async def calculate_verified_facts(service: str, values: dict) -> dict:
     place = await asyncio.to_thread(get_place, _place_id(values.get("place_id")))
     profile = _birth_profile(values, place)
     if service == "natal":
-        return await asyncio.to_thread(build_natal_facts, profile)
+        facts = await asyncio.to_thread(build_natal_facts, profile)
+        # The ephemeris deliberately knows only coordinates/timezone. Keep the
+        # human-readable city from the same canonical GeoNames row selected
+        # by place_id, not from untrusted browser free text.
+        facts["birth_place"] = {
+            "name": place["name"],
+            "country_code": place["country_code"],
+            "place_id": place["place_id"],
+            "timezone": place["timezone"],
+            "source": "GeoNames",
+        }
+        return facts
     if service == "karma":
         return await asyncio.to_thread(build_karma_indicators, profile)
     if service in ("year", "month"):

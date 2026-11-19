@@ -117,3 +117,55 @@ async def test_legacy_transaction_skips_new_list_strategy(monkeypatch):
     old.created_at = datetime(2026, 7, 1, tzinfo=UTC)
     assert await compat._list_verified_invoice(old) is None
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_verified_list_keeps_invoice_id_when_webhook_contract_differs(monkeypatch):
+    """A verified list hit must use its invoice ID, not an unbound detail candidate."""
+    from bot.services import lava_payment_safety as safety
+
+    saved = []
+
+    async def provider(method, path, params=None):
+        return {"ok": True, "total": 1, "items": [
+            {"id": INV1, "status": "COMPLETED",
+             "receipt": {"amount": 500, "currency": "RUB"}},
+        ]}
+
+    async def fake_save(contract_id, invoice_id):
+        saved.append((contract_id, invoice_id))
+
+    async def no_detail(identifier):
+        pytest.fail("List lookup should not require detail endpoint")
+
+    monkeypatch.setattr(lava_service, "_request", provider)
+    monkeypatch.setattr(lava_service, "get_invoice", no_detail)
+    monkeypatch.setattr(safety, "_save_binding", fake_save)
+    compat._clear_lava_invoice_list_cache()
+
+    status, resolved = await compat._provider_status_compatible(
+        tx(), contract_id=INV2, retry_delays=(0.0,)
+    )
+    assert (status, resolved) == ("completed", INV1)
+    assert saved == [(INV2, INV1)]
+
+
+@pytest.mark.asyncio
+async def test_invoice_list_provider_timeout_fails_closed(monkeypatch):
+    """A stalled vendor listing must not block webhook verification indefinitely."""
+    import asyncio
+
+    from bot.config import config
+
+    async def stalled_provider(method, path, params=None):
+        await asyncio.sleep(0.2)
+        return {"ok": True, "total": 1, "items": [
+            {"id": INV1, "status": "COMPLETED",
+             "receipt": {"amount": 500, "currency": "RUB"}},
+        ]}
+
+    monkeypatch.setattr(config, "LAVA_INVOICE_LIST_TIMEOUT_SECONDS", 0.02)
+    monkeypatch.setattr(lava_service, "_request", stalled_provider)
+    compat._clear_lava_invoice_list_cache()
+    with pytest.raises(LavaProviderUnavailable):
+        await compat._list_verified_invoice(tx())

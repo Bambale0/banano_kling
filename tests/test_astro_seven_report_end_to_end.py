@@ -74,7 +74,7 @@ def test_seven_complete_reports_survive_sql_restart_and_are_readable_only_to_own
                     assert output["status"] == "completed", service
                     assert output["service_id"] == service
                     assert output["report"]["service_id"] == service
-                    assert output["report"]["word_count"] >= 5000
+                    assert output["report"]["word_count"] >= load_report_plan(service).min_total_words
                     denied = await client.post("/mini-app/api/astro/reports/status", json={
                         "init_data": "test-other", "job_id": ident,
                     })
