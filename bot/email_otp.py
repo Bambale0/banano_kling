@@ -38,6 +38,10 @@ _RESEND_API = "https://api.resend.com/emails"
 class EmailDeliveryError(Exception):
     """Do not leak provider payloads or secret-bearing HTTP headers."""
 
+    def __init__(self, *, uncertain: bool = False):
+        super().__init__("Email provider could not confirm delivery")
+        self.uncertain = uncertain
+
 
 _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS web_auth_email_codes (
@@ -145,13 +149,13 @@ async def _deliver_code(email: str, code: str, request_id: str) -> str:
                 async with session.post(_RESEND_API, headers=headers, json=body) as response:
                     # Never log provider response bodies (may contain PII).
                     if response.status not in (200, 201):
-                        raise EmailDeliveryError()
+                        raise EmailDeliveryError(uncertain=response.status >= 500)
                     data = await response.json(content_type=None)
                     if not isinstance(data, dict) or not isinstance(data.get("id"), str):
-                        raise EmailDeliveryError()
+                        raise EmailDeliveryError(uncertain=True)
                     return data["id"]
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
-            raise EmailDeliveryError() from exc
+            raise EmailDeliveryError(uncertain=True) from exc
     if email_provider() != "smtp":
         raise EmailDeliveryError()
     await asyncio.wait_for(asyncio.to_thread(_send_smtp, email, code), timeout=12)
@@ -345,10 +349,19 @@ async def email_start(request: web.Request) -> web.Response:
         logger.info("web_email_code_accepted provider=%s request_id_hash=%s",
                     email_provider(), hashlib.sha256(ticket.encode()).hexdigest()[:12])
         del provider_id  # Never persist provider credential or recipient address.
-    except (EmailDeliveryError, OSError, smtplib.SMTPException, TimeoutError):
-        # On an uncertain provider timeout the code may still arrive; preserve
-        # the challenge so that a delivered code can be redeemed.
-        logger.warning("web_email_code_delivery_uncertain provider=%s", email_provider())
+    except (EmailDeliveryError, OSError, smtplib.SMTPException, TimeoutError) as exc:
+        # Provider 4xx is a definite rejection. An HTTP timeout / 5xx is
+        # uncertain: the code may still arrive. Return a challenge for that
+        # case so the recipient can redeem it without a duplicate send.
+        uncertain = not isinstance(exc, EmailDeliveryError) or exc.uncertain
+        logger.warning("web_email_code_delivery_failed provider=%s uncertain=%s",
+                       email_provider(), uncertain)
+        if uncertain:
+            return auth._json({
+                "ok": True, "challenge_id": ticket, "expires_in": _CODE_TTL,
+                "resend_after": _RESEND_COOLDOWN,
+                "message": "Отправка пока не подтверждена. Если код придёт, введите его здесь.",
+            }, 202)
         return auth._json({"ok": False, "error": "Email delivery unavailable"}, 503)
 
     return auth._json({
