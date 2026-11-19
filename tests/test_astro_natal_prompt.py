@@ -51,6 +51,7 @@ def test_natal_sections_match_submitted_eight_block_format():
     assert len(p.sections) == len(NEW_BLOCKS)
     assert tuple(section.title for section in p.sections) == NEW_BLOCKS
     assert p.min_total_words < 2000
+    assert "birth_place" in p.sections[0].instruction
     assert sum(x.min_words for x in p.sections) >= p.min_total_words
     assert p.version != load_report_plan("natal", path=LEGACY_PATH).version
 
