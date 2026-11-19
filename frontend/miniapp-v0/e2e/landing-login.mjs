@@ -140,6 +140,19 @@ try {
     console.log(`landing -> login [${width}]: OK`)
   }
 
+  // A browser referral is not a signed Telegram WebView launch.
+  const referral = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await referral.goto(origin + '/?startapp=ci_ref_123', { waitUntil: 'load' })
+  assert.ok(referral.url().includes('/?startapp=ci_ref_123'), 'browser referral stays on landing')
+  assert.equal(
+    await referral.locator('.mobile-grunge-cta').getAttribute('href'),
+    '/login?startapp=ci_ref_123',
+  )
+  await referral.locator('.mobile-grunge-cta').click()
+  await referral.waitForURL('**/login?startapp=ci_ref_123')
+  await referral.close()
+  console.log('landing/browser-referral -> login with startapp: OK')
+
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
