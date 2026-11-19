@@ -45,6 +45,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           bash scripts/ci/install-verified-ffmpeg.sh
+      - name: Verify real audio sandbox and diagnose codec/virtual memory failures
+        run: python scripts/ci/test-verified-ffmpeg-sandbox.py
       - run: python -m pytest tests/test_wan3*.py tests/test_advanced_video_contract.py tests/test_admin_model_coverage.py -q --tb=short
 
   postgres:
