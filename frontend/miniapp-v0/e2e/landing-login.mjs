@@ -7,6 +7,7 @@ import { chromium } from 'playwright'
 
 const root = resolve(process.cwd(), 'out')
 const artwork = resolve(process.cwd(), '../../web/landing/grunge-mobile-art-v1.webp')
+const landingHtml = resolve(process.cwd(), '../../web/landing/index.html')
 const posts = []
 const initData = 'user=%7B%22id%22%3A123%7D&auth_date=123456&hash=browser_mock'
 
@@ -28,6 +29,12 @@ const server = createServer(async (req, res) => {
       for await (const chunk of req) chunks.push(chunk)
       posts.push(JSON.parse(Buffer.concat(chunks).toString('utf8')))
       json(res, 200, { ok: true, init_data: initData })
+      return
+    }
+    if (path === '/') {
+      const data = readFileSync(landingHtml)
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(data)
       return
     }
     if (path === '/grunge-mobile-art-v1.webp') {
@@ -120,6 +127,34 @@ try {
     await page.close()
     console.log(`login/shadcn [${width}]: OK`)
   }
+
+
+  // Real landing CTAs: a click must show /login, not jump into unauthenticated Mini App.
+  for (const [width, selector] of [[1440, '.hot-enter'], [390, '.grunge-mobile-enter']]) {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    const response = await page.goto(origin + '/', { waitUntil: 'load' })
+    assert.equal(response.status(), 200)
+    assert.equal(await page.locator(selector).getAttribute('href'), '/login')
+    assert.equal(await page.locator(width === 1440 ? '.hot-hero-cta' : '.mobile-grunge-cta').getAttribute('href'), '/login')
+    await page.locator(selector).click()
+    await page.waitForURL('**/login')
+    assert.ok(page.url().endsWith('/login'), `landing CTA should lead to /login at ${width}`)
+    await page.close()
+    console.log(`landing -> login [${width}]: OK`)
+  }
+
+  // A browser referral is not a signed Telegram WebView launch.
+  const referral = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await referral.goto(origin + '/?startapp=ci_ref_123', { waitUntil: 'load' })
+  assert.ok(referral.url().includes('/?startapp=ci_ref_123'), 'browser referral stays on landing')
+  assert.equal(
+    await referral.locator('.mobile-grunge-cta').getAttribute('href'),
+    '/login?startapp=ci_ref_123',
+  )
+  await referral.locator('.mobile-grunge-cta').click()
+  await referral.waitForURL('**/login?startapp=ci_ref_123')
+  await referral.close()
+  console.log('landing/browser-referral -> login with startapp: OK')
 
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
