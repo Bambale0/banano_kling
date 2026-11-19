@@ -10,7 +10,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 STATUS_SQL = """
 SELECT status, count(*)
@@ -92,7 +92,7 @@ def report_from_rows(status_rows, age_rows, anomaly_row, binding_row) -> dict:
         raise ValueError("Unexpected audit query shape")
     return {
         "audit": "lava_pending_readonly_v1",
-        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "observed_at_utc": datetime.now(UTC).isoformat(),
         "mode": "database_repeatable_read_read_only",
         "provider_status_checked": False,
         "payment_credits_modified": False,
