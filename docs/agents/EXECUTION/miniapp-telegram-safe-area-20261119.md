@@ -11,3 +11,10 @@
 - Verification required before release: lint, frontend production build, relevant tests and browser E2E; Telegram Android/iOS/Desktop manual visual smoke after exact-SHA deploy, especially fullscreen transition, native Back/Close, media preview, scrolling and bottom tabs.
 - Rollback: revert this PR; no migrations/config changes.
 - Status: source changes and regression test authored; tests, CI, production build, deployed SHA and device smoke are not yet verified.
+
+## Additional scoped findings
+- Genjutsu's fullscreen mobile dialog formerly used only CSS `env(safe-area-inset-*)`, while the studio's own sticky header with the `Закрыть` control used `top-0`; updated both to the shared Telegram content-safe geometry.
+- Astro details deliberately display an in-app `Назад` control and native Telegram BackButton; Astro's fixed Back offset was adjusted above the bottom navigation using the same live safe-bottom variable.
+- Expanded browser E2E to check actual Genjutsu sticky close and Astro fixed Back against navigation under simulated insets.
+- Known residual: existing generic Radix sheet/dialog Close targets are icon-size and bottom tabs have narrow targets at 320px; assess on real device before changing navigation semantics.
+- CI note: prior PR head frontend CI was cancelled by subsequent commits; full latest-head checks and device visual verification still required. No production release claimed.
