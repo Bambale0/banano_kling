@@ -82,8 +82,8 @@ def test_yearly_months_require_exact_twelve_calculated_rows():
         "samples": [{"date": f"2026-{month:02d}-01"} for month in range(1, 13)],
     }
     result = _expand_period_sections(plan, facts)
-    assert len(result) == len(plan.sections) + 12
-    assert result[-1].id == "month_20261201"
+    assert result == plan.sections  # snapshots are evidence, not invented event chapters
+    assert plan.dynamic_period is None
     with pytest.raises(AstroReportError, match="неполны|дублированы|перепутаны"):
         _expand_period_sections(plan, {**facts, "samples": facts["samples"][:11]})
     with pytest.raises(AstroReportError, match="Отсутствуют"):
