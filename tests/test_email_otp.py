@@ -1,7 +1,6 @@
 """Email OTP: HTTP boundary, Resend contract, concurrency and abuse controls."""
 from __future__ import annotations
 
-import hashlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
