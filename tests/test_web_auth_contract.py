@@ -42,9 +42,10 @@ def test_oauth_providers_are_explicitly_configured(monkeypatch):
 
 def test_web_auth_isolated_from_legacy_telegram_ids():
     src = (ROOT / "bot/web_auth.py").read_text(encoding="utf-8")
-    assert "web_auth_identities" in src
-    assert "PRIMARY KEY(provider, subject)" in src
-    assert "UNIQUE(account_id, provider)" in src
+    schema = (ROOT / "bot/shared_accounts/schema.py").read_text(encoding="utf-8")
+    assert "web_auth_identities" in schema
+    assert "PRIMARY KEY(provider, subject)" in schema
+    assert "UNIQUE(account_id, provider)" in schema
     assert "_verify_telegram_login" in src
     assert "shared_account_legacy_links" in src
     assert "AuthConflict" in src
