@@ -21,7 +21,7 @@ const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url || '/', 'http://127.0.0.1').pathname
     if (path === '/mini-app/api/browser-auth/config') {
-      json(res, 200, { ok: true, bot_username: 'ExampleBot' })
+      json(res, 200, { ok: true, bot_username: 'ExampleBot', oidc_client_id: '123456', oidc_nonce: 'ci-test-nonce-1234567890123456789012' })
       return
     }
     if (path === '/mini-app/api/browser-auth' && req.method === 'POST') {
@@ -90,9 +90,22 @@ try {
   for (const [width, height] of [[320, 700], [390, 844], [768, 960], [1440, 900]]) {
     const page = await browser.newPage({ viewport: { width, height } })
     const errors = []
+    let oidcOptions = null
+    await page.exposeFunction('__ciTrackOidcOptions', options => { oidcOptions = options })
     page.on('pageerror', error => errors.push(String(error)))
     await page.route('https://telegram.org/js/**', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: '',
+    }))
+    await page.route('**/telegram-login.js', route => route.fulfill({
+      status: 200, contentType: 'text/javascript', body: `
+        window.Telegram = window.Telegram || {};
+        window.Telegram.Login = {
+          auth(options, callback) {
+            window.__ciTrackOidcOptions(options);
+            callback({ id_token: 'ci-id-token' });
+          }
+        };
+      `,
     }))
     await page.route('**/telegram-widget.js?22', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
@@ -101,7 +114,8 @@ try {
       waitUntil: 'load',
     })
     assert.equal(response.status(), 200)
-    await page.locator('#ci-telegram-login').waitFor()
+    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
+    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       headings: document.querySelectorAll('#login-page-title').length,
@@ -114,7 +128,7 @@ try {
     assert.ok(metrics.scripts >= 2, 'Next.js bundles must load at /login')
     assert.deepEqual(errors, [], 'React/Next hydration errors')
     if (width === 390) {
-      await page.locator('#ci-telegram-login').click()
+      await page.getByRole('button', { name: 'Продолжить через Telegram' }).click()
       await page.waitForURL('**/mini-app/**')
       assert.ok(page.url().includes('startapp=test_ref'), 'startapp survives sign-in')
       assert.equal(new URL(page.url()).searchParams.get('intent'), 'topup')
@@ -122,7 +136,9 @@ try {
       assert.equal(new URL(page.url()).searchParams.get('provider'), 'lava_card')
       assert.ok(page.url().includes('#tgWebAppData='), 'signed initData goes in URL fragment')
       assert.equal(posts.length, 1, 'a single signed login POST must be sent')
-      assert.equal(posts[0].telegram_auth.hash, 'mock_signed_payload')
+      assert.equal(posts[0].id_token, 'ci-id-token')
+      assert.equal(oidcOptions?.scope?.join(','), 'profile')
+      assert.equal(oidcOptions?.nonce, 'ci-test-nonce-1234567890123456789012')
     }
     await page.close()
     console.log(`login/shadcn [${width}]: OK`)
@@ -159,10 +175,25 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
-  await failed.getByText('Не удалось загрузить вход.', { exact: false }).waitFor()
+  await failed.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
   console.log('login/auth-failure fallback: OK')
+
+  const withoutOidc = await browser.newPage()
+  await withoutOidc.route('**/mini-app/api/browser-auth/config', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, bot_username: 'ExampleBot', oidc_client_id: '', oidc_nonce: '' }),
+  }))
+  await withoutOidc.route('**/telegram-widget.js?22', route => route.fulfill({
+    status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
+  }))
+  await withoutOidc.goto(origin + '/login')
+  await withoutOidc.getByText('Быстрый вход не настроен или недоступен.', { exact: false }).waitFor()
+  assert.equal(await withoutOidc.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
+  await withoutOidc.close()
+  console.log('login/oidc-unconfigured -> legacy widget: OK')
 } finally {
   if (browser) await browser.close()
   server.close()
