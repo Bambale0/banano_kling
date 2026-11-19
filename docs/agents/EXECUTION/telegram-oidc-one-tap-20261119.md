@@ -13,8 +13,9 @@ open a native Telegram approval prompt.
   Browser popup blocking prevents safe unconditional auto-launch on page load.
 - **Do not request the phone scope**. Request only profile. The user has one
   explicit Telegram consent action; there is no way to bypass Telegram consent.
-- Fetch client ID (overridable by TELEGRAM_OIDC_CLIENT_ID; fallback is numeric
-  bot ID from BOT_TOKEN) and a fresh per-browser nonce from the existing config API.
+- Fetch the **explicitly configured BotFather Client ID** from
+  TELEGRAM_OIDC_CLIENT_ID and a fresh per-browser nonce from the existing
+  config API. Never assume the numeric BOT_TOKEN prefix is the OIDC Client ID.
 - Bind nonce to a Secure, HttpOnly, SameSite=Lax short-lived cookie; OIDC SDK
   returns an id_token to the site; POST to existing browser-auth endpoint.
 - Verify RS256 signature against Telegram JWKS with bounded network timeout,
@@ -22,14 +23,17 @@ open a native Telegram approval prompt.
 - Mint the existing signed browser Mini App initData only after verification,
   then navigate via replace to /mini-app/ and preserve startapp context.
 - Keep the legacy signed Telegram widget behind an explicit fallback link;
-  do not display it by default, so normal entry does not ask for phone.
+  when OIDC is not configured or its SDK cannot load, reveal the legacy login
+  automatically rather than leaving a disabled one-tap button.
 - Native Telegram WebView launches carrying tgWebAppData still bypass browser login.
 
 ## External setup requirement
 In @BotFather → bot → Login Widget, add the allowed origin
 https://neuromixbot.com (and the URL(s) BotFather requires for browser login).
-Verify OIDC Client ID matches the bot; if it differs, set
-TELEGRAM_OIDC_CLIENT_ID in the existing secret-backed deployment environment.
+Set TELEGRAM_OIDC_CLIENT_ID to the **Client ID displayed by BotFather**
+(in the existing secret-backed deployment environment). This configuration
+is required to enable OIDC; before it is set, the previous legacy widget
+remains available.
 Telegram's signing algorithm must be RS256 (the official default).
 
 No Client Secret is needed for this SDK ID-token flow. Never place BotFather
@@ -41,7 +45,8 @@ https://oauth.telegram.org/.well-known/jwks.json with a 5s timeout.
 - tests/test_telegram_oidc.py: valid RSA ID token, tampering, unknown key,
   wrong nonce, issuer, audience, iat/exp and empty nonce.
 - frontend/miniapp-v0/e2e/landing-login.mjs: login button calls SDK, sends
-  id_token, redirects with session, preserves startapp, fallback works.
+  id_token, redirects with session, preserves startapp; missing BotFather
+  Client ID and SDK failures automatically reveal the legacy login.
 - CI: Python safe suite, Next build/type/lint, Chromium browser E2E.
 - Production: confirm exact deployed SHA, /login loads new SDK with CSP,
   test a real Telegram app approval -> /mini-app/ bootstrap. Cannot claim
