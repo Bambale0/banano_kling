@@ -874,3 +874,8 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_post(root + "/email/verify", email_verify)
     app.router.add_post(root + "/telegram", telegram_login)
     app.router.add_post(root + "/logout", logout)
+    # Independent website finance is dark until both server-owned paid-flow
+    # flags are enabled after full payment/generation acceptance.
+    from bot.web_commerce import register_routes as register_web_payments
+
+    register_web_payments(app, root)

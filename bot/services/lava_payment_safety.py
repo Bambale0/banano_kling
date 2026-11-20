@@ -505,6 +505,18 @@ async def safe_handle_lava_webhook(
         logger.warning("Rejected Lava webhook without contractId event=%s", event_type)
         return web.Response(status=400)
 
+    # Only after authenticating the provider sender and validating the exact
+    # contract identifier may we dispatch a web-native invoice. Disabled
+    # default means the existing Telegram callback path is untouched.
+    from bot.web_commerce import verified_webhook as verified_web_checkout
+
+    # Preflight is read-only when web commerce has never been enabled.
+    # Existing web orders MUST settle even if new purchases were disabled
+    # after the customer paid (late/duplicate provider webhooks).
+    web_result = await verified_web_checkout(payload, contract_id, event_type)
+    if web_result is not None:
+        return web_result
+
     try:
         transaction = await _lookup_lava_transaction(
             contract_id=contract_id,
