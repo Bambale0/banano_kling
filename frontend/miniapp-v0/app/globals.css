@@ -220,6 +220,10 @@
    Telegram inset must not be overridden by the Dialog's utility padding
    shorthands: without this rule the Close control lands beneath Telegram X. */
 .genjutsu-dialog-scrollport {
+  /* Radix duration-200 otherwise transitions ALL properties, including
+     Telegram safe-area padding. Inset changes must apply immediately so
+     Close never passes beneath the Telegram native controls. */
+  transition-property: opacity, transform;
   padding-top: max(0.75rem, var(--miniapp-safe-top));
   padding-bottom: max(0.75rem, var(--miniapp-safe-bottom));
 }

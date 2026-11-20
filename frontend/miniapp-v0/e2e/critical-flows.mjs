@@ -1144,28 +1144,6 @@ try {
           safeTop: getComputedStyle(document.documentElement).getPropertyValue('--miniapp-safe-top'),
           tgSafeTop: root.getPropertyValue('--tg-safe-area-inset-top'),
           tgContentSafeTop: root.getPropertyValue('--tg-content-safe-area-inset-top'),
-          dialogInlineStyle: dialog?.getAttribute('style') ?? null,
-          dialogSafeTop: css?.getPropertyValue('--miniapp-safe-top') ?? null,
-          dialogTgSafeTop: css?.getPropertyValue('--tg-safe-area-inset-top') ?? null,
-          dialogTgContentSafeTop: css?.getPropertyValue('--tg-content-safe-area-inset-top') ?? null,
-          bodyTgSafeTop: getComputedStyle(document.body).getPropertyValue('--tg-safe-area-inset-top'),
-          bodyTgContentSafeTop: getComputedStyle(document.body).getPropertyValue('--tg-content-safe-area-inset-top'),
-          paddingPriority: dialog?.style.getPropertyPriority('padding-top') ?? null,
-          paddingCandidates: dialog ? (() => {
-            const prior = dialog.style.paddingTop
-            const candidateValues = [
-              '80px',
-              'max(1.5rem, var(--miniapp-safe-top, 0px))',
-              'calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px))',
-              'max(1.5rem, calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)))',
-            ]
-            const values = candidateValues.map(value => {
-              dialog.style.paddingTop = value
-              return { value, computed: getComputedStyle(dialog).paddingTop }
-            })
-            dialog.style.paddingTop = prior
-            return values
-          })() : null,
         }
         root.removeProperty('--tg-safe-area-inset-top')
         root.removeProperty('--tg-content-safe-area-inset-top')
