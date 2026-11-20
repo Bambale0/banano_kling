@@ -37,6 +37,14 @@ class LongFormFixtureProvider:
         self.section_ids.append(request["section_id"])
         assert "astronomical_facts" in request and system_prompt and json_response
         text = "символическая " * (request["minimum_words"] + 3)
+        if request["service"] == "lunar" and request["section_id"] == "section_03":
+            days = request["astronomical_facts"]["days"]
+            text = "| Дата | Фаза | Совет |\n| --- | --- | --- |\n"
+            text += "".join(
+                f"| {day['date']} | растущая | Самонаблюдение. |\n"
+                for day in days
+            )
+            text += "символическая " * (request["minimum_words"] + 3)
         return json.dumps({"section_id": request["section_id"], "text": text})
 
 
