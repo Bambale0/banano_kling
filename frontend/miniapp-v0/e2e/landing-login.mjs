@@ -10,6 +10,7 @@ const artwork = resolve(process.cwd(), '../../web/landing/grunge-mobile-art-v1.w
 const landingHtml = resolve(process.cwd(), '../../web/landing/index.html')
 const posts = []
 const initData = 'user=%7B%22id%22%3A123%7D&auth_date=123456&hash=browser_mock'
+const webstudioInitData = new URLSearchParams({ query_id: 'webstudio_verified-session-abcdef123456', user: JSON.stringify({ id: 123 }), auth_date: '123456', hash: 'signed-webstudio-test' }).toString()
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload)
@@ -193,12 +194,21 @@ try {
     body: JSON.stringify({ ok: true, authenticated: true, studio_ready: true, providers: { yandex: true } }),
   }))
   await yandexLinked.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: initData }),
+    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: webstudioInitData }),
   }))
-  await yandexLinked.goto(origin + '/login?startapp=yandex_ref')
+  await yandexLinked.goto(origin + '/login?startapp=yandex_ref&return_to=' +
+    encodeURIComponent('/mini-app/?intent=topup&package_id=start&provider=lava_card'))
   await yandexLinked.waitForURL('**/mini-app/**')
   assert.equal(new URL(yandexLinked.url()).searchParams.get('startapp'), 'yandex_ref')
+  assert.equal(new URL(yandexLinked.url()).searchParams.get('intent'), 'topup')
+  assert.equal(new URL(yandexLinked.url()).searchParams.get('package_id'), 'start')
+  assert.equal(new URL(yandexLinked.url()).searchParams.get('provider'), 'lava_card')
   assert.ok(yandexLinked.url().includes('#tgWebAppData='))
+  assert.equal(
+    new URLSearchParams(new URLSearchParams(new URL(yandexLinked.url()).hash.slice(1)).get('tgWebAppData')).get('query_id'),
+    'webstudio_verified-session-abcdef123456',
+    'linked website login should preserve its browser-issued session provenance',
+  )
   await yandexLinked.close()
   console.log('login/Yandex-linked -> existing Telegram wallet with referral: OK')
 

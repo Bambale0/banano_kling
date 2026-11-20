@@ -43,3 +43,21 @@ it('keeps the Telegram page and a manual link when external navigation fails', (
     window.removeEventListener('neuromix-web-payment', listener)
   }
 })
+
+it('does not bounce a verified Yandex webstudio checkout back to /login', () => {
+  // web_auth_studio mints a signed webstudio_* initData for the linked user.
+  // It is NOT a Telegram WebView launch even though it uses Telegram-shaped fields.
+  ;(getInitData as jest.Mock).mockReturnValue('query_id=webstudio_verified-session-abcdef123456&hash=synthetic')
+  expect(isBrowserPaymentSession()).toBe(true)
+  expect(isTelegramPaymentSurface()).toBe(false)
+  expect(paymentDestination({ packageId: 'mini', provider: 'lava_card', promoCode: 'REF50' }))
+    .toBe('/mini-app/?intent=topup&package_id=mini&provider=lava_card&promo_code=REF50')
+})
+
+it.each(['tg_native', 'webstudio', 'webstudiox_abcd', 'other_webstudio_session'])(
+  'does not spoof browser checkout with an unrelated query_id %s', queryId => {
+    ;(getInitData as jest.Mock).mockReturnValue('query_id=' + queryId + '&hash=synthetic')
+    expect(isBrowserPaymentSession()).toBe(false)
+    expect(isTelegramPaymentSurface()).toBe(true)
+  },
+)
