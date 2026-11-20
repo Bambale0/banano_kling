@@ -22,7 +22,8 @@ function botStartUrl(botUsername?: string) {
   if (!/^[a-zA-Z0-9_]{5,32}$/.test(username)) return ''
   // Retain a direct referral; never replay payment/generation actions in /start.
   // The original Mini App launch context and form stay mounted in this WebView.
-  const launch = (startParamFromLocation(window.location.search, window.location.hash) || getStartParamFallback()).trim().replace(/^start=/, '').replace(/^startapp=/, '')
+  const current = typeof window === 'undefined' ? '' : startParamFromLocation(window.location.search, window.location.hash)
+  const launch = (current || getStartParamFallback()).trim().replace(/^start=/, '').replace(/^startapp=/, '')
   const target = parseMiniAppStartParam(launch)
   const referral = launch.startsWith('ref_')
     ? launch.slice(4).trim().toUpperCase()
