@@ -66,6 +66,19 @@ describe('BotWriteAccessGate', () => {
     expect(webApp().openTelegramLink).not.toHaveBeenCalled()
   })
 
+  it('prefers the current Genjutsu repeat author over an older Telegram launch referral', () => {
+    const original = window.location.pathname + window.location.search + window.location.hash
+    try {
+      startParam.mockReturnValue('ref_STALE')
+      window.history.replaceState(null, '', '/mini-app/?startapp=remix_77_ref_E2EOWNER')
+      render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
+      expect(screen.getByRole('link', { name: 'Открыть бота' }))
+        .toHaveAttribute('href', 'https://t.me/neuromix_bot?start=ref_E2EOWNER')
+    } finally {
+      window.history.replaceState(null, '', original)
+    }
+  })
+
   it('always uses the real text chat link even when Telegram native navigation silently no-ops', () => {
     webApp().openTelegramLink = jest.fn(() => { /* simulates iOS native no-op */ })
     render(<BotWriteAccessGate required botUsername="neuromix_bot" onRefresh={jest.fn()} />)
