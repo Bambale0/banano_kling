@@ -166,27 +166,132 @@ try {
   await yandexGuest.close()
   console.log('login/Yandex configured -> authorization start with referral: OK')
 
+  // Google uses the same server OAuth/PKCE path as Yandex, preserving
+  // referral continuity without leaking identity into Telegram credentials.
+  const googleGuest = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await googleGuest.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: false, providers: { google: true } }),
+  }))
+  let googleReturn = null
+  await googleGuest.route('**/mini-app/api/web-auth/start/google?**', route => {
+    googleReturn = new URL(route.request().url()).searchParams.get('next')
+    return route.fulfill({ status: 302, headers: { Location: '/login?google_started=1' } })
+  })
+  await googleGuest.goto(origin + '/login?startapp=google_ref')
+  await googleGuest.getByRole('link', { name: 'Продолжить с Google' }).click()
+  await googleGuest.waitForURL('**/login?google_started=1')
+  assert.equal(googleReturn, '/login?startapp=google_ref')
+  await googleGuest.close()
+  console.log('login/Google configured -> OAuth with referral: OK')
+
+  // A verified Yandex-only web session enters the same Mini App bundle
+  // without manufacturing a Telegram ID or forcing Telegram linking.
   const yandexOnly = await browser.newPage({ viewport: { width: 390, height: 844 } })
   await yandexOnly.route('**/mini-app/api/web-auth/config', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ ok: true, authenticated: true, studio_ready: false, providers: { yandex: true } }),
   }))
-  await yandexOnly.route('**/telegram-widget.js?22', route => route.fulfill({
+  await yandexOnly.route('**/mini-app/api/web-auth/actor', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, account_id: 'yandex-only', auth_channel: 'web',
+      telegram_linked: false, wallet_authority: 'web_live' }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/catalog', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, catalog_scope: 'read_only', web_generate_enabled: false,
+      image_models: [{ id: 'nano_banana_pro', label: 'Nano Banana Pro', web_generate_enabled: false }],
+      video_models: [{ id: 'seedance_2_5', label: 'Seedance 2.5', web_generate_enabled: false }] }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/history', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, scope: 'web_only', recent_tasks: [], next_cursor: null, cursor_reset: false }),
+  }))
+  await yandexOnly.goto(origin + '/login?startapp=web_ref')
+  await yandexOnly.waitForURL(url => url.pathname === '/mini-app/' &&
+    url.searchParams.get('web') === '1' && url.searchParams.get('startapp') === 'web_ref')
+  await yandexOnly.getByText('Nano Banana Pro').waitFor()
+  assert.equal(await yandexOnly.getByText('Seedance 2.5').count(), 1)
+  assert.equal(await yandexOnly.getByRole('link', { name: 'Связать Telegram (необязательно)' }).count(), 1)
+  assert.equal(await yandexOnly.getByRole('button', { name: /Генерировать|Создать/ }).count(), 0)
+  assert.equal(await yandexOnly.getByRole('link', { name: 'Открыть привязанную студию' }).count(), 0)
+  await yandexOnly.close()
+  console.log('login/Yandex-only -> independent browser workspace: OK')
+
+  // Independent email OTP login uses the server's authenticated return path,
+  // then re-evaluates account scope before entering the shared web bundle.
+  const emailOnly = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let emailAuthenticated = false
+  let issuedNext = null
+  await emailOnly.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: emailAuthenticated,
+      studio_ready: false, providers: { email: true } }),
+  }))
+  await emailOnly.route('**/mini-app/api/web-auth/email/start', async route => {
+    const payload = route.request().postDataJSON()
+    issuedNext = payload.next
+    assert.equal(payload.email, 'ci@example.test')
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ok: true, challenge_id: 'ci-server-challenge', message: 'Код отправлен' }) })
+  })
+  await emailOnly.route('**/mini-app/api/web-auth/email/verify', async route => {
+    assert.deepEqual(route.request().postDataJSON(),
+      { challenge_id: 'ci-server-challenge', code: '123456' })
+    emailAuthenticated = true
+    await route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ok: true, redirect: '/login?startapp=email_ref' }) })
+  })
+  await emailOnly.route('**/mini-app/api/web-auth/actor', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, account_id: 'email-only', auth_channel: 'web',
+      telegram_linked: false, wallet_authority: 'web_live' }),
+  }))
+  await emailOnly.route('**/mini-app/api/web-auth/catalog', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, catalog_scope: 'read_only', web_generate_enabled: false,
+      image_models: [{ id: 'nano_banana_pro', label: 'Nano Banana Pro' }], video_models: [] }),
+  }))
+  await emailOnly.route('**/mini-app/api/web-auth/history', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, scope: 'web_only', recent_tasks: [], next_cursor: null, cursor_reset: false }),
+  }))
+  await emailOnly.goto(origin + '/login?startapp=email_ref')
+  await emailOnly.getByLabel('Войти по электронной почте').fill('ci@example.test')
+  await emailOnly.getByRole('button', { name: 'Получить код' }).click()
+  await emailOnly.getByLabel('Код из письма').fill('123456')
+  await emailOnly.getByRole('button', { name: 'Подтвердить код' }).click()
+  await emailOnly.waitForURL(url => url.pathname === '/mini-app/'
+    && url.searchParams.get('web') === '1'
+    && url.searchParams.get('startapp') === 'email_ref')
+  assert.equal(issuedNext, '/login?startapp=email_ref')
+  await emailOnly.getByText('Nano Banana Pro').waitFor()
+  await emailOnly.close()
+  console.log('login/email OTP -> verified independent web studio + referral: OK')
+
+  // The previous linked-Telegram studio remains available by explicit choice.
+  const linkTelegram = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await linkTelegram.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, studio_ready: false, providers: { yandex: true } }),
+  }))
+  await linkTelegram.route('**/telegram-widget.js?22', route => route.fulfill({
     status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
   }))
-  await yandexOnly.route('**/mini-app/api/web-auth/telegram', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, redirect: '/login?linked=telegram' }),
+  await linkTelegram.route('**/mini-app/api/web-auth/telegram', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, redirect: '/login?linked=telegram' }),
   }))
-  await yandexOnly.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
+  await linkTelegram.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: initData }),
   }))
-  await yandexOnly.goto(origin + '/login')
-  await yandexOnly.getByText('Вход через Яндекс подтверждён').waitFor()
-  await yandexOnly.locator('#ci-telegram-login').click()
-  await yandexOnly.waitForURL('**/mini-app/**')
-  assert.ok(yandexOnly.url().includes('#tgWebAppData='))
-  await yandexOnly.close()
-  console.log('login/Yandex-only -> explicit verified Telegram link -> studio: OK')
+  await linkTelegram.goto(origin + '/login?link=telegram')
+  await linkTelegram.getByText('Вход в веб-аккаунт подтверждён').waitFor()
+  await linkTelegram.locator('#ci-telegram-login').click()
+  await linkTelegram.waitForURL('**/mini-app/**')
+  assert.ok(linkTelegram.url().includes('#tgWebAppData='))
+  await linkTelegram.close()
+  console.log('login/Yandex-only -> optional verified Telegram link -> studio: OK')
 
   const yandexLinked = await browser.newPage({ viewport: { width: 390, height: 844 } })
   await yandexLinked.route('**/mini-app/api/web-auth/config', route => route.fulfill({
@@ -212,6 +317,46 @@ try {
   await yandexLinked.close()
   console.log('login/Yandex-linked -> existing Telegram wallet with referral: OK')
 
+
+  // The same /mini-app/ bundle supports browser ownership across viewports.
+  // No real user cookies, media, money or provider calls occur in this smoke.
+  for (const [width, height] of [[320, 700], [390, 844], [768, 960], [1440, 900]]) {
+    const page = await browser.newPage({ viewport: { width, height } })
+    const browserErrors = []
+    page.on('pageerror', error => browserErrors.push(String(error)))
+    const ownedTask = { task_id: 'own-web-linked-task', type: 'image',
+      status: 'completed', prompt_hidden: true, prompt: 'SECRET_NEVER_RENDER',
+      result_url: '/uploads/owned-test.png' }
+    const fixtures = {
+      actor: { ok: true, account_id: 'verified-owner', auth_channel: 'web', telegram_linked: true, wallet_authority: 'web_live' },
+      catalog: { ok: true, web_generate_enabled: false,
+        image_models: [{ id: 'nano_banana_pro', label: 'Nano Banana Pro' }], video_models: [] },
+      history: { ok: true, scope: 'legacy_telegram',
+        recent_tasks: [ownedTask], next_cursor: null, cursor_reset: false },
+      task: { ok: true, scope: 'legacy_telegram', task: ownedTask },
+      logout: { ok: true },
+    }
+    for (const [endpoint, body] of Object.entries(fixtures)) {
+      await page.route('**/mini-app/api/web-auth/' + endpoint + (endpoint === 'task' ? '?**' : ''), route => route.fulfill({
+        status: 200, contentType: 'application/json', body: JSON.stringify(body),
+      }))
+    }
+    await page.goto(origin + '/mini-app/?web=1', { waitUntil: 'load' })
+    await page.getByRole('button', { name: 'Открыть задачу' }).waitFor()
+    assert.equal(await page.getByRole('link', { name: 'Открыть привязанную студию' }).getAttribute('href'), '/login')
+    assert.equal(await page.getByText('SECRET_NEVER_RENDER').count(), 0)
+    const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
+    assert.ok(scrollWidth <= width + 2, 'browser workspace overflow at ' + width)
+    await page.getByRole('button', { name: 'Открыть задачу' }).click()
+    await page.getByText('own-web-linked-task').waitFor()
+    assert.equal(await page.getByText('SECRET_NEVER_RENDER').count(), 0)
+    await page.getByRole('button', { name: 'Выйти из веб-аккаунта' }).click()
+    await page.getByRole('link', { name: 'Войти в NEUROMIX' }).waitFor()
+    assert.equal(await page.getByText('own-web-linked-task').count(), 0)
+    assert.deepEqual(browserErrors, [], 'web workspace browser errors at ' + width)
+    await page.close()
+    console.log('browser history/privacy/logout [' + width + ']: OK')
+  }
 
   // An already authenticated browser session resumes its exact payment intent
   // without opening the new OIDC approval flow again.

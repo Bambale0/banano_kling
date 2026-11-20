@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react'
 import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { BrowserAccountWorkspace } from '@/components/browser-account-workspace'
 import { VkNativeWorkspace } from '@/components/vk-native-workspace'
 import { hasVkLaunchData, incomingAccountLink } from '@/lib/account-platform'
 import { reportVkLaunchStage } from '@/lib/vk-launch-telemetry'
@@ -102,13 +103,23 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 }
 
 export function AccountPlatformEntry({ children }: { children: ReactNode }) {
-  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | null>(null)
+  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | 'browser' | null>(null)
   const [telegramInvitation, setTelegramInvitation] = useState(false)
   useEffect(() => {
     const vkSigned = hasVkLaunchData()
     if (vkSigned) reportVkLaunchStage('vk-react-mounted')
+    const webRequested = new URLSearchParams(window.location.search).get('web') === '1'
+    // Real signed Telegram WebView always wins over a browser URL parameter.
+    // This avoids regression of auto-open/initData while the shared actor
+    // finances are still separated.
+    // Cached browser_* / webstudio_* credentials are NOT a native WebView.
+    // Only a live Telegram WebApp bridge or actual Telegram launch markers
+    // outrank an explicit signed-browser route.
+    const nativeLaunch = Boolean(window.Telegram?.WebApp?.initData)
+      || /(?:^|[?&#])tgWebApp(?:Data|Version|Platform)=/.test(window.location.search + window.location.hash)
     setPlatform(vkSigned ? 'vk'
-      : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required' : 'telegram')
+      : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required'
+      : webRequested && !nativeLaunch ? 'browser' : 'telegram')
     if (!vkSigned && process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') {
       setTelegramInvitation(Boolean(incomingAccountLink()))
     }
@@ -138,6 +149,7 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
       <VkLoginLink />
     </main>
   }
+  if (platform === 'browser') return <BrowserAccountWorkspace />
   if (platform === 'telegram' && telegramInvitation) {
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-4 p-4" aria-label="Подтверждение Telegram">
       <h1 className="text-xl font-semibold">Привязка Telegram и ВКонтакте</h1>

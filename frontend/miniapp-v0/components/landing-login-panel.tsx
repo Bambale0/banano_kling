@@ -396,11 +396,114 @@ function TelegramOIDCLogin() {
   )
 }
 
+/** Only allow bounded referral/startapp hints to cross website OAuth. */
+export function standaloneWebStudioDestination(search: string): string {
+  const original = new URLSearchParams(search)
+  const query = new URLSearchParams({ web: '1' })
+  for (const key of ['ref', 'startapp']) {
+    const value = original.get(key)
+    if (value && /^[A-Za-z0-9_-]{1,120}$/.test(value)) query.set(key, value)
+  }
+  return '/mini-app/?' + query.toString()
+}
+
+/**
+ * Email OTP responds with a server-approved same-origin continuation.
+ * Re-enter /login so the existing authenticated actor decides whether
+ * to open a linked studio or an independent web workspace. Do not trust
+ * absolute destinations or arbitrary local routes as redirects.
+ */
+export function emailVerificationDestination(raw: string | undefined): string {
+  if (!raw || raw.length > 2048 || !raw.startsWith('/')
+      || /[\\#\u0000-\u0020]/.test(raw) || raw.startsWith('//')) return '/login'
+  try {
+    const target = new URL(raw, 'https://local.invalid')
+    if (target.origin !== 'https://local.invalid'
+        || !['/login', '/login/', '/mini-app/'].includes(target.pathname)) return '/login'
+    return raw
+  } catch {
+    return '/login'
+  }
+}
+
 type YandexConfig = {
   ok?: boolean
   authenticated?: boolean
   studio_ready?: boolean
-  providers?: { yandex?: boolean }
+  providers?: { yandex?: boolean; google?: boolean; email?: boolean }
+}
+
+export function EmailCodeLogin() {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [challenge, setChallenge] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const start = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy) return
+    setBusy(true); setMessage('')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/email/start', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: email.trim(), next: '/login' + window.location.search }),
+      })
+      const data = await response.json() as { ok?: boolean; challenge_id?: string; message?: string }
+      if (!response.ok || !data.ok || !data.challenge_id) throw new Error('start_failed')
+      setChallenge(data.challenge_id)
+      setMessage(data.message || 'Введите шестизначный код из письма.')
+    } catch {
+      setMessage('Не удалось отправить код. Проверьте адрес или попробуйте позже.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const verify = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy || !challenge || !/^[0-9]{6}$/.test(code)) return
+    setBusy(true); setMessage('')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/email/verify', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ challenge_id: challenge, code }),
+      })
+      const data = await response.json() as { ok?: boolean; redirect?: string }
+      if (!response.ok || !data.ok) throw new Error('invalid_code')
+      window.location.replace(emailVerificationDestination(data.redirect))
+    } catch {
+      setMessage('Код неверен или истёк. Проверьте письмо или запросите новый код.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <div className="space-y-3 border-t border-[#937042]/40 pt-4">
+    {!challenge ? <form onSubmit={event => void start(event)} className="space-y-2">
+      <label htmlFor="neuromix-email" className="block text-xs text-[#d7c9b5]">Войти по электронной почте</label>
+      <input id="neuromix-email" type="email" autoComplete="email" required value={email}
+        onChange={event => setEmail(event.target.value)} maxLength={254}
+        className="min-h-11 w-full border border-[#b38c55]/60 bg-transparent px-3 text-sm text-white" />
+      <button type="submit" disabled={busy} className="min-h-11 w-full border border-[#d4a34b]/60 text-sm text-[#f1c87b] disabled:opacity-50">
+        {busy ? 'Отправляем…' : 'Получить код'}
+      </button>
+    </form> : <form onSubmit={event => void verify(event)} className="space-y-2">
+      <label htmlFor="neuromix-email-code" className="block text-xs text-[#d7c9b5]">Код из письма</label>
+      <input id="neuromix-email-code" type="text" inputMode="numeric" pattern="[0-9]{6}" autoComplete="one-time-code"
+        required maxLength={6} value={code} onChange={event => setCode(event.target.value)}
+        className="min-h-11 w-full border border-[#b38c55]/60 bg-transparent px-3 text-sm text-white" />
+      <button type="submit" disabled={busy || !/^[0-9]{6}$/.test(code)}
+        className="min-h-11 w-full border border-[#d4a34b]/60 text-sm text-[#f1c87b] disabled:opacity-50">
+        {busy ? 'Проверяем…' : 'Подтвердить код'}
+      </button>
+      <button type="button" onClick={() => { setChallenge(''); setCode(''); setMessage('') }}
+        className="w-full text-xs text-[#c1ae8e] underline">Запросить новый код</button>
+    </form>}
+    {message ? <p role="status" className="text-xs text-[#e8c17b]">{message}</p> : null}
+  </div>
 }
 
 function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticated: boolean) => void }) {
@@ -419,6 +522,13 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
         if (!controller.signal.aborted) {
           setConfig(data)
           onSessionDetected(Boolean(data.authenticated))
+        }
+        // A browser-only account is a legitimate identity. Do not force
+        // Telegram linking or mint a Telegram-shaped ID on this path.
+        if (data.authenticated && !data.studio_ready
+          && new URLSearchParams(window.location.search).get('link') !== 'telegram') {
+          window.location.replace(standaloneWebStudioDestination(window.location.search))
+          return
         }
         if (data.authenticated && data.studio_ready) {
           const studio = await fetch('/mini-app/api/web-auth/studio', {
@@ -440,14 +550,14 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
     return () => controller.abort()
   }, [onSessionDetected])
 
-  if (!config?.providers?.yandex && !config?.authenticated) return null
+  if (!config?.providers?.yandex && !config?.providers?.google && !config?.providers?.email && !config?.authenticated) return null
   if (config.authenticated && !config.studio_ready) {
     return (
       <section className="space-y-3 border border-[#d5af60]/40 bg-[#d5af60]/[0.055] p-4" aria-label="Вход через Яндекс">
-        <p className="font-semibold text-[#f3d392]">Вход через Яндекс подтверждён</p>
+        <p className="font-semibold text-[#f3d392]">Вход в веб-аккаунт подтверждён</p>
         <p className="text-sm text-[#ddd6c8]">
-          Чтобы пользоваться генерациями и своим балансом, один раз свяжи этот аккаунт с Telegram.
-          После привязки ты сможешь входить через Яндекс.
+          Веб-аккаунт работает самостоятельно. Связать Telegram можно добровольно,
+          если нужно открыть старые генерации и существующую Telegram-студию.
         </p>
         <LegacyTelegramWidget linkYandex />
         {error ? <p role="status" className="text-xs text-amber-300">{error}</p> : null}
@@ -456,8 +566,8 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
   }
   if (config.authenticated) return <p role="status" className="text-sm text-[#d7b56f]">Открываем студию… {error}</p>
 
-  return (
-    <a
+  return <div className="space-y-3">
+    {config.providers?.yandex ? <a
       href="/mini-app/api/web-auth/start/yandex"
       onClick={event => {
         event.preventDefault()
@@ -465,10 +575,18 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
           encodeURIComponent('/login' + window.location.search))
       }}
       className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
-    >
-      Продолжить с Яндекс ID
-    </a>
-  )
+    >Продолжить с Яндекс ID</a> : null}
+    {config.providers?.google ? <a
+      href="/mini-app/api/web-auth/start/google"
+      onClick={event => {
+        event.preventDefault()
+        window.location.assign('/mini-app/api/web-auth/start/google?next=' +
+          encodeURIComponent('/login' + window.location.search))
+      }}
+      className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
+    >Продолжить с Google</a> : null}
+    {config.providers?.email ? <EmailCodeLogin /> : null}
+  </div>
 }
 
 export function LoginPanel() {
@@ -512,7 +630,7 @@ export function LoginPanel() {
               Продолжить создавать.
             </CardTitle>
             <CardDescription className="max-w-xs text-sm leading-relaxed text-[#b9b6af]">
-              Нажми кнопку и подтверди вход в Telegram — и можно снова создавать.
+              Выберите удобный способ входа. Telegram для веб-аккаунта необязателен.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
