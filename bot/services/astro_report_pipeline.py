@@ -213,7 +213,8 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
         place = selected["birth_place"]
         if (
             not isinstance(place, dict)
-            or set(place) != {"name", "country_code", "place_id", "timezone", "source"}
+            or set(place) != {"name", "country_code", "place_id", "latitude",
+                              "longitude", "timezone", "source"}
             or not isinstance(place.get("name"), str)
             or not 1 <= len(place["name"]) <= 120
             or any(ord(ch) < 32 or ord(ch) == 92 or ch in "<>{}" for ch in place["name"])
@@ -221,6 +222,10 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
             or not re.fullmatch(r"[A-Z]{2}", place["country_code"])
             or type(place.get("place_id")) is not int
             or not 1 <= place["place_id"] <= 2_147_483_647
+            or type(place.get("latitude")) not in (float, int)
+            or not -90 <= place["latitude"] <= 90
+            or type(place.get("longitude")) not in (float, int)
+            or not -180 <= place["longitude"] <= 180
             or not isinstance(place.get("timezone"), str)
             or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_+./-]{0,79}", place["timezone"])
             or place.get("source") != "GeoNames"
