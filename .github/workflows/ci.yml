@@ -11,9 +11,10 @@ permissions:
   statuses: write
 
 concurrency:
-  # v3 isolates new checks from a stuck v2 PR run while preserving
-  # cancel-in-progress and all required CI jobs and release gates.
-  group: ci-v3-${{ github.workflow }}-${{ github.ref }}
+  # A stale job for an older PR revision must not block current required
+  # checks. Keep concurrency and cancellation for reruns of the SAME SHA,
+  # with all required lint, regression, browser and Docker gates unchanged.
+  group: ci-v4-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 env:
