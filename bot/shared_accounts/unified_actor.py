@@ -36,7 +36,10 @@ class AccountActor:
     def can_access_legacy_telegram_wallet(self) -> bool:
         # Merely linking an identity never authorizes a web API to debit the
         # legacy Telegram wallet, or to display the sum of two wallets.
-        return self.auth_channel == "telegram"
+        # The legacy Mini App pays from the verified Telegram legacy wallet
+        # even when entered through a linked website session. The trusted
+        # issuing credential determines the actual financial authority.
+        return self.wallet_authority == "telegram_legacy"
 
     def payload(self) -> dict:
         return {
@@ -74,7 +77,9 @@ async def resolve_account_actor(request, *, init_data: str | None = None) -> Acc
             return AccountActor(
                 account_id=account_id, auth_channel="web",
                 telegram_id=verified.external_id,
-                wallet_authority="web_live", telegram_linked=True,
+                # This token enters the unchanged Telegram-backed legacy
+                # studio: its paid handlers use users.credits, not web_wallet.
+                wallet_authority="telegram_legacy", telegram_linked=True,
             )
         if query_id.startswith("browser_"):
             browser = await resolve_account_actor(request)

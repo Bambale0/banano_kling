@@ -10,7 +10,7 @@ The safe backward-compatible change introduces a new webstudio_ query_id (the ol
 
 Issuance: web_auth_studio and web_auth.telegram_login verify the website cookie and Telegram identity before storing the token. A confirmed account owner receives the signed webstudio_ initData. Any lost/revoked session at issuance fails HTTP 401.
 
-Consumption: miniapp._get_user_context verifies the HMAC then verifies the webstudio_ DB binding BEFORE doing legacy user initialization, payment or generation. shared_accounts.unified_actor reports new webstudio_ credentials as web_live, never telegram_legacy, after validating the DB binding. Any linked identity removed or parent cookie logged out immediately invalidates the studio credential. A wrong account/Telegram ID fails.
+Consumption: miniapp._get_user_context verifies the HMAC then verifies the webstudio_ DB binding BEFORE doing legacy user initialization, payment or generation. shared_accounts.unified_actor reports browser-initiated webstudio_ credentials as auth_channel=web but wallet_authority=telegram_legacy **only for this verified linked legacy Mini App**: the old paid handlers charge users.credits. A plain website cookie still reports web_live. This prevents false attribution of actual billing source without allowing a different Telegram identity to impersonate the linked account. Any linked identity removed or parent cookie logged out immediately invalidates the studio credential. A wrong account/Telegram ID fails.
 
 ## Scope and deliberately retained compatibility
 
