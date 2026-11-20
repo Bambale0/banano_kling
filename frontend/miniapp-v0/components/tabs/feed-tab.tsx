@@ -226,9 +226,11 @@ export function FeedTab() {
   const shareRequest = useRef(0)
   useEffect(() => () => { shareRequest.current += 1 }, [])
   const [previewItem, setPreviewItem] = useState<FeedItem | null>(null)
+  const [previewMediaFailedId, setPreviewMediaFailedId] = useState<number | null>(null)
   const dismissPreview = useCallback(() => {
     repeatRequest.current += 1
     setBusyId(null)
+    setPreviewMediaFailedId(null)
     setPreviewItem(null)
   }, [])
   useEffect(() => {
@@ -374,8 +376,9 @@ export function FeedTab() {
     })
     if (feedDeepLink.action === 'preview') {
       repeatRequest.current += 1
-    setBusyId(null)
-    setPreviewItem(feedDeepLink.item)
+      setBusyId(null)
+      setPreviewMediaFailedId(null)
+      setPreviewItem(feedDeepLink.item)
     }
     consumeFeedDeepLink()
   }, [consumeFeedDeepLink, feedDeepLink, isLive])
@@ -761,7 +764,7 @@ export function FeedTab() {
                   <div className="relative overflow-hidden bg-secondary/50">
                     <button
                       type="button"
-                      onClick={() => { repeatRequest.current += 1; setBusyId(null); setPreviewItem(item) }}
+                      onClick={() => { repeatRequest.current += 1; setBusyId(null); setPreviewMediaFailedId(null); setPreviewItem(item) }}
                       className="group block w-full text-left"
                       aria-label={item.gen_type === 'video' ? 'Открыть видео' : 'Открыть фото'}
                     >
@@ -945,8 +948,14 @@ export function FeedTab() {
           >
             <X className="h-5 w-5" />
           </button>
-          {isHttpUrl(feedMediaUrl(previewItem.result_url)) ? (
-            previewItem.gen_type === 'video' ? (
+          {previewMediaFailedId === previewItem.id || !isHttpUrl(feedMediaUrl(previewItem.result_url)) ? (
+            <div role="status" className="flex max-w-sm flex-col items-center gap-3 px-6 text-center text-sm text-muted-foreground">
+              <ImageOff className="h-8 w-8" aria-hidden="true" />
+              <span>{previewItem.gen_type === 'video'
+                ? 'Видео не загрузилось, но его можно повторить.'
+                : 'Изображение не загрузилось, но его можно повторить.'}</span>
+            </div>
+          ) : previewItem.gen_type === 'video' ? (
               <video
                 src={feedMediaUrl(previewItem.result_url)}
                 className={cn(
@@ -959,7 +968,7 @@ export function FeedTab() {
                 preload="auto"
                 onError={() => {
                   handleMediaError(previewItem)
-                  dismissPreview()
+                  setPreviewMediaFailedId(previewItem.id)
                 }}
               />
             ) : (
@@ -968,19 +977,14 @@ export function FeedTab() {
                 alt=""
                 onError={() => {
                   handleMediaError(previewItem)
-                  dismissPreview()
+                  setPreviewMediaFailedId(previewItem.id)
                 }}
                 className={cn(
                   'max-h-full w-auto max-w-full object-contain',
                   previewBlurActive && 'blur-xl'
                 )}
               />
-            )
-          ) : (
-            <div className="flex h-48 w-full items-center justify-center text-muted-foreground">
-              <ImageOff className="h-8 w-8" />
-            </div>
-          )}
+            )}
           {previewBlurActive && previewItem ? (
             <button
               type="button"
