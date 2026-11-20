@@ -1122,18 +1122,6 @@ try {
       await (recipeMode
         ? page.getByText('Референсы тренда', { exact: true })
         : page.getByTestId('genjutsu-operation-grid')).waitFor()
-      // The actual studio close button must stay below Telegram's native Back/X.
-      const studioHeaderTop = await region.evaluate((element) => {
-        const root = document.documentElement.style
-        root.setProperty('--tg-safe-area-inset-top', '24px')
-        root.setProperty('--tg-content-safe-area-inset-top', '56px')
-        const top = element.querySelector('header')?.getBoundingClientRect().top ?? -1
-        root.removeProperty('--tg-safe-area-inset-top')
-        root.removeProperty('--tg-content-safe-area-inset-top')
-        return top
-      })
-      assert.ok(studioHeaderTop >= 79,
-        `Genjutsu close overlaps Telegram native controls at ${width}px (${studioHeaderTop})`)
       // Wait for the open animation to finish before measuring the viewport.
       await page.waitForFunction(() => {
         const dialog = document.querySelector('[role="dialog"]')
@@ -1142,6 +1130,27 @@ try {
         return Math.abs(rect.x) < 0.1 && Math.abs(rect.width - innerWidth) < 0.1
           && getComputedStyle(dialog).opacity === '1'
       })
+      // The actual studio close button must stay below Telegram's native Back/X.
+      const studioHeaderGeometry = await region.evaluate((element) => {
+        const root = document.documentElement.style
+        root.setProperty('--tg-safe-area-inset-top', '24px')
+        root.setProperty('--tg-content-safe-area-inset-top', '56px')
+        const dialog = element.closest('[role="dialog"]')
+        const css = dialog ? getComputedStyle(dialog) : null
+        const geometry = {
+          top: element.querySelector('header')?.getBoundingClientRect().top ?? -1,
+          dialogPaddingTop: css?.paddingTop ?? null,
+          dialogClassSafe: Boolean(dialog?.classList.contains('genjutsu-dialog-scrollport')),
+          safeTop: getComputedStyle(document.documentElement).getPropertyValue('--miniapp-safe-top'),
+          tgSafeTop: root.getPropertyValue('--tg-safe-area-inset-top'),
+          tgContentSafeTop: root.getPropertyValue('--tg-content-safe-area-inset-top'),
+        }
+        root.removeProperty('--tg-safe-area-inset-top')
+        root.removeProperty('--tg-content-safe-area-inset-top')
+        return geometry
+      })
+      assert.ok(studioHeaderGeometry.top >= 79,
+        `Genjutsu close overlaps Telegram native controls at ${width}px (${JSON.stringify(studioHeaderGeometry)})`)
       assert.equal(await region.evaluate(el => el.scrollWidth <= el.clientWidth), true,
         `Genjutsu ${recipeMode ? 'recipe' : 'editor'} must fit ${width}px`)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
