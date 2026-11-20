@@ -246,6 +246,81 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
     return selected
 
 
+def _verified_report_facts(plan: ReportPlan, facts: dict) -> dict[str, Any]:
+    """Keep the original v2 HMAC catalog immutable; bind new lunar fields in v3.
+
+    Lunar ingresses and city originate in the trusted astronomy/GeoNames
+    calculation. Older signed lunar jobs intentionally retain their historical
+    catalog so a prompt upgrade cannot invalidate their encrypted checkpoints.
+    """
+    selected = _fact_catalog(facts)
+    if plan.service_id != "lunar" or not plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        return selected
+
+    place = facts.get("calendar_place")
+    if place is not None:
+        if (
+            not isinstance(place, dict)
+            or set(place) != {"name", "country_code", "place_id", "timezone", "source"}
+            or not isinstance(place.get("name"), str)
+            or not 1 <= len(place["name"]) <= 120
+            or any(ord(char) < 32 or char in "<>{}\\"
+                   for char in place["name"])
+            or not isinstance(place.get("country_code"), str)
+            or re.fullmatch(r"[A-Z]{2}", place["country_code"]) is None
+            or type(place.get("place_id")) is not int
+            or not 1 <= place["place_id"] <= 2_147_483_647
+            or not isinstance(place.get("timezone"), str)
+            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_+./-]{0,79}",
+                            place["timezone"]) is None
+            or place["source"] != "GeoNames"
+            or place["timezone"] != facts.get("timezone")
+        ):
+            raise AstroReportError("Некорректные проверенные данные города календаря.")
+        selected["calendar_place"] = place
+
+    ingresses = facts.get("ingresses")
+    if ingresses is not None:
+        expected_keys = {
+            "from_sign", "to_sign", "longitude_deg", "at_utc",
+            "at_local", "local_date",
+        }
+        if not isinstance(ingresses, list) or len(ingresses) > 20:
+            raise AstroReportError("Некорректные рассчитанные переходы Луны.")
+        for ingress in ingresses:
+            if (
+                not isinstance(ingress, dict)
+                or set(ingress) != expected_keys
+                or type(ingress["longitude_deg"]) not in (int, float)
+                or not 0 <= ingress["longitude_deg"] < 360
+                or any(
+                    not isinstance(ingress.get(key), str)
+                    or not 1 <= len(ingress[key]) <= 64
+                    or any(ord(c) < 32 or c in "<>{}" for c in ingress[key])
+                    for key in ("from_sign", "to_sign", "at_utc",
+                                "at_local", "local_date")
+                )
+                or re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}",
+                                ingress["local_date"]) is None
+            ):
+                raise AstroReportError("Некорректные рассчитанные переходы Луны.")
+        selected["ingresses"] = ingresses
+
+    for key in ("lunar_day_convention", "reference_time"):
+        value = facts.get(key)
+        if value is not None:
+            if (
+                not isinstance(value, str)
+                or not 1 <= len(value) <= 250
+                or any(ord(c) < 32 or c in "<>{}" for c in value)
+            ):
+                raise AstroReportError("Некорректное описание лунных расчётов.")
+            selected[key] = value
+    return selected
+
+
 def report_fingerprint(
     *,
     owner_id: int,
@@ -278,7 +353,7 @@ def report_fingerprint(
     ).encode("utf-8")
     payload = {"owner": owner_id, "service": plan.service_id, "plan": plan.version,
                "policy_digest": hashlib.sha256(policy).hexdigest(),
-               "facts": _fact_catalog(facts)}
+               "facts": _verified_report_facts(plan, facts)}
     # Legacy jobs keep their original fingerprint. New reports use a per-job
     # namespace so identical birth facts never reuse another report/checkpoint.
     if generation_id is not None:
@@ -477,7 +552,7 @@ async def compose_report(
         owner_id=owner_id, plan=plan, facts=facts, secret=secret,
         generation_id=generation_id,
     )
-    available = _fact_catalog(facts)
+    available = _verified_report_facts(plan, facts)
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     )
