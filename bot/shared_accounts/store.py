@@ -30,6 +30,72 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+async def _ensure_identity_account(db, identity: VerifiedIdentity) -> str:
+    """One verified platform identity maps to exactly one shared account.
+
+    The caller holds the account transaction. Never reads/writes money.
+    """
+    row = await (await db.execute(
+        'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
+        (identity.platform, identity.external_id),
+    )).fetchone()
+    if row:
+        account_id = row[0]
+    else:
+        candidate = uuid4().hex
+        await db.execute('INSERT INTO shared_accounts(id) VALUES (?)', (candidate,))
+        inserted = await db.execute(
+            'INSERT INTO shared_account_identities(platform, external_id, account_id) VALUES (?, ?, ?) '
+            'ON CONFLICT(platform, external_id) DO NOTHING',
+            (identity.platform, identity.external_id, candidate),
+        )
+        if inserted.rowcount == 1:
+            account_id = candidate
+        else:
+            # Another transaction won the same verified external ID.
+            await db.execute('DELETE FROM shared_accounts WHERE id = ?', (candidate,))
+            row = await (await db.execute(
+                'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
+                (identity.platform, identity.external_id),
+            )).fetchone()
+            account_id = row[0]
+    row = await (await db.execute('SELECT status FROM shared_accounts WHERE id = ?', (account_id,))).fetchone()
+    if not row or row[0] != 'active':
+        raise PermissionError('Account is not available')
+    if identity.platform == 'telegram':
+        legacy = await (await db.execute('SELECT id FROM users WHERE telegram_id = ?', (identity.external_id,))).fetchone()
+        if legacy:
+            await db.execute(
+                'INSERT INTO shared_account_legacy_links(source, legacy_user_id, account_id) VALUES (?, ?, ?) '
+                'ON CONFLICT(source, legacy_user_id) DO NOTHING', ('telegram', legacy[0], account_id),
+            )
+    return account_id
+
+
+async def resolve_verified_identity_account(identity: VerifiedIdentity) -> str:
+    """Idempotently provision a verified Telegram actor, without login tokens.
+
+    Uses the same mapping as create_session and never creates a legacy wallet,
+    paid job, fake Telegram ID or an independent second account.
+    """
+    async with db_backend.connect() as db:
+        await ensure_schema(db)
+        if db_backend.is_postgres():
+            lock = int.from_bytes(hashlib.sha256(
+                f'identity:{identity.platform}:{identity.external_id}'.encode()
+            ).digest()[:8], 'big') % (2**63)
+            await db.execute('SELECT pg_advisory_xact_lock(?)', (lock,))
+        else:
+            await db.execute('BEGIN IMMEDIATE')
+        try:
+            account_id = await _ensure_identity_account(db, identity)
+            await db.commit()
+            return account_id
+        except Exception:
+            await db.rollback()
+            raise
+
+
 async def create_session(identity: VerifiedIdentity, ttl_seconds: int, policy_revision: int) -> tuple[Account, str, int]:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
@@ -45,40 +111,7 @@ async def create_session(identity: VerifiedIdentity, ttl_seconds: int, policy_re
                 'DELETE FROM shared_account_sessions WHERE expires_at_epoch <= ?',
                 (now,),
             )
-            row = await (await db.execute(
-                'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
-                (identity.platform, identity.external_id),
-            )).fetchone()
-            if row:
-                account_id = row[0]
-            else:
-                candidate = uuid4().hex
-                await db.execute('INSERT INTO shared_accounts(id) VALUES (?)', (candidate,))
-                inserted = await db.execute(
-                    'INSERT INTO shared_account_identities(platform, external_id, account_id) VALUES (?, ?, ?) '
-                    'ON CONFLICT(platform, external_id) DO NOTHING',
-                    (identity.platform, identity.external_id, candidate),
-                )
-                if inserted.rowcount == 1:
-                    account_id = candidate
-                else:
-                    # Another transaction won the same verified external ID.
-                    await db.execute('DELETE FROM shared_accounts WHERE id = ?', (candidate,))
-                    row = await (await db.execute(
-                        'SELECT account_id FROM shared_account_identities WHERE platform = ? AND external_id = ?',
-                        (identity.platform, identity.external_id),
-                    )).fetchone()
-                    account_id = row[0]
-            row = await (await db.execute('SELECT status FROM shared_accounts WHERE id = ?', (account_id,))).fetchone()
-            if not row or row[0] != 'active':
-                raise PermissionError('Account is not available')
-            if identity.platform == 'telegram':
-                legacy = await (await db.execute('SELECT id FROM users WHERE telegram_id = ?', (identity.external_id,))).fetchone()
-                if legacy:
-                    await db.execute(
-                        'INSERT INTO shared_account_legacy_links(source, legacy_user_id, account_id) VALUES (?, ?, ?) '
-                        'ON CONFLICT(source, legacy_user_id) DO NOTHING', ('telegram', legacy[0], account_id),
-                    )
+            account_id = await _ensure_identity_account(db, identity)
             await db.execute(
                 'INSERT INTO shared_account_sessions '
                 '(token_hash, account_id, platform, external_id, created_at_epoch, expires_at_epoch, policy_revision) VALUES (?, ?, ?, ?, ?, ?, ?)',

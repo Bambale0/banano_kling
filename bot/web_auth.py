@@ -358,6 +358,40 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
     return response
 
 
+async def web_auth_actor(request: web.Request) -> web.Response:
+    """One verified account identity for both app launch channels (read-only).
+
+    The reported financial authority is intentionally still platform-scoped.
+    It must not be interpreted as consent to migrate or merge wallets.
+    """
+    from bot.shared_accounts.errors import AuthenticationError
+    from bot.shared_accounts.unified_actor import resolve_account_actor
+
+    if request.method == "POST":
+        if not _valid_browser_origin(request):
+            return _json({"ok": False, "error": "origin_rejected"}, 403)
+        if request.content_length and request.content_length > 16384:
+            return _json({"ok": False, "error": "request_too_large"}, 413)
+        try:
+            body = await request.json()
+        except (ValueError, TypeError):
+            return _json({"ok": False, "error": "invalid_json"}, 400)
+        if not isinstance(body, dict) or set(body) != {"init_data"} or not isinstance(body["init_data"], str):
+            return _json({"ok": False, "error": "invalid_payload"}, 400)
+        init_data = body["init_data"]
+    else:
+        init_data = None
+
+    try:
+        actor = await resolve_account_actor(request, init_data=init_data)
+    except (AuthenticationError, ValueError):
+        return _json({"ok": False, "error": "session_required"}, 401)
+    except PermissionError:
+        return _json({"ok": False, "error": "account_unavailable"}, 403)
+
+    return _json(actor.payload())
+
+
 async def web_auth_config(request: web.Request) -> web.Response:
     await _ensure_tables()
     account_id = await _session_account(request)
@@ -599,6 +633,8 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     """Register exact endpoints before /mini-app/api/{tail:.*}."""
     root = miniapp_root + "/api/web-auth"
     app.router.add_get(root + "/config", web_auth_config)
+    app.router.add_get(root + "/actor", web_auth_actor)
+    app.router.add_post(root + "/actor", web_auth_actor)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)
