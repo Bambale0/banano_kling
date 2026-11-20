@@ -36,7 +36,10 @@ class AccountActor:
     def can_access_legacy_telegram_wallet(self) -> bool:
         # Merely linking an identity never authorizes a web API to debit the
         # legacy Telegram wallet, or to display the sum of two wallets.
-        return self.auth_channel == "telegram"
+        # The legacy Mini App pays from the verified Telegram legacy wallet
+        # even when entered through a linked website session. The trusted
+        # issuing credential determines the actual financial authority.
+        return self.wallet_authority == "telegram_legacy"
 
     def payload(self) -> dict:
         return {
@@ -67,6 +70,17 @@ async def resolve_account_actor(request, *, init_data: str | None = None) -> Acc
         # Require the still-active browser cookie AND its verified TG identity,
         # so a signed bridge cannot outlive logout or cross another account.
         query_id = dict(parse_qsl(init_data, keep_blank_values=True)).get("query_id", "")
+        if query_id.startswith("webstudio_"):
+            from bot.web_auth import verify_studio_bridge
+
+            account_id = await verify_studio_bridge(query_id, verified.external_id)
+            return AccountActor(
+                account_id=account_id, auth_channel="web",
+                telegram_id=verified.external_id,
+                # This token enters the unchanged Telegram-backed legacy
+                # studio: its paid handlers use users.credits, not web_wallet.
+                wallet_authority="telegram_legacy", telegram_linked=True,
+            )
         if query_id.startswith("browser_"):
             browser = await resolve_account_actor(request)
             if not browser.telegram_linked:
