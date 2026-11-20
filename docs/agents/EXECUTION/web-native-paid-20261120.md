@@ -39,7 +39,7 @@ The API inventory derives dynamically from bot.miniapp.IMAGE_MODELS and
 bot.miniapp.VIDEO_MODELS (24 entries). An enabled flag and explicit
 unavailable_reason distinguish tested web adapters from unsupported entries.
 
-Current adapter dispatch set is **16 of 24**, pending real provider smoke:
+Current adapter dispatch set is **20 of 24**, pending real provider smoke:
 
 Images: Nano Banana 2 Lite, Seedream 5.5 text/edit, Seedream 5 Pro,
 Nano Banana Pro, Nano Banana 2, Seedream 4.5 Edit, GPT Image 2,
@@ -48,9 +48,13 @@ Wan 2.7 Pro (single-output 2K default), Grok Imagine I2I.
 Videos: Kling 3.0 Pro/Standard, Kling 2.5 Turbo Pro, Grok Imagine Video,
 Grok Imagine 1.5, Seedance 2.0, Veo 3.1 Fast.
 
+Additional video adapters: Kling Motion Control 2.6 / 3.0 and
+Kling Avatar Standard / Pro. Motion requires one image plus one video;
+Avatar requires one image plus one audio. All are typed owner-bound
+S3 uploads and server-side Motion quality pricing.
+
 Unsupported pending full pricing/recipe/delivery:
-Seedream 5.5 layers, Wan 3.0 / Wan 3.0 Prime, Gemini Omni,
-Kling Motion Control 2.6 / 3.0, Kling Avatar Standard / Pro.
+Seedream 5.5 layers, Wan 3.0 / Wan 3.0 Prime, Gemini Omni.
 Their names appear in the catalog, but enabled:false prevents purchases.
 
 For quality, reference count and duration, browser UI calls the
@@ -74,3 +78,45 @@ The automated isolated database and browser tests cover checkout idempotency, re
 - Browser E2E at mobile 390px and desktop 1440px: passed.
 - Focused Ruff: passed.
 - Production untouched; both feature flags remain disabled.
+
+
+## Additional typed multimedia references and release gates
+
+- Full catalog: 24 original entries; 20 with implemented native adapters,
+  4 explicitly disabled in web interface.
+- Typed video/audio reference upload: mime verified by file signature,
+  memory size bounded per media type, account ownership and kind-scoped
+  lookups, no client-provided provider URLs.
+- WEB_GENERATION_VIDEO_REFERENCE_MAX_BYTES defaults to 33554432 (max 64MiB);
+  WEB_GENERATION_AUDIO_REFERENCE_MAX_BYTES defaults to 16777216 (max 32MiB).
+- Motion Control 2.6/3.0 require one owned image and one owned video; quality
+  follows original motion_modes and live get_video_cost_with_quality.
+- Kling Avatar Standard/Pro require one owned image and one owned audio.
+- Browser forms and server quote include typed refs and the proper cost
+  before reserving any wallet funds. All adapters have isolated tests.
+- Real provider paid smoke is still required before enabling these routes.
+- Remaining 4 products not yet live-ready:
+  Seedream 5.5 layer decomposition (multi-image output, variable billing),
+  Wan 3.0 & Prime (multimodal recipes and quality-specific lifecycle),
+  Gemini Omni (video/audio-ID/character-ID distinct result schemas).
+  They must remain disabled until full safe recipe, billing, delivery support.
+
+
+## Follow-up: provider contract and pricing guard (verified locally)
+
+- Veo 3.1 Fast provider supports only 4/6/8 seconds, though older UI
+  inventory also exposed 2/10. Independent web quotes and forms now restrict
+  this model to 4/6/8. No silent clamping to another billable duration.
+- Veo first-and-last-frame scenario is limited to two owned images, rather
+  than accepting extra client refs that would be silently ignored.
+- Seedream 4.5 Edit provider truncates input beyond five refs; web requires
+  at most five and maps 2K to provider basic, 4K to provider high.
+- Typed media image/video/audio uploads and account-scoped task reservations
+  are tested end-to-end for Motion Control and Avatar in the isolated runtime.
+- Full focused regression including pre-existing Telegram/Lava paths:
+  **214 backend tests passed**, 21 frontend tests passed, optimized Next.js
+  build successful and Playwright browser E2E successful.
+- The full GitHub safe regression previously failed only on the static
+  login guard assertion in test_public_landing. Login now checks BOTH HTTP
+  success and verified payload after the legacy fallback, and targeted
+  public landing regressions pass. Rerun the full CI on the new commit.

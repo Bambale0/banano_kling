@@ -54,6 +54,8 @@ _IMAGE_MODELS = {
 _VIDEO_MODELS = {
     "v3_std", "v3_pro", "v26_pro",
     "grok_imagine", "grok_imagine_v15", "seedance_2", "veo3_fast",
+    "motion_control_v26", "motion_control_v30",
+    "avatar_std", "avatar_pro",
 }
 _POLL_INTERVAL_SECONDS = 8
 _SUBMIT_TIMEOUT_SECONDS = 240
@@ -86,13 +88,44 @@ def _model_meta(model: str) -> tuple[str, dict]:
     raise ValueError("Unknown model in the current Mini App catalog")
 
 
+def _web_durations(model: str, meta: dict) -> list[int]:
+    original = list(meta.get("durations") or [5])
+    if model == "veo3_fast":
+        from bot.services.veo_service import VEO_SUPPORTED_DURATIONS
+
+        # Veo's API normalizes unsupported values to a *different* duration.
+        # Never charge for 2/10 seconds and silently generate 4/8 instead.
+        original = [duration for duration in original if duration in VEO_SUPPORTED_DURATIONS]
+    return original
+
+
+def _web_max_image_refs(model: str, meta: dict) -> int:
+    from bot.web_references import _max_references
+
+    original = int(meta.get("max_references", meta.get("max_image_references", 0)))
+    if model in ("motion_control_v26", "motion_control_v30",
+                 "avatar_std", "avatar_pro", "grok_imagine_v15", "v26_pro"):
+        original = min(1, original if original else 1)
+    elif model == "seedream_edit":
+        from bot.services.seedream_service import seedream_service
+
+        original = min(original, seedream_service.MAX_REFERENCE_IMAGES)
+    elif model == "veo3_fast":
+        # FIRST_AND_LAST_FRAMES_2_VIDEO accepts at most two frames.
+        original = min(original, 2)
+    return min(_max_references(), original)
+
+
 def _quality_value(model: str, meta: dict, quality: str | None) -> str:
-    choices = meta.get("qualities") or []
+    choices = meta.get("qualities") or meta.get("motion_modes") or []
     if not choices:
         if quality:
             raise ValueError("Quality option is not supported for this model")
         return ""
-    selected = quality or ("2K" if "2K" in choices else choices[0])
+    selected = quality or (
+        "2K" if "2K" in choices else
+        "720p" if "720p" in choices else choices[0]
+    )
     if selected not in choices:
         raise ValueError("Unsupported quality for this model")
     return selected
@@ -117,7 +150,13 @@ def _price(media_type: str, model: str, duration: int,
             raise ValueError("Model is not enabled for independent browser generation")
         if duration not in meta.get("durations", ()):
             raise ValueError("Unsupported duration")
-        raw = preset_manager.get_video_cost(model, duration)
+        if model in ("motion_control_v26", "motion_control_v30"):
+            selected_quality = _quality_value(model, meta, quality)
+            raw = preset_manager.get_video_cost_with_quality(
+                model, duration, selected_quality,
+            )
+        else:
+            raw = preset_manager.get_video_cost(model, duration)
     amount = Decimal(str(raw))
     if not amount.is_finite() or amount <= 0:
         raise ValueError("Invalid or missing live tariff")
@@ -127,7 +166,6 @@ def _price(media_type: str, model: str, duration: int,
 
 def _models() -> list[dict]:
     from bot import miniapp
-    from bot.web_references import _max_references
 
     all_models = []
     for media_type, inventory in (
@@ -141,14 +179,9 @@ def _models() -> list[dict]:
                 "type": media_type,
                 "description": canonical.get("description", ""),
                 "ratios": list(canonical.get("ratios", [])),
-                "max_references": min(
-                    _max_references(),
-                    max(1, int(canonical.get(
-                        "max_references", canonical.get("max_image_references", 0),
-                    ))) if model == "grok_imagine_v15" else int(canonical.get(
-                        "max_references", canonical.get("max_image_references", 0),
-                    )),
-                ),
+                "max_references": _web_max_image_refs(model, canonical),
+                "max_video_references": min(1, int(canonical.get("max_video_references", 0))),
+                "max_audio_references": min(1, int(canonical.get("max_audio_references", 0))),
                 "enabled": bool(supported),
                 "unavailable_reason": None if supported else (
                     "Для этой модели ещё не подключены безопасные веб-тарификация, "
@@ -181,16 +214,23 @@ def _models() -> list[dict]:
                         entry["enabled"] = False
                         entry["unavailable_reason"] = "Нет корректного тарифа для этой модели."
             else:
-                entry["durations"] = list(canonical.get("durations") or [])
+                entry["durations"] = _web_durations(model, canonical)
+                entry["qualities"] = list(canonical.get("motion_modes") or [])
                 if supported:
                     try:
                         by_duration = {
-                            str(d): _price(media_type, model, d)
+                            str(d): _price(media_type, model, d, entry["qualities"][0]
+                                            if entry["qualities"] else None)
                             for d in entry["durations"]
                         }
                         entry["prices_by_duration"] = by_duration
                         first = entry["durations"][0]
                         entry["price"] = by_duration[str(first)]
+                        if entry["qualities"]:
+                            entry["quality_costs"] = {
+                                quality: _price(media_type, model, first, quality)
+                                for quality in entry["qualities"]
+                            }
                     except (ValueError, TypeError, KeyError):
                         entry["enabled"] = False
                         entry["unavailable_reason"] = "Нет корректного тарифа для длительности."
@@ -201,7 +241,8 @@ def _models() -> list[dict]:
 def _normalize_request(body: dict) -> dict:
     allowed = {
         "model", "prompt", "request_key", "aspect_ratio", "duration",
-        "reference_ids", "quality", "expected_price",
+        "reference_ids", "video_reference_ids", "audio_reference_ids",
+        "quality", "expected_price",
     }
     if set(body) - allowed:
         raise ValueError("Unexpected web generation fields")
@@ -223,17 +264,12 @@ def _normalize_request(body: dict) -> dict:
     )
     if not isinstance(ratio, str) or ratio not in ratios:
         raise ValueError("Unsupported aspect ratio")
-    durations = meta.get("durations") or [5]
+    durations = _web_durations(model, meta)
     duration = body.get("duration", 5 if 5 in durations else durations[0])
     if type(duration) is not int or duration not in durations:
         raise ValueError("Unsupported duration")
     references = body.get("reference_ids", [])
-    from bot.web_references import _max_references
-    max_refs = min(_max_references(), max(1, int(meta.get(
-        "max_references", meta.get("max_image_references", 0),
-    ))) if model == "grok_imagine_v15" else int(meta.get(
-        "max_references", meta.get("max_image_references", 0),
-    )))
+    max_refs = _web_max_image_refs(model, meta)
     if (not isinstance(references, list) or len(references) > max_refs
             or any(not isinstance(ref, str) for ref in references)):
         raise ValueError("Unsupported reference count")
@@ -244,6 +280,22 @@ def _normalize_request(body: dict) -> dict:
         raise ValueError("This video mode requires a starting image")
     if model == "v26_pro" and len(references) > 1:
         raise ValueError("Too many references for this video recipe")
+    video_refs = body.get("video_reference_ids", [])
+    audio_refs = body.get("audio_reference_ids", [])
+    for refs in (video_refs, audio_refs):
+        if (not isinstance(refs, list) or len(refs) > 1
+                or any(not isinstance(ref, str) for ref in refs)):
+            raise ValueError("Unsupported video/audio reference count")
+    motion = model in ("motion_control_v26", "motion_control_v30")
+    avatar = model in ("avatar_std", "avatar_pro")
+    if motion:
+        if len(references) != 1 or len(video_refs) != 1 or audio_refs:
+            raise ValueError("Motion Control requires one image and one video")
+    elif avatar:
+        if len(references) != 1 or len(audio_refs) != 1 or video_refs:
+            raise ValueError("Avatar requires one image and one audio reference")
+    elif video_refs or audio_refs:
+        raise ValueError("Unexpected multimedia references for selected model")
     quality_raw = body.get("quality")
     if quality_raw is not None and not isinstance(quality_raw, str):
         raise ValueError("Invalid quality")
@@ -263,6 +315,7 @@ def _normalize_request(body: dict) -> dict:
         "prompt": prompt, "aspect_ratio": ratio,
         "duration": duration, "request_key": key,
         "quality": quality, "reference_ids": references,
+        "video_reference_ids": video_refs, "audio_reference_ids": audio_refs,
         "expected_price": expected_price,
     }
 
@@ -270,7 +323,8 @@ def _normalize_request(body: dict) -> dict:
 def _hash_request(payload: dict) -> str:
     return hashlib.sha256(json.dumps(
         {key: payload[key] for key in (
-            "model", "media_type", "prompt", "aspect_ratio", "duration", "reference_ids", "quality",
+            "model", "media_type", "prompt", "aspect_ratio", "duration",
+            "reference_ids", "video_reference_ids", "audio_reference_ids", "quality",
         )},
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     ).encode()).hexdigest()
@@ -312,7 +366,9 @@ async def quote_generation(request: web.Request) -> web.Response:
             **data,
             "request_key": "web-quote-validation-key-2026",
         })
-        await owned_reference_urls(account, normalized["reference_ids"])
+        await owned_reference_urls(account, normalized["reference_ids"], kind="image")
+        await owned_reference_urls(account, normalized["video_reference_ids"], kind="video")
+        await owned_reference_urls(account, normalized["audio_reference_ids"], kind="audio")
         amount = _price(
             normalized["media_type"], normalized["model"],
             normalized["duration"], normalized["quality"],
@@ -363,7 +419,13 @@ async def create_generation(request: web.Request) -> web.Response:
 
     try:
         normalized["reference_urls"] = await owned_reference_urls(
-            account, normalized["reference_ids"],
+            account, normalized["reference_ids"], kind="image",
+        )
+        normalized["reference_video_urls"] = await owned_reference_urls(
+            account, normalized["video_reference_ids"], kind="video",
+        )
+        normalized["reference_audio_urls"] = await owned_reference_urls(
+            account, normalized["audio_reference_ids"], kind="audio",
         )
     except (ValueError, PermissionError):
         return _json({"ok": False, "error": "Недоступные или чужие референсы."}, 403)
@@ -530,6 +592,8 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
         payload["prompt"], payload["duration"],
     )
     reference_urls = payload.get("reference_urls") or []
+    reference_video_urls = payload.get("reference_video_urls") or []
+    reference_audio_urls = payload.get("reference_audio_urls") or []
     callback = _callback_url(task_id)
     def identifier_from(result) -> tuple[str | None, bool]:
         if isinstance(result, str) and result.strip():
@@ -592,7 +656,8 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
             from bot.services.seedream_service import seedream_service
 
             return identifier_from(await seedream_service.generate_image(
-                prompt, reference_urls, aspect_ratio=ratio, quality="basic",
+                prompt, reference_urls, aspect_ratio=ratio,
+                quality="high" if quality == "4K" else "basic",
                 model="seedream/4.5-edit", callBackUrl=callback or None,
             ))
         if model == "wan_27":
@@ -642,6 +707,26 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
                 generation_type="FIRST_AND_LAST_FRAMES_2_VIDEO"
                 if reference_urls else "TEXT_2_VIDEO",
                 resolution="720p", callBackUrl=callback or None,
+            ))
+        if model in ("motion_control_v26", "motion_control_v30"):
+            provider = KlingService(kie_key=config.KIE_AI_API_KEY)
+            return identifier_from(await provider.generate_motion_control(
+                image_url=reference_urls[0],
+                video_urls=reference_video_urls[:1],
+                prompt=prompt,
+                mode=quality or "720p",
+                motion_model=model,
+                webhook_url=callback or None,
+            ))
+        if model in ("avatar_std", "avatar_pro"):
+            provider = KlingService(kie_key=config.KIE_AI_API_KEY)
+            actual = "kling/ai-avatar-standard" if model == "avatar_std" else "kling/ai-avatar-pro"
+            return identifier_from(await provider.generate_kling_ai_avatar(
+                image_url=reference_urls[0],
+                audio_url=reference_audio_urls[0],
+                prompt=prompt,
+                model=actual,
+                webhook=callback or None,
             ))
         if model == "flux_pro":
             if reference_urls:

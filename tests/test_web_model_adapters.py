@@ -121,7 +121,114 @@ def test_web_model_catalog_derived_from_public_tg_catalog_without_misleading_ena
     catalog = web_generation._models()
     enabled = {item["id"] for item in catalog if item["enabled"]}
     assert source == {item["id"] for item in catalog}
-    assert len(enabled) == 16  # Explicitly tested adapters; update with new adapters.
+    assert len(enabled) == 20  # Four typed-reference adapters validated below.
     assert enabled == (
         web_generation._IMAGE_MODELS | web_generation._VIDEO_MODELS
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model,method,media_key", (
+    ("motion_control_v26", "generate_motion_control", "video_urls"),
+    ("motion_control_v30", "generate_motion_control", "video_urls"),
+    ("avatar_std", "generate_kling_ai_avatar", "audio_url"),
+    ("avatar_pro", "generate_kling_ai_avatar", "audio_url"),
+))
+async def test_typed_media_provider_receives_owned_video_or_audio_references(
+    monkeypatch, model, method, media_key,
+):
+    fake = AsyncMock(return_value={"task_id": "web-multimedia-confirmed"})
+    monkeypatch.setattr(KlingService, method, fake)
+    payload = {
+        "model": model, "media_type": "video", "prompt": "Animate this person",
+        "aspect_ratio": "1:1" if model != "motion_control_v30" else "motion",
+        "duration": 5, "quality": "720p" if model.startswith("motion") else "",
+        "reference_urls": ["https://neuromixbot.com/uploads/web_refs/image.png"],
+        "reference_video_urls": ["https://neuromixbot.com/uploads/web_refs/motion.mp4"],
+        "reference_audio_urls": ["https://neuromixbot.com/uploads/web_refs/voice.mp3"],
+    }
+    task_id, rejected = await web_generation._submit_to_provider(
+        "web_" + "c" * 32, payload,
+    )
+    assert task_id == "web-multimedia-confirmed", model
+    assert rejected is False, model
+    fake.assert_awaited_once()
+    kwargs = fake.await_args.kwargs
+    assert kwargs["image_url"].endswith("/image.png")
+    if media_key == "video_urls":
+        assert kwargs["video_urls"] == ["https://neuromixbot.com/uploads/web_refs/motion.mp4"]
+        assert kwargs["mode"] == "720p"
+        assert kwargs["motion_model"] == model
+    else:
+        assert kwargs["audio_url"] == "https://neuromixbot.com/uploads/web_refs/voice.mp3"
+        assert kwargs["model"] == (
+            "kling/ai-avatar-standard" if model == "avatar_std" else "kling/ai-avatar-pro"
+        )
+    assert "telegram_id" not in kwargs
+    assert "user_id" not in kwargs
+
+
+def test_motion_control_quote_uses_quality_and_live_admin_rates(monkeypatch):
+    provider_cost = []
+    def price(model, duration, quality=None):
+        provider_cost.append((model, duration, quality))
+        return 15 if quality == "720p" else 27
+    monkeypatch.setattr(web_generation.preset_manager, "get_video_cost_with_quality", price)
+    assert web_generation._price("video", "motion_control_v26", 5, "720p") == "15"
+    assert web_generation._price("video", "motion_control_v26", 5, "1080p") == "27"
+    assert provider_cost == [
+        ("motion_control_v26", 5, "720p"),
+        ("motion_control_v26", 5, "1080p"),
+    ]
+
+
+@pytest.mark.parametrize("duration", [2, 10])
+def test_veo_web_rejects_durations_that_provider_silently_changes(duration):
+    with pytest.raises(ValueError):
+        web_generation._normalize_request({
+            "model": "veo3_fast", "prompt": "A mountain sunrise video",
+            "aspect_ratio": "16:9", "duration": duration,
+            "request_key": "veo-duration-quote-check-2026",
+        })
+
+
+def test_veo_web_limits_first_and_last_frames_to_two():
+    with pytest.raises(ValueError):
+        web_generation._normalize_request({
+            "model": "veo3_fast", "prompt": "A cinematic first to last transition",
+            "duration": 6, "aspect_ratio": "16:9",
+            "reference_ids": [
+                "wr_" + str(index) * 32 for index in range(1, 4)
+            ],
+            "request_key": "veo-frame-overflow-2026",
+        })
+
+
+def test_seedream_edit_rejects_reference_counts_that_service_would_truncate():
+    with pytest.raises(ValueError):
+        web_generation._normalize_request({
+            "model": "seedream_edit", "prompt": "Edit the scene",
+            "quality": "4K", "aspect_ratio": "1:1",
+            "reference_ids": [
+                "wr_" + str(index) * 32 for index in range(1, 7)
+            ],
+            "request_key": "seedream-edit-reference-cap-2026",
+        })
+
+
+@pytest.mark.asyncio
+async def test_seedream_edit_4k_dispatches_provider_high_quality_not_basic(monkeypatch):
+    import importlib
+    from unittest.mock import AsyncMock
+
+    provider = importlib.import_module("bot.services.seedream_service").seedream_service
+    fake = AsyncMock(return_value={"task_id": "seedream-quality-4k"})
+    monkeypatch.setattr(provider, "generate_image", fake)
+    task, rejected = await web_generation._submit_to_provider(
+        "web_" + "f" * 32,
+        {"model": "seedream_edit", "prompt": "A portrait in autumn",
+         "quality": "4K", "aspect_ratio": "1:1", "duration": 5,
+         "reference_urls": ["https://neuromixbot.com/uploads/web_refs/owned.png"]},
+    )
+    assert (task, rejected) == ("seedream-quality-4k", False)
+    assert fake.await_args.kwargs["quality"] == "high"

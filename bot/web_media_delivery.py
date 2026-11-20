@@ -76,6 +76,13 @@ def _media_type(prefix: bytes, media_type: str) -> tuple[str, str]:
             return "mp4", "video/mp4"
         if prefix.startswith(b"\x1a\x45\xdf\xa3"):
             return "webm", "video/webm"
+    if media_type == "audio":
+        if prefix.startswith((b"ID3", b"\xff\xfb")):
+            return "mp3", "audio/mpeg"
+        if prefix.startswith(b"RIFF") and prefix[8:12] == b"WAVE":
+            return "wav", "audio/wav"
+        if prefix.startswith(b"OggS"):
+            return "ogg", "audio/ogg"
     raise ValueError("Unexpected or unsupported result file signature")
 
 

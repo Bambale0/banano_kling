@@ -121,3 +121,72 @@ test('web generation chooses actual catalog price, sends verified ref ID and pol
   expect(refresh).toHaveBeenCalled()
   expect(refreshTasks).toHaveBeenCalled()
 })
+
+
+test.each([
+  ['motion_control_v26', 'video', 'video_reference_ids', 'Видео-референс (до 1)', '720p'],
+  ['avatar_std', 'audio', 'audio_reference_ids', 'Аудио-референс (до 1)', ''],
+] as const)(
+  '%s uploads a typed %s reference and submits owner-bound IDs only',
+  async (modelId, mediaKind, payloadKey, fileLabel, quality) => {
+    const sent: Array<{ path: string; options?: RequestInit }> = []
+    global.fetch = jest.fn().mockImplementation(async (path: string, options?: RequestInit) => {
+      sent.push({ path, options })
+      if (path.endsWith('/models')) return {
+        ok: true, json: async () => ({ ok: true, enabled: true, models: [{
+          id: modelId, type: 'video', label: modelId,
+          price: '15.0', qualities: quality ? ['720p', '1080p'] : [],
+          durations: [5], ratios: ['1:1'], max_references: 1,
+          max_video_references: mediaKind === 'video' ? 1 : 0,
+          max_audio_references: mediaKind === 'audio' ? 1 : 0,
+          requires_image: true, requires_audio: mediaKind === 'audio',
+        }] }),
+      }
+      if (path.endsWith('/reference')) {
+        const form = options?.body as FormData
+        const kind = form.get('video') ? 'video' : form.get('audio') ? 'audio' : 'image'
+        const identifier = kind === 'image' ? '1' : '2'
+        return { ok: true, json: async () => ({ ok: true, reference_id: 'wr_' + identifier.repeat(32) }) }
+      }
+      if (path.endsWith('/quote')) return {
+        ok: true, json: async () => ({
+          ok: true, model: modelId, price: '15.0', type: 'video', duration: 5,
+        }),
+      }
+      if (path.endsWith('/create')) return {
+        ok: true, json: async () => ({
+          ok: true, task_id: 'web_' + '3'.repeat(32), status: 'pending',
+        }),
+      }
+      throw new Error('Unexpected fetch route ' + path)
+    }) as typeof fetch
+
+    render(<WebGenerationPanel onBalanceChanged={jest.fn()} onTaskChanged={jest.fn()} />)
+    await screen.findByRole('option', { name: modelId + ' (видео)' })
+    const upload = async (label: string, name: string, type: string) => {
+      fireEvent.change(screen.getByLabelText(label), {
+        target: { files: [new File(['test fixture'], name, { type })] },
+      })
+      await screen.findByText(name)
+    }
+    await upload('Референсы (до 1 изображений)', 'person.png', 'image/png')
+    await upload(fileLabel, mediaKind === 'video' ? 'motion.mp4' : 'voice.mp3',
+      mediaKind === 'video' ? 'video/mp4' : 'audio/mpeg')
+    fireEvent.change(screen.getByLabelText('Описание'), {
+      target: { value: 'Animate a person convincingly' },
+    })
+    const button = await screen.findByRole('button', { name: 'Создать за 15.0 кредитов' })
+    expect(button.hasAttribute('disabled')).toBe(false)
+    fireEvent.click(button)
+    expect(await screen.findByText('Задача: генерируется')).toBeTruthy()
+    const create = sent.find(item => item.path.endsWith('/create'))
+    const request = JSON.parse(String(create?.options?.body))
+    expect(request.model).toBe(modelId)
+    expect(request.quality).toBe(quality || undefined)
+    expect(request.reference_ids).toEqual(['wr_' + '1'.repeat(32)])
+    expect(request[payloadKey]).toEqual(['wr_' + '2'.repeat(32)])
+    expect(request.expected_price).toBe('15.0')
+    expect(request.account_id).toBeUndefined()
+    expect(request.telegram_id).toBeUndefined()
+  },
+)

@@ -16,6 +16,10 @@ type Model = {
   ratios: string[]
   durations?: number[]
   max_references?: number
+  max_video_references?: number
+  max_audio_references?: number
+  requires_image?: boolean
+  requires_audio?: boolean
 }
 type Task = {
   task_id: string
@@ -41,6 +45,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   const [busy, setBusy] = useState(false)
   const [activeTask, setActiveTask] = useState<Task | null>(null)
   const [references, setReferences] = useState<{ id: string; name: string }[]>([])
+  const [videoReferences, setVideoReferences] = useState<{ id: string; name: string }[]>([])
+  const [audioReferences, setAudioReferences] = useState<{ id: string; name: string }[]>([])
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const idempotencyKey = useRef('')
@@ -71,13 +77,17 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
     return () => controller.abort()
   }, [])
 
-  const uploadReference = async (file: File) => {
-    if (uploading || references.length >= (model?.max_references || 0)) return
+  const uploadReference = async (file: File, kind: 'image' | 'video' | 'audio') => {
+    const current = kind === 'video' ? videoReferences : kind === 'audio' ? audioReferences : references
+    const maximum = kind === 'video' ? (model?.max_video_references || 0)
+      : kind === 'audio' ? (model?.max_audio_references || 0)
+        : (model?.max_references || 0)
+    if (uploading || current.length >= maximum) return
     setUploading(true)
     setError('')
     try {
       const body = new FormData()
-      body.append('image', file)
+      body.append(kind, file)
       const response = await fetch('/mini-app/api/web-auth/web-generation/reference', {
         method: 'POST', credentials: 'same-origin', cache: 'no-store', body,
       })
@@ -87,8 +97,12 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
       if (!response.ok || !data.ok || !data.reference_id) {
         throw new Error(data.error || 'Не удалось загрузить референс.')
       }
-      setReferences(previous => previous.some(item => item.id === data.reference_id)
-        ? previous : [...previous, { id: data.reference_id!, name: file.name }])
+      const append = (previous: { id: string; name: string }[]) =>
+        previous.some(item => item.id === data.reference_id)
+          ? previous : [...previous, { id: data.reference_id!, name: file.name }]
+      if (kind === 'video') setVideoReferences(append)
+      else if (kind === 'audio') setAudioReferences(append)
+      else setReferences(append)
       idempotencyKey.current = ''
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Не удалось загрузить референс.')
@@ -99,9 +113,12 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
 
   const model = models.find(item => item.id === modelId)
   const referencesIds = references.map(item => item.id)
+  const videoIds = videoReferences.map(item => item.id)
+  const audioIds = audioReferences.map(item => item.id)
   const quoteKey = JSON.stringify({
     model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
     duration, quality, reference_ids: referencesIds,
+    video_reference_ids: videoIds, audio_reference_ids: audioIds,
   })
   const quoteReady = Boolean(quote && quote.key === quoteKey)
   const price = quoteReady
@@ -112,7 +129,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
 
   useEffect(() => {
     if (!model || model.enabled === false || prompt.trim().length < 2
-      || (model.requires_reference && !references.length)) {
+      || (model.requires_reference && !references.length)
+      || (model.requires_image && !references.length)
+      || (model.requires_audio && !audioReferences.length)
+      || (model.id.startsWith('motion_control_') && (!references.length || !videoReferences.length))) {
       return
     }
     const controller = new AbortController()
@@ -124,6 +144,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
         body: JSON.stringify({
           model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
           duration, quality: quality || undefined, reference_ids: referencesIds,
+          ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
+          ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
         }),
       }).then(async response => {
         const result = await response.json() as { ok?: boolean; price?: string }
@@ -183,6 +205,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           request_key: idempotencyKey.current, model: modelId,
           prompt: prompt.trim(), aspect_ratio: ratio, duration,
           reference_ids: referencesIds, quality: quality || undefined,
+          ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
+          ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
           expected_price: quote!.price,
         }),
       })
@@ -220,6 +244,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           setDuration(next?.durations?.includes(5) ? 5 : next?.durations?.[0] || 5)
           setQuality(next?.qualities?.includes('2K') ? '2K' : next?.qualities?.[0] || '')
           setReferences(previous => previous.slice(0, next?.max_references || 0))
+          setVideoReferences(previous => previous.slice(0, next?.max_video_references || 0))
+          setAudioReferences(previous => previous.slice(0, next?.max_audio_references || 0))
           setQuote(null)
           idempotencyKey.current = ''
         }} className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
@@ -256,7 +282,7 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           disabled={busy || uploading || references.length >= (model?.max_references || 0)}
           onChange={event => {
             const file = event.target.files?.[0]
-            if (file) void uploadReference(file)
+            if (file) void uploadReference(file, 'image')
             event.target.value = ''
           }} className="block max-w-full text-xs text-[#d9c7ae]" />
         {uploading ? <p role="status" className="text-sm text-[#d9c7ae]">Сохраняем референс в S3…</p> : null}
@@ -273,6 +299,46 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           </li>)}
         </ul> : null}
       </div>
+      {model?.max_video_references ? <div className="space-y-2">
+        <label htmlFor="web-generation-video-ref" className="block text-sm text-[#d7c0a2]">
+          Видео-референс (до {model.max_video_references})
+        </label>
+        <input id="web-generation-video-ref" type="file"
+          accept="video/mp4,video/webm" disabled={
+            busy || uploading || videoReferences.length >= model.max_video_references
+          } onChange={event => {
+            const file = event.target.files?.[0]
+            if (file) void uploadReference(file, 'video')
+            event.target.value = ''
+          }} className="block max-w-full text-xs text-[#d9c7ae]" />
+        {videoReferences.map(item => <div key={item.id} className="flex items-center gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          <button type="button" className="text-[#f1c77a] underline"
+            onClick={() => { setVideoReferences(previous => previous.filter(x => x.id !== item.id)); idempotencyKey.current = '' }}>
+            Убрать
+          </button>
+        </div>)}
+      </div> : null}
+      {model?.max_audio_references ? <div className="space-y-2">
+        <label htmlFor="web-generation-audio-ref" className="block text-sm text-[#d7c0a2]">
+          Аудио-референс (до {model.max_audio_references})
+        </label>
+        <input id="web-generation-audio-ref" type="file"
+          accept="audio/mpeg,audio/wav,audio/ogg" disabled={
+            busy || uploading || audioReferences.length >= model.max_audio_references
+          } onChange={event => {
+            const file = event.target.files?.[0]
+            if (file) void uploadReference(file, 'audio')
+            event.target.value = ''
+          }} className="block max-w-full text-xs text-[#d9c7ae]" />
+        {audioReferences.map(item => <div key={item.id} className="flex items-center gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          <button type="button" className="text-[#f1c77a] underline"
+            onClick={() => { setAudioReferences(previous => previous.filter(x => x.id !== item.id)); idempotencyKey.current = '' }}>
+            Убрать
+          </button>
+        </div>)}
+      </div> : null}
       <div className="flex flex-wrap gap-3">
         <label className="flex-1 space-y-2 text-sm text-[#d7c0a2]">
           Формат

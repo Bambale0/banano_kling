@@ -117,7 +117,7 @@ function LegacyTelegramWidget({ linkYandex = false }: { linkYandex?: boolean } =
       try {
         // This is the existing production server-side signature verifier,
         // not a fabricated Telegram ID or a separate authentication system.
-        const response = await fetch(
+        let response = await fetch(
           '/mini-app/api/web-auth/telegram', {
           method: 'POST',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
@@ -143,9 +143,11 @@ function LegacyTelegramWidget({ linkYandex = false }: { linkYandex?: boolean } =
             body: JSON.stringify({ telegram_auth: user }),
           })
           data = await legacy.json() as { ok?: boolean; init_data?: string }
-          if (!legacy.ok) throw new Error('verification-failed')
-        } else if (!response.ok) throw new Error('verification-failed')
-        if (!data.ok) throw new Error('verification-failed')
+          response = legacy
+        }
+        // Both the verified shared-account route and its signed legacy
+        // fallback must return a successful HTTP response and verified payload.
+        if (!response.ok || !data.ok) throw new Error('verification-failed')
         if (typeof data.init_data === 'string' && data.init_data && !cancelled) {
           window.location.replace(studioUrlWithSession(data.init_data))
         } else {
