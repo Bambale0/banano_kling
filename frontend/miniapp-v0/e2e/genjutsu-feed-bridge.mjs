@@ -216,10 +216,10 @@ try {
       // The source preview must be dismissed along with the repeat handoff.
       assert.equal(await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).count(), 0)
     }
-    // Shared links reuse exactly the ordinary Feed/Profile video preview.
+    // Feed/Profile share links keep their preview; explicit remix links directly open a private recipe.
     for (const [label, query, scope] of [
       ['feed', '?startapp=feed_777_ref_E2EOWNER', 'feed'],
-      ['old-remix', '?startapp=remix_777_ref_E2EOWNER', 'feed'],
+      ['direct-remix', '?startapp=remix_777_ref_E2EOWNER', 'feed'],
       ['recipe-start', '?startapp=genjutsu_recipe_' + recipe.id, 'feed'],
       ['recipe-query', '?genjutsu=1&genjutsu_recipe=' + recipe.id, 'feed'],
       ['profile-recipe', '?startapp=genjutsu_recipe_' + recipe.id, 'profile'],
@@ -235,6 +235,25 @@ try {
         await page.evaluate(() => window.dispatchEvent(new Event('fixture:telegram:activated')))
       }
       await page.waitForLoadState('networkidle')
+      if (label === 'direct-remix') {
+        // Explicit repeat links come from Telegram's Repeat button, not the
+        // separate Feed/Share preview links. They must open the protected
+        // recipe immediately and never fall back to generic video generation.
+        await region.getByText(recipe.title, { exact: true }).waitFor()
+        assert.equal(await page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ }).count(), 0,
+          'Explicit remix must not stop at a second Repeat button')
+        assert.equal(await region.locator('textarea').count(), 0,
+          'Protected prompt must not be revealed by a direct repeat')
+        assert.equal(await region.getByLabel('Стиль', { exact: true }).count(), 0,
+          'Author fixed source must remain hidden')
+        assert.equal(await region.getByLabel('Видео-референс', { exact: true }).count(), 1,
+          'Private recipe keeps its required user video slot')
+        assert.equal(requests.slice(before).some(item => item.action === 'recipe_quote'), false,
+          'Opening a repeat never submits a paid quote automatically')
+        await region.getByRole('button', { name: 'Закрыть студию' }).click()
+        await region.waitFor({ state: 'hidden' })
+        continue
+      }
       const repeat = page.getByRole('button', { name: /^Повторить(?: · [0-9]+)?$/ })
       await repeat.waitFor()
       if (label === 'recipe-query') {
@@ -301,7 +320,7 @@ try {
     previewUnavailable = false
     assert.deepEqual(forbidden, [], 'No generation or generic repeat API is allowed')
     assert.deepEqual(errors, [], 'No browser errors at ' + width)
-    console.log('PASS ' + width + 'px: new/legacy Feed/Profile deep links preview before explicit repeat, unavailable fail-closed, completed output publication, cancel/reopen source policy, feed/profile repeat, own video+photo server quote, no hidden originals or real generation')
+    console.log('PASS ' + width + 'px: Feed/Profile view links preview, explicit Genjutsu remix opens private recipe, unavailable fail-closed, completed output publication, cancel/reopen source policy, feed/profile repeat, own video+photo server quote, no hidden originals or real generation')
     await context.close()
   }
 } finally {
