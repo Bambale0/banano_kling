@@ -267,3 +267,78 @@ test('Seedream 5.5 Layers reprices max output count before charging and exposes 
   expect(await screen.findByRole('link', { name: 'Скачать все слои ZIP' })).toBeTruthy()
   expect(await screen.findByText(/Сохранено слоёв и изображений: 3/)).toBeTruthy()
 })
+
+
+test.each([
+  ['file', 'Документ → видео', 'file_reference_ids'],
+  ['link', 'Веб-страница → видео', 'link_reference_ids'],
+] as const)('Wan3 %s mode owns its input ID and obtains server price before charge',
+  async (scenario, label, ownedField) => {
+    const calls: Array<{ url: string; body: Record<string, unknown> | null }> = []
+    global.fetch = jest.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+      const body = typeof options?.body === 'string' ? JSON.parse(options.body) : null
+      calls.push({ url, body })
+      if (url.endsWith('/models')) return {
+        ok: true, json: async () => ({ ok: true, enabled: true, models: [{
+          id: 'wan_3', type: 'video', label: 'Wan 3.0',
+          price: '15', ratios: ['16:9'], durations: [6], qualities: ['720P'],
+          max_references: 10, max_file_references: 1,
+          max_link_references: 1, max_audio_references: 5,
+          max_video_references: 5,
+          enabled: true, supported_modes: ['text', 'file', 'link'],
+        }] }),
+      }
+      if (url.endsWith('/assets')) return {
+        ok: true, json: async () => ({ ok: true, assets: [], base_voices: [] }),
+      }
+      if (url.endsWith('/reference') || url.endsWith('/link')) return {
+        ok: true, json: async () => ({ ok: true, reference_id: 'wr_' + 'a'.repeat(32) }),
+      }
+      if (url.endsWith('/quote')) return {
+        ok: true, json: async () => ({ ok: true, price: '15' }),
+      }
+      if (url.endsWith('/create')) return {
+        ok: true, json: async () => ({ ok: true,
+          task_id: 'web_' + 'e'.repeat(32), status: 'pending' }),
+      }
+      throw new Error('Unexpected web route ' + url)
+    }) as typeof fetch
+
+    render(<WebGenerationPanel onBalanceChanged={jest.fn()} onTaskChanged={jest.fn()} />)
+    await screen.findByRole('option', { name: 'Wan 3.0 (видео)' })
+    fireEvent.change(screen.getByLabelText('Сценарий Wan 3.0'), {
+      target: { value: scenario },
+    })
+    expect(await screen.findByRole('option', { name: label })).toBeTruthy()
+    if (scenario === 'file') {
+      fireEvent.change(screen.getByLabelText(/Документ-референс/), {
+        target: { files: [new File(['%PDF-1.7'], 'report.pdf',
+          { type: 'application/pdf' })] },
+      })
+      await screen.findByText('report.pdf')
+    } else {
+      fireEvent.change(screen.getByLabelText('Ссылка на публичную HTTPS-страницу'), {
+        target: { value: 'https://www.example.org/public' },
+      })
+      fireEvent.click(screen.getByRole('button', {
+        name: 'Проверить и привязать страницу',
+      }))
+      await screen.findByText(/Привязана: https:\/\/www.example.org\/public/)
+    }
+    fireEvent.change(screen.getByLabelText('Описание'), {
+      target: { value: 'Summarize the reference in a cinematic clip' },
+    })
+    const create = await screen.findByRole('button', { name: 'Создать за 15 кредитов' })
+    fireEvent.click(create)
+    expect(await screen.findByText('Задача: генерируется')).toBeTruthy()
+    const quote = calls.find(x => x.url.endsWith('/quote'))?.body
+    const posted = calls.find(x => x.url.endsWith('/create'))?.body
+    expect(quote?.[ownedField]).toEqual(['wr_' + 'a'.repeat(32)])
+    expect(posted?.[ownedField]).toEqual(['wr_' + 'a'.repeat(32)])
+    expect(posted?.wan_scenario).toBe(scenario)
+    expect(posted?.expected_price).toBe('15')
+    expect(posted?.telegram_id).toBeUndefined()
+    expect(posted?.reference_link_urls).toBeUndefined()
+    expect(posted?.reference_file_urls).toBeUndefined()
+  },
+)

@@ -159,3 +159,48 @@ price settings; add provider media probing/auto-duration and edit/file/link,
 Gemini Audio/Character asset flows, test live paid tasks for all 24 models
 and verify S3 GET plus full CI. Keep WEB_NATIVE_GENERATION_ENABLED and
 WEB_NATIVE_PAYMENTS_ENABLED disabled in production until then.
+
+
+## Native Omni assets and Wan 3.0 multimedia continuation (PR #646)
+
+- New independent Gemini Omni Audio ID / Character ID creation endpoints
+  and browser forms. Quoted using configured gemini_omni_audio/character
+  retail rates; atomic wallet reservation, task idempotency, KIE create at
+  most once, polling for a pending ID, completion only after an owned
+  web_omni_assets record is persisted. Browser returns only opaque oa_
+  identifiers, never raw provider IDs. Linked Audio/Character IDs are
+  validated against completed account-owned records before Omni video
+  reservation, which passes provider IDs only in the server-to-KIE call.
+  Gemini Omni Video also accepts one owned MP4 video source and verified
+  duration with the existing provider video_list contract.
+- Wan 3.0 / Prime now support account-owned text, first frame, first/last,
+  reference image/video/audio, edit (video), file and public-webpage modes.
+  Uploaded documents are sniffed independently of declared MIME (PDF/TXT,
+  DOC/XLS/PPT and DOCX/XLSX/PPTX + iWork), bounded by upload limit and ZIP
+  decompression constraints. External webpages are imported only through an
+  authenticated HTTPS endpoint, public-only DNS resolver, validated redirects
+  and bounded HTML download; only an opaque owner-bound ID reaches the task.
+  Link resolution is revalidated before purchase.
+- Wan3 existing ffprobe metadata adapter verifies SHA-256 of account-owned
+  S3 uploads, checks source dimensions/page limits/durations and measures
+  input video seconds before charge. Auto duration initially reserves the
+  maximum 30 billable seconds. Provider video is durably stored in S3,
+  locally ffprobed under an exact task-specific storage key, actual seconds
+  priced from a frozen per-resolution rate snapshot, captured once; unused
+  credit reserve released idempotently. Rates are never client-supplied.
+- Existing admin quality-price editor includes Wan3 Standard and Prime
+  with 480p/720p/1080p cells. On the checked-in price config those cells
+  are unset, so the two Wan3 model rows remain disabled/fail-closed; do not
+  invent a business tariff. A real administrator must configure prices
+  before either model is purchasable.
+- Test evidence before this branch's latest push: 253 isolated backend
+  regressions, 26 frontend Jest tests, optimized Next.js/TypeScript build,
+  mobile and desktop public login and web checkout E2E, Ruff focused
+  checks passed.
+- Real KIE paid calls, Lava settlement, S3 PUT/GET public readback and
+  external Google/email credentials not performed for this update;
+  full GitHub CI must pass before removing Draft.
+- Remaining business parity: web-referral *payment commission* payout still
+  uses a separate future ledger integration, and source-specific advanced
+  options for all existing Telegram models need live contract smoke. The
+  web feature flags intentionally remain off in production pending proof.

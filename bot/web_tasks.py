@@ -42,7 +42,10 @@ _SCHEMA = (
         settled_cost TEXT,
         output_count BIGINT,
         outputs_json TEXT,
-        bundle_url TEXT)""",
+        bundle_url TEXT,
+        result_seconds TEXT,
+        asset_id TEXT,
+        asset_kind TEXT)""",
     """CREATE INDEX IF NOT EXISTS web_generation_tasks_account_created
        ON web_generation_tasks(account_id,created_at_epoch DESC,task_id DESC)""",
     """CREATE INDEX IF NOT EXISTS web_generation_tasks_queue
@@ -57,6 +60,17 @@ _SCHEMA = (
         UNIQUE(account_id,content_sha256))""",
     """CREATE INDEX IF NOT EXISTS web_generation_references_owner
        ON web_generation_references(account_id,created_at_epoch DESC)""",
+    """CREATE TABLE IF NOT EXISTS web_omni_assets (
+        asset_id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES shared_accounts(id),
+        provider_asset_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('audio','character')),
+        source_task_id TEXT NOT NULL UNIQUE REFERENCES web_generation_tasks(task_id),
+        name TEXT NOT NULL,
+        created_at_epoch BIGINT NOT NULL,
+        UNIQUE(account_id,kind,provider_asset_id))""",
+    """CREATE INDEX IF NOT EXISTS web_omni_assets_owner
+       ON web_omni_assets(account_id,kind,created_at_epoch DESC)""",
 )
 _ADDITIVE_FIELDS = {
     "request_key": "TEXT",
@@ -74,6 +88,9 @@ _ADDITIVE_FIELDS = {
     "output_count": "BIGINT",
     "outputs_json": "TEXT",
     "bundle_url": "TEXT",
+    "result_seconds": "TEXT",
+    "asset_id": "TEXT",
+    "asset_kind": "TEXT",
 }
 
 
@@ -129,7 +146,7 @@ def _public_task(row) -> dict:
             outputs = []
     return {
         "task_id": str(row[0]),
-        "type": str(row[1]),
+        "type": "asset" if len(row) > 15 and row[15] else str(row[1]),
         "model": str(row[2]),
         "status": str(row[3]),
         "result_url": _safe_asset_url(str(row[4] or "")),
@@ -141,6 +158,9 @@ def _public_task(row) -> dict:
         "outputs": outputs,
         "bundle_url": _safe_asset_url(str(row[11] or "")) if len(row) > 11 else None,
         "output_count": int(row[12]) if len(row) > 12 and row[12] is not None else None,
+        "result_seconds": str(row[13]) if len(row) > 13 and row[13] else None,
+        "asset_id": str(row[14]) if len(row) > 14 and row[14] else None,
+        "asset_kind": str(row[15]) if len(row) > 15 and row[15] else None,
     }
 
 
@@ -156,7 +176,7 @@ async def task_history(request: web.Request) -> web.Response:
         return _json({"ok": False, "error": "Invalid cursor"}, 400)
     await ensure_web_tasks_schema()
     sql = """SELECT task_id,media_type,model,status,result_url,created_at_epoch,updated_at_epoch,
-                    phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count
+                    phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count,result_seconds,asset_id,asset_kind
              FROM web_generation_tasks WHERE account_id IN (
                  WITH RECURSIVE owned(id) AS (
                      SELECT ? UNION ALL SELECT a.id FROM shared_accounts a
@@ -191,7 +211,7 @@ async def task_detail(request: web.Request) -> web.Response:
     async with db_backend.connect() as db:
         row = await (await db.execute(
             """SELECT task_id,media_type,model,status,result_url,created_at_epoch,updated_at_epoch,
-                      phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count
+                      phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count,result_seconds,asset_id,asset_kind
                FROM web_generation_tasks WHERE task_id=? AND account_id IN (
                     WITH RECURSIVE owned(id) AS (
                         SELECT ? UNION ALL SELECT a.id FROM shared_accounts a

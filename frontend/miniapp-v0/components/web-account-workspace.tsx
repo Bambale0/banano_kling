@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { WebPaymentsPanel } from './web-payments-panel'
 import { WebGenerationPanel } from './web-generation-panel'
+import { WebOmniAssetsPanel } from './web-omni-assets-panel'
 import { ArrowRight, CircleCheck, Link2, LoaderCircle, LogOut, ShieldCheck } from 'lucide-react'
 import { clearBrowserAccountCredentials, revokeBrowserAccountSession } from '@/lib/browser-account-session'
 
@@ -20,7 +21,7 @@ type BrowserAccount = {
 
 type WebTask = {
   task_id: string
-  type: 'image' | 'video'
+  type: 'image' | 'video' | 'asset'
   model: string
   status: 'pending' | 'completed' | 'failed'
   result_url: string | null
@@ -28,6 +29,9 @@ type WebTask = {
   bundle_url?: string | null
   output_count?: number | null
   cost?: string | null
+  result_seconds?: string | null
+  asset_kind?: 'audio' | 'character' | null
+  asset_id?: string | null
 }
 
 const methodNames: Record<string, string> = {
@@ -243,10 +247,18 @@ export function WebAccountWorkspace() {
             {history?.length ? <div className="space-y-3">
               {history.map(task => <article key={task.task_id}
                 className="space-y-2 border border-[#9d7c47]/35 bg-[#111716] p-3">
-                <p className="text-sm font-semibold">{task.type === 'image' ? 'Изображение' : 'Видео'} · {task.model}</p>
+                <p className="text-sm font-semibold">{
+                  task.type === 'asset'
+                    ? (task.asset_kind === 'audio' ? 'Audio ID' : 'Character ID')
+                    : task.type === 'image' ? 'Изображение' : 'Видео'
+                } · {task.model}</p>
                 <p className="text-xs text-[#b8b7b1]">
                   {task.status === 'completed' ? 'Готово' : task.status === 'pending' ? 'В обработке' : 'Не удалось завершить'}
                 </p>
+                {task.result_seconds ? <p className="text-xs text-[#d8c8a6]">
+                  Длительность видео: {task.result_seconds} сек.
+                  {task.cost ? ' Списано: ' + task.cost + ' кредитов.' : ''}
+                </p> : null}
                 {task.output_count ? <p className="text-xs text-[#d8c8a6]">
                   Изображений и слоёв: {task.output_count}.
                   {task.cost ? ' Списано: ' + task.cost + ' кредитов.' : ''}
@@ -265,11 +277,16 @@ export function WebAccountWorkspace() {
           </section>
           <section className="space-y-4 border border-[#a48350]/40 p-5">
             <h2 className="text-xl font-bold">Генерации в браузере</h2>
-            {account.can_generate ? (
+            {account.can_generate ? (<div className="space-y-5">
+              <WebOmniAssetsPanel
+                onBalanceChanged={() => { void refreshAccount() }}
+                onTaskChanged={() => { void loadHistory() }}
+              />
               <WebGenerationPanel
                 onBalanceChanged={() => { void refreshAccount() }}
                 onTaskChanged={() => { void loadHistory() }}
               />
+              </div>
             ) : account.telegram_linked ? (
               <p role="status" className="text-sm text-[#d5c8aa]">
                 Аккаунт Telegram подключён. Можно пользоваться существующей студией

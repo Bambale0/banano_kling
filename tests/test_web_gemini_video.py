@@ -34,9 +34,18 @@ def test_gemini_browser_restricts_refs_to_supported_and_owned_image_urls_only():
     })
     assert valid["quality"] == "1080p"
     assert valid["reference_ids"] == ["wr_" + "1" * 32]
+    owned_video = web_generation._normalize_request({
+        "model": "gemini_omni", "prompt": "A dog running across field",
+        "request_key": "gemini-verified-video-ref-2026",
+        "video_reference_ids": ["wr_" + "2" * 32],
+        "duration": 6, "quality": "720p",
+    })
+    assert owned_video["video_reference_ids"] == ["wr_" + "2" * 32]
     for extras in (
         {"quality": "12k"},
-        {"video_reference_ids": ["wr_" + "2" * 32]},
+        {"video_reference_ids": ["wr_" + "2" * 32, "wr_" + "3" * 32]},
+        {"omni_audio_asset_ids": ["unverified-provider-audio-id"]},
+        {"omni_character_asset_ids": ["unverified-character-id"]},
         {"audio_reference_ids": ["wr_" + "2" * 32]},
         {"character_ids": ["some-id"]},
         {"audio_ids": ["some-id"]},

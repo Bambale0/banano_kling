@@ -432,7 +432,7 @@ try {
       buffer: Buffer.from('89504e470d0a1a0a000000000000000000000000', 'hex'),
     })
     await page.getByText('input.png').waitFor()
-    await page.getByLabel('Описание').fill('Beautiful landscape from a reference')
+    await page.getByLabel('Описание', { exact: true }).fill('Beautiful landscape from a reference')
     await page.getByRole('button', { name: 'Создать за 4.0 кредитов' }).click()
     await page.getByText('Задача: генерируется').waitFor()
     assert.equal(requests.filter(item => item.type === 'generation').length, 1)

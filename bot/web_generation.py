@@ -94,11 +94,7 @@ def _model_meta(model: str) -> tuple[str, dict]:
 
 def _web_durations(model: str, meta: dict) -> list[int]:
     original = list(meta.get("durations") or [5])
-    if model in {"wan_3", "wan_3_prime"}:
-        # Auto mode bills an output duration selected by the provider. The
-        # standalone web wallet cannot safely settle this without validating
-        # the produced video's duration; disable it until implemented.
-        original = [value for value in original if value != -1]
+    # Wan3 auto -1 reserves 30 seconds and settles after verified S3 output probe.
     if model == "veo3_fast":
         from bot.services.veo_service import VEO_SUPPORTED_DURATIONS
 
@@ -176,8 +172,8 @@ def _price(media_type: str, model: str, duration: int,
         if duration not in meta.get("durations", ()):
             raise ValueError("Unsupported duration")
         if model in ("wan_3", "wan_3_prime"):
-            if duration <= 0:
-                raise ValueError("Wan 3.0 auto duration requires duration reconciliation")
+            if duration != -1 and not 2 <= duration <= 30:
+                raise ValueError("Wan3 output duration must be 2-30 or auto")
             selected_quality = _quality_value(model, meta, quality)
             raw_rates = preset_manager.get_video_quality_costs(model)
             rates = {str(key).lower(): value for key, value in raw_rates.items()}
@@ -187,7 +183,7 @@ def _price(media_type: str, model: str, duration: int,
                 raise ValueError("Wan 3.0 quality rate not configured")
             from bot.services.wan3_prime_lifecycle import _round_half_credit
 
-            raw = _round_half_credit(float(rate) * duration)
+            raw = _round_half_credit(float(rate) * (30 if duration == -1 else duration))
             if raw <= 0:
                 raise ValueError("Wan 3.0 rate too small")
         elif model == "gemini_omni":
@@ -223,7 +219,27 @@ def _price_for_request(normalized: dict) -> str:
     )
     if normalized["model"] == "seedream_55_layers":
         return _price(*args, normalized["max_images"])
-    # Preserve the existing five-argument contract for all other models.
+    if normalized["model"] in ("wan_3", "wan_3_prime"):
+        input_seconds = Decimal(str(normalized.get("wan_input_seconds") or "0"))
+        if not input_seconds.is_finite() or not 0 <= input_seconds <= 15:
+            raise ValueError("Invalid Wan3 input duration")
+        reserved_seconds = (
+            Decimal(30) if normalized["duration"] == -1
+            else input_seconds + normalized["duration"]
+        )
+        if reserved_seconds > 30:
+            raise ValueError("Wan3 total duration cannot exceed 30 seconds")
+        configured = preset_manager.get_video_quality_costs(normalized["model"])
+        rate = next((v for k,v in configured.items()
+                     if str(k).lower() == normalized["quality"].lower()), None)
+        if type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
+            raise ValueError("Missing Wan3 resolution rate")
+        from bot.services.wan3_prime_lifecycle import _round_half_credit
+
+        value = _round_half_credit(float(Decimal(str(rate)) * reserved_seconds))
+        if value <= 0:
+            raise ValueError("Wan3 reserve rounded to zero")
+        return str(Decimal(value))
     return _price(*args)
 
 
@@ -244,13 +260,20 @@ def _models() -> list[dict]:
                 "ratios": list(canonical.get("ratios", [])),
                 "max_references": _web_max_image_refs(model, canonical),
                 "max_video_references": (
-                    0 if model in ("gemini_omni", "wan_3", "wan_3_prime")
-                    else min(1, int(canonical.get("max_video_references", 0)))
+                    1 if model == "gemini_omni"
+                    else min(
+                        5 if model in ("wan_3", "wan_3_prime") else 1,
+                        int(canonical.get("max_video_references", 0)),
+                    )
                 ),
                 "max_audio_references": (
-                    0 if model in ("wan_3", "wan_3_prime")
-                    else min(1, int(canonical.get("max_audio_references", 0)))
+                    min(
+                        5 if model in ("wan_3", "wan_3_prime") else 1,
+                        int(canonical.get("max_audio_references", 0)),
+                    )
                 ),
+                "max_file_references": 1 if model in ("wan_3", "wan_3_prime") else 0,
+                "max_link_references": 1 if model in ("wan_3", "wan_3_prime") else 0,
                 "enabled": bool(supported),
                 "unavailable_reason": None if supported else (
                     "Для этой модели ещё не подключены безопасные веб-тарификация, "
@@ -302,11 +325,15 @@ def _models() -> list[dict]:
                     # and first-party asset probes, so expose only image modes.
                     entry["supported_modes"] = [
                         "text", "first_frame", "first_last", "reference",
+                        "edit", "file", "link",
                     ]
                 if model == "gemini_omni":
                     # Audio ID and Character ID need separate account-owned
                     # asset lifecycles; do not make them look purchasable.
-                    entry["supported_modes"] = ["video_text", "video_images"]
+                    entry["supported_modes"] = [
+                        "video_text", "video_images", "video_reference",
+                        "audio_id", "character_id",
+                    ]
                 if supported:
                     try:
                         by_duration = {
@@ -335,6 +362,8 @@ def _normalize_request(body: dict) -> dict:
         "reference_ids", "video_reference_ids", "audio_reference_ids",
         "quality", "expected_price", "max_images", "text_recognition",
         "output_format", "wan_scenario",
+        "omni_audio_asset_ids", "omni_character_asset_ids", "omni_seed",
+        "file_reference_ids", "link_reference_ids",
     }
     if set(body) - allowed:
         raise ValueError("Unexpected web generation fields")
@@ -374,14 +403,15 @@ def _normalize_request(body: dict) -> dict:
         raise ValueError("Too many references for this video recipe")
     if model in ("wan_3", "wan_3_prime"):
         wan_scenario = body.get("wan_scenario", "text")
-        if wan_scenario not in ("text", "first_frame", "first_last", "reference"):
-            raise ValueError("Unsupported independent web Wan 3.0 scenario")
-        if (duration == -1
-                or (wan_scenario == "text" and references)
+        if wan_scenario not in (
+            "text", "first_frame", "first_last", "reference", "edit",
+            "file", "link",
+        ):
+            raise ValueError("Unsupported independent Wan3 scenario")
+        if ((wan_scenario == "text" and references)
                 or (wan_scenario == "first_frame" and len(references) != 1)
-                or (wan_scenario == "first_last" and len(references) != 2)
-                or (wan_scenario == "reference" and not references)):
-            raise ValueError("Wan 3.0 reference count does not match selected scenario")
+                or (wan_scenario == "first_last" and len(references) != 2)):
+            raise ValueError("Wan3 image count does not match scenario")
     else:
         if "wan_scenario" in body:
             raise ValueError("Wan scenario is not available for this model")
@@ -389,10 +419,36 @@ def _normalize_request(body: dict) -> dict:
 
     video_refs = body.get("video_reference_ids", [])
     audio_refs = body.get("audio_reference_ids", [])
+    file_refs = body.get("file_reference_ids", [])
+    link_refs = body.get("link_reference_ids", [])
+    for values in (file_refs, link_refs):
+        if (not isinstance(values, list) or len(values) > 1
+                or any(not isinstance(ref, str)
+                       or not re.fullmatch(r"wr_[a-f0-9]{32}", ref) for ref in values)):
+            raise ValueError("Wan file/link references must use one verified ID")
+    if model in ("wan_3", "wan_3_prime"):
+        if ((wan_scenario == "file" and (
+            len(file_refs) != 1 or link_refs or references or video_refs or audio_refs
+        )) or (wan_scenario == "link" and (
+            len(link_refs) != 1 or file_refs or references or video_refs or audio_refs
+        )) or (wan_scenario not in ("file", "link") and (file_refs or link_refs))):
+            raise ValueError("Wan3 file/link scenario expects exactly its owned input")
+    elif file_refs or link_refs:
+        raise ValueError("File/link mode is only supported by Wan3")
+    max_multimedia = 5 if model in ("wan_3", "wan_3_prime") else 1
     for refs in (video_refs, audio_refs):
-        if (not isinstance(refs, list) or len(refs) > 1
-                or any(not isinstance(ref, str) for ref in refs)):
+        if (not isinstance(refs, list) or len(refs) > max_multimedia
+                or any(not isinstance(ref, str) for ref in refs)
+                or len(set(refs)) != len(refs)):
             raise ValueError("Unsupported video/audio reference count")
+    if model in ("wan_3", "wan_3_prime") and (
+        (wan_scenario in ("text", "first_frame", "first_last")
+         and (video_refs or audio_refs))
+        or (wan_scenario == "edit" and not video_refs)
+        or (wan_scenario == "reference"
+            and not (references or video_refs or audio_refs))
+    ):
+        raise ValueError("Wan3 requires owned inputs matching its scenario")
     motion = model in ("motion_control_v26", "motion_control_v30")
     avatar = model in ("avatar_std", "avatar_pro")
     if motion:
@@ -401,8 +457,14 @@ def _normalize_request(body: dict) -> dict:
     elif avatar:
         if len(references) != 1 or len(audio_refs) != 1 or video_refs:
             raise ValueError("Avatar requires one image and one audio reference")
-    elif video_refs or audio_refs:
+    elif (video_refs or audio_refs) and model not in (
+        "wan_3", "wan_3_prime", "gemini_omni",
+    ):
         raise ValueError("Unexpected multimedia references for selected model")
+    if model == "gemini_omni" and audio_refs:
+        raise ValueError("Gemini Omni requires linked Audio IDs, not audio files")
+    if model == "gemini_omni" and len(video_refs) > 1:
+        raise ValueError("Gemini Omni supports one owned video reference")
     quality_raw = body.get("quality")
     if quality_raw is not None and not isinstance(quality_raw, str):
         raise ValueError("Invalid quality")
@@ -424,6 +486,30 @@ def _normalize_request(body: dict) -> dict:
         if any(name in body for name in ("max_images", "text_recognition", "output_format")):
             raise ValueError("Layers options are not supported by this model")
         max_images, text_recognition, output_format = 30, False, "png"
+    if model == "gemini_omni":
+        from bot.web_omni_assets import _ASSET_ID
+
+        omni_audio_ids = body.get("omni_audio_asset_ids", [])
+        omni_character_ids = body.get("omni_character_asset_ids", [])
+        for values, maximum in ((omni_audio_ids, 1), (omni_character_ids, 3)):
+            if (not isinstance(values, list) or len(values) > maximum
+                    or len(set(values)) != len(values)
+                    or any(not isinstance(asset, str) or not _ASSET_ID.fullmatch(asset)
+                           for asset in values)):
+                raise ValueError("Unsupported Omni asset references")
+        omni_seed = body.get("omni_seed")
+        if omni_seed is not None and (
+            type(omni_seed) is not int or not 0 <= omni_seed <= 2147483647
+        ):
+            raise ValueError("Omni random seed is out of range")
+        if len(references) + len(video_refs) * 2 + len(omni_character_ids) > 7:
+            raise ValueError("Gemini Omni input slot limit exceeded")
+    else:
+        if any(key in body for key in (
+            "omni_audio_asset_ids", "omni_character_asset_ids", "omni_seed",
+        )):
+            raise ValueError("Omni asset inputs are not available in this model")
+        omni_audio_ids, omni_character_ids, omni_seed = [], [], None
     if model in ("wan_3", "wan_3_prime", "gemini_omni"):
         # A missing quality-specific admin tariff is NOT a purchasable model.
         # Guard both catalog and create/quote; display flags aren't security.
@@ -447,17 +533,29 @@ def _normalize_request(body: dict) -> dict:
         "expected_price": expected_price,
         "max_images": max_images, "text_recognition": text_recognition,
         "output_format": output_format, "wan_scenario": wan_scenario,
+        "file_reference_ids": file_refs, "link_reference_ids": link_refs,
+        "omni_audio_asset_ids": omni_audio_ids,
+        "omni_character_asset_ids": omni_character_ids,
+        "omni_seed": omni_seed,
     }
 
 
 def _hash_request(payload: dict) -> str:
-    return hashlib.sha256(json.dumps(
-        {key: payload[key] for key in (
+    fields = {
+        key: payload[key] for key in (
             "model", "media_type", "prompt", "aspect_ratio", "duration",
             "reference_ids", "video_reference_ids", "audio_reference_ids", "quality",
             "max_images", "text_recognition", "output_format", "wan_scenario",
-        )},
-        sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+            "omni_audio_asset_ids", "omni_character_asset_ids", "omni_seed",
+            "file_reference_ids", "link_reference_ids",
+        )
+    }
+    # Audio/character asset options and linked account-owned IDs are
+    # immutable under the same task idempotency key.
+    if "asset_payload" in payload:
+        fields["asset_payload"] = payload["asset_payload"]
+    return hashlib.sha256(json.dumps(
+        fields, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     ).encode()).hexdigest()
 
 
@@ -497,9 +595,17 @@ async def quote_generation(request: web.Request) -> web.Response:
             **data,
             "request_key": "web-quote-validation-key-2026",
         })
+        if normalized["model"] in ("wan_3", "wan_3_prime"):
+            from bot.web_wan3 import prepare_owned_wan_media
+            await prepare_owned_wan_media(account, normalized)
+        if normalized["model"] == "gemini_omni":
+            from bot.web_omni_assets import prepare_omni_video
+            await prepare_omni_video(account, normalized)
         await owned_reference_urls(account, normalized["reference_ids"], kind="image")
         await owned_reference_urls(account, normalized["video_reference_ids"], kind="video")
         await owned_reference_urls(account, normalized["audio_reference_ids"], kind="audio")
+        await owned_reference_urls(account, normalized["file_reference_ids"], kind="file")
+        await owned_reference_urls(account, normalized["link_reference_ids"], kind="link")
         amount = _price_for_request(normalized)
         return _json({
             "ok": True, "model": normalized["model"],
@@ -532,9 +638,18 @@ async def create_generation(request: web.Request) -> web.Response:
         if not isinstance(body, dict):
             raise TypeError("Invalid JSON object")
         normalized = _normalize_request(body)
+        if normalized["model"] in ("wan_3", "wan_3_prime"):
+            from bot.web_wan3 import prepare_owned_wan_media
+            await prepare_owned_wan_media(account, normalized)
+        if normalized["model"] == "gemini_omni":
+            from bot.web_omni_assets import prepare_omni_video
+            await prepare_omni_video(account, normalized)
         cost = _price_for_request(normalized)
         units = amount_units(cost)
-    except (ValueError, TypeError, KeyError):
+    except PermissionError:
+        return _json({"ok": False, "error": "Чужой Audio ID, Character ID или видео."}, 403)
+    except (ValueError, TypeError, KeyError) as exc:
+        logger.debug("web_task_input_rejected type=%s", type(exc).__name__)
         return _json({"ok": False, "error": "Проверьте модель, длительность и промпт."}, 400)
 
     # Verify all references belong to the signed account before any wallet
@@ -551,6 +666,12 @@ async def create_generation(request: web.Request) -> web.Response:
         normalized["reference_audio_urls"] = await owned_reference_urls(
             account, normalized["audio_reference_ids"], kind="audio",
         )
+        normalized["reference_file_urls"] = await owned_reference_urls(
+            account, normalized["file_reference_ids"], kind="file",
+        )
+        normalized["reference_link_urls"] = await owned_reference_urls(
+            account, normalized["link_reference_ids"], kind="link",
+        )
     except (ValueError, PermissionError):
         return _json({"ok": False, "error": "Недоступные или чужие референсы."}, 403)
     if (normalized["expected_price"] is not None
@@ -559,6 +680,15 @@ async def create_generation(request: web.Request) -> web.Response:
             "ok": False, "error": "Стоимость изменилась. Обновите расчёт.",
             "code": "price_changed", "current_price": cost,
         }, 409)
+    if normalized["model"] in ("wan_3", "wan_3_prime"):
+        rates = preset_manager.get_video_quality_costs(normalized["model"])
+        value = next(
+            (v for k, v in rates.items()
+             if str(k).lower() == normalized["quality"].lower()), None,
+        )
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            return _json({"ok": False, "error": "Нет тарифа для разрешения Wan3."}, 503)
+        normalized["wan_rate_snapshot"] = str(Decimal(str(value)))
     if normalized["model"] == "seedream_55_layers":
         from bot.services.seedream55_pricing import QUALITY_PRICE_KEYS, price_cells
 
@@ -574,6 +704,19 @@ async def create_generation(request: web.Request) -> web.Response:
         normalized["layer_rate_snapshot"] = {
             "input_unit": str(input_unit), "output_unit": str(output_unit),
         }
+    return await reserve_web_task(account, normalized, cost, units)
+
+
+async def reserve_web_task(
+    account: str, normalized: dict, cost: str, units: int,
+) -> web.Response:
+    """Unified atomic reservation for browser media and Omni asset jobs.
+
+    Both share identical idempotency, pending limits, ownership and ledger
+    semantics. No provider submission occurs inside the database transaction.
+    """
+    from bot.web_auth import _json
+
     await ensure_web_tasks_schema()
     wallet = WalletService("live")
     request_hash = _hash_request(normalized)
@@ -694,6 +837,8 @@ def register_routes(app: web.Application, prefix: str) -> None:
     from bot.web_references import register_routes as register_reference_routes
 
     register_reference_routes(app, prefix)
+    from bot.web_omni_assets import register_routes as register_omni_routes
+    register_omni_routes(app, prefix)
 
 
 def _provider_result_url(value) -> str | None:
@@ -733,6 +878,8 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
     reference_urls = payload.get("reference_urls") or []
     reference_video_urls = payload.get("reference_video_urls") or []
     reference_audio_urls = payload.get("reference_audio_urls") or []
+    reference_file_urls = payload.get("reference_file_urls") or []
+    reference_link_urls = payload.get("reference_link_urls") or []
     callback = _callback_url(task_id)
     def identifier_from(result) -> tuple[str | None, bool]:
         if isinstance(result, str) and result.strip():
@@ -874,8 +1021,14 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
             elif scenario == "first_last":
                 arguments["first_frame_url"] = reference_urls[0]
                 arguments["last_frame_url"] = reference_urls[1]
-            elif scenario == "reference":
+            elif scenario in ("reference", "edit"):
                 arguments["reference_image_urls"] = reference_urls
+                arguments["reference_video_urls"] = reference_video_urls
+                arguments["reference_audio_urls"] = reference_audio_urls
+            elif scenario == "file":
+                arguments["reference_file_urls"] = reference_file_urls
+            elif scenario == "link":
+                arguments["reference_link_urls"] = reference_link_urls
             prepared = await service.prepare_request(**arguments)
             return identifier_from(await service.submit_prepared(
                 prepared, callback_url=callback or None,
@@ -883,11 +1036,27 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
         if model == "gemini_omni":
             from bot.services.gemini_omni_service import gemini_omni_service
 
-            return identifier_from(await gemini_omni_service.generate_video(
-                prompt=prompt, duration=duration, aspect_ratio=ratio,
-                resolution=quality or "720p",
-                image_urls=reference_urls or None, callBackUrl=callback or None,
-            ))
+            video_list = None
+            if reference_video_urls:
+                end = payload.get("omni_video_ends")
+                if type(end) is not int or not 1 <= end <= 20:
+                    raise ValueError("Unverified Gemini Omni video reference duration")
+                video_list = [{"url": reference_video_urls[0], "start": 0, "ends": end}]
+            args = {
+                "prompt": prompt, "duration": duration,
+                "aspect_ratio": ratio, "resolution": quality or "720p",
+                "image_urls": reference_urls or None,
+                "callBackUrl": callback or None,
+            }
+            if video_list:
+                args["video_list"] = video_list
+            if payload.get("omni_audio_provider_ids"):
+                args["audio_ids"] = payload["omni_audio_provider_ids"]
+            if payload.get("omni_character_provider_ids"):
+                args["character_ids"] = payload["omni_character_provider_ids"]
+            if payload.get("omni_seed") is not None:
+                args["seed"] = payload["omni_seed"]
+            return identifier_from(await gemini_omni_service.generate_video(**args))
         if model in ("motion_control_v26", "motion_control_v30"):
             provider = KlingService(kie_key=config.KIE_AI_API_KEY)
             return identifier_from(await provider.generate_motion_control(
@@ -1014,7 +1183,8 @@ async def _task_row(task_id: str):
             """SELECT task_id,account_id,media_type,model,status,phase,
                       provider_task_id,request_json,cost,reservation_key,deadline_epoch,
                       lease_until_epoch,asset_key,result_url,attempt_count,error_code,
-                      outputs_json,bundle_url,output_count,settled_cost
+                      outputs_json,bundle_url,output_count,settled_cost,
+                      asset_id,asset_kind
                FROM web_generation_tasks WHERE task_id=?""",
             (task_id,),
         )).fetchone()
@@ -1061,8 +1231,21 @@ async def _release_failed(row, error_code: str) -> None:
 
 async def _capture_completed(row) -> None:
     task_id, account_id = str(row[0]), str(row[1])
-    if not row[13]:
+    is_asset = len(row) > 21 and row[21] in ("audio", "character")
+    if not row[13] and not is_asset:
         raise ValueError("Cannot capture without a durable result")
+    if is_asset:
+        if not row[20] or not str(row[20]).startswith("oa_"):
+            raise ValueError("Missing persisted Omni asset")
+        await ensure_web_tasks_schema()
+        async with db_backend.connect() as db:
+            owned = await (await db.execute(
+                "SELECT asset_id FROM web_omni_assets "
+                "WHERE asset_id=? AND source_task_id=? AND account_id=? AND kind=?",
+                (row[20], task_id, account_id, row[21]),
+            )).fetchone()
+        if not owned:
+            raise ValueError("Omni asset was not persisted under task owner")
     reserve_units = amount_units(str(row[8]))
     cost = str(row[19]) if len(row) > 19 and row[19] else str(row[8])
     captured_units = amount_units(cost)
@@ -1089,7 +1272,8 @@ async def _capture_completed(row) -> None:
         await db.execute(
             """UPDATE web_generation_tasks SET status='completed',phase='finished',
                lease_until_epoch=0,updated_at_epoch=?
-               WHERE task_id=? AND status='pending' AND result_url IS NOT NULL""",
+               WHERE task_id=? AND status='pending'
+                 AND (result_url IS NOT NULL OR asset_id IS NOT NULL)""",
             (int(time.time()), task_id),
         )
         await db.commit()
@@ -1163,6 +1347,29 @@ async def _process_task(row, *, claimed_from: str) -> None:
         return
     if phase == "submitting" and claimed_from == "queued":
         payload = json.loads(row[7])
+        if str(row[3]) in ("gemini_omni_audio", "gemini_omni_character"):
+            from bot.web_omni_assets import persist_omni_asset, submit_omni_asset
+
+            identifier, asset_id, rejected = await submit_omni_asset(task_id, payload)
+            if asset_id:
+                await persist_omni_asset(row, asset_id)
+                return
+            if rejected:
+                await _release_failed(row, "omni_provider_rejected")
+                return
+            if not identifier:
+                logger.warning("web_omni_asset_provider_unconfirmed task=%s", task_id)
+                return
+            async with db_backend.connect() as db:
+                await db.execute(
+                    """UPDATE web_generation_tasks SET provider_task_id=?,
+                       phase='provider',lease_until_epoch=?,updated_at_epoch=?
+                       WHERE task_id=? AND status='pending' AND phase='submitting'""",
+                    (identifier, int(time.time()) + _POLL_INTERVAL_SECONDS,
+                     int(time.time()), task_id),
+                )
+                await db.commit()
+            return
         identifier, explicit_rejection = await _submit_to_provider(task_id, payload)
         if identifier:
             async with db_backend.connect() as db:
@@ -1185,6 +1392,23 @@ async def _process_task(row, *, claimed_from: str) -> None:
         return
     if not row[6]:
         await _release_failed(row, "missing_provider_task_id")
+        return
+    if str(row[3]) in ("gemini_omni_audio", "gemini_omni_character"):
+        from bot.web_omni_assets import persist_omni_asset, poll_omni_asset
+
+        kind = "audio" if row[3] == "gemini_omni_audio" else "character"
+        try:
+            asset_state, asset_id = await poll_omni_asset(str(row[6]), kind)
+        except Exception:
+            logger.exception("web_omni_asset_poll_failed task=%s", task_id)
+            asset_state, asset_id = "pending", None
+        if asset_state in ("fail", "failed", "error", "rejected", "cancelled"):
+            await _release_failed(row, "omni_asset_provider_failed")
+            return
+        if asset_state in ("success", "completed", "succeeded") and asset_id:
+            await persist_omni_asset(row, asset_id)
+            return
+        await _task_update(task_id, "provider", until=now + _POLL_INTERVAL_SECONDS)
         return
     try:
         status, result_url = await _provider_check(task_id, str(row[6]), str(row[3]))
@@ -1216,12 +1440,34 @@ async def _process_task(row, *, claimed_from: str) -> None:
                 "WEB_GENERATION_RETRY_SECONDS", 30, 5, 3600,
             ))
             return
+        settled_cost = None
+        result_seconds = None
+        if str(row[3]) in ("wan_3", "wan_3_prime"):
+            from bot.web_wan3 import inspect_web_wan_output, settled_wan_cost
+
+            try:
+                result_seconds = await inspect_web_wan_output(
+                    task_id, str(row[12]), durable_url,
+                )
+                payload = json.loads(row[7])
+                settled_cost = settled_wan_cost(
+                    payload, result_seconds, str(row[8]),
+                )
+            except Exception:
+                logger.exception("web_wan3_settlement_retry task=%s", task_id)
+                await _task_update(task_id, "provider", until=now + _seconds(
+                    "WEB_GENERATION_RETRY_SECONDS", 30, 5, 3600,
+                ))
+                return
         async with db_backend.connect() as db:
             await db.execute(
                 """UPDATE web_generation_tasks SET result_url=?,phase='settling',
+                   settled_cost=?,result_seconds=?,
                    lease_until_epoch=0,updated_at_epoch=? WHERE task_id=?
                    AND status='pending'""",
-                (durable_url, int(time.time()), task_id),
+                (durable_url, settled_cost,
+                 str(result_seconds) if result_seconds is not None else None,
+                 int(time.time()), task_id),
             )
             await db.commit()
         await _capture_completed(await _task_row(task_id))

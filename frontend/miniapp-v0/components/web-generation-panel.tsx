@@ -18,12 +18,19 @@ type Model = {
   max_references?: number
   max_video_references?: number
   max_audio_references?: number
+  max_file_references?: number
+  max_link_references?: number
   requires_image?: boolean
   requires_audio?: boolean
   supports_layers?: boolean
   layers_max_images?: { min: number; max: number; default: number }
   layers_formats?: string[]
   supported_modes?: string[]
+}
+type OmniAsset = {
+  asset_id: string
+  kind: 'audio' | 'character'
+  name: string
 }
 type Task = {
   task_id: string
@@ -36,6 +43,7 @@ type Task = {
   output_count?: number | null
   outputs?: string[]
   cost?: string
+  result_seconds?: string | null
 }
 
 export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
@@ -52,6 +60,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   const [textRecognition, setTextRecognition] = useState(false)
   const [outputFormat, setOutputFormat] = useState('png')
   const [wanScenario, setWanScenario] = useState('text')
+  const [omniAssets, setOmniAssets] = useState<OmniAsset[]>([])
+  const [omniAudioAsset, setOmniAudioAsset] = useState('')
+  const [omniCharacterAssets, setOmniCharacterAssets] = useState<string[]>([])
+  const [omniSeed, setOmniSeed] = useState('')
   const [quote, setQuote] = useState<{ price: string; key: string } | null>(null)
   const [quoteError, setQuoteError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -59,6 +71,9 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   const [references, setReferences] = useState<{ id: string; name: string }[]>([])
   const [videoReferences, setVideoReferences] = useState<{ id: string; name: string }[]>([])
   const [audioReferences, setAudioReferences] = useState<{ id: string; name: string }[]>([])
+  const [documentReferences, setDocumentReferences] = useState<{ id: string; name: string }[]>([])
+  const [webpageReference, setWebpageReference] = useState<{ id: string; name: string } | null>(null)
+  const [webpageUrl, setWebpageUrl] = useState('')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const idempotencyKey = useRef('')
@@ -89,11 +104,35 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
     return () => controller.abort()
   }, [])
 
-  const uploadReference = async (file: File, kind: 'image' | 'video' | 'audio') => {
-    const current = kind === 'video' ? videoReferences : kind === 'audio' ? audioReferences : references
+  useEffect(() => {
+    const controller = new AbortController()
+    const refreshAssets = () => {
+      void fetch('/mini-app/api/web-auth/web-omni/assets', {
+        credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      }).then(async response => {
+        if (!response.ok) throw new Error('Omni assets unavailable')
+        return response.json() as Promise<{ ok?: boolean; assets?: OmniAsset[] }>
+      }).then(result => {
+        if (!controller.signal.aborted && result.ok && Array.isArray(result.assets)) {
+          setOmniAssets(result.assets)
+        }
+      }).catch(() => { /* Omni IDs are optional for video generation. */ })
+    }
+    refreshAssets()
+    window.addEventListener('neuromix:omni-assets-updated', refreshAssets)
+    return () => {
+      controller.abort()
+      window.removeEventListener('neuromix:omni-assets-updated', refreshAssets)
+    }
+  }, [])
+
+  const uploadReference = async (file: File, kind: 'image' | 'video' | 'audio' | 'file') => {
+    const current = kind === 'video' ? videoReferences : kind === 'audio' ? audioReferences
+      : kind === 'file' ? documentReferences : references
     const maximum = kind === 'video' ? (model?.max_video_references || 0)
       : kind === 'audio' ? (model?.max_audio_references || 0)
-        : (model?.max_references || 0)
+        : kind === 'file' ? (model?.max_file_references || 0)
+          : (model?.max_references || 0)
     if (uploading || current.length >= maximum) return
     setUploading(true)
     setError('')
@@ -114,6 +153,7 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           ? previous : [...previous, { id: data.reference_id!, name: file.name }]
       if (kind === 'video') setVideoReferences(append)
       else if (kind === 'audio') setAudioReferences(append)
+      else if (kind === 'file') setDocumentReferences(append)
       else setReferences(append)
       idempotencyKey.current = ''
     } catch (failure) {
@@ -123,16 +163,52 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
     }
   }
 
+  const importWebpage = async () => {
+    if (uploading || !webpageUrl.trim()) return
+    setUploading(true)
+    setError('')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/web-generation/link', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webpageUrl.trim() }),
+      })
+      const result = await response.json() as {
+        ok?: boolean; reference_id?: string; error?: string
+      }
+      if (!response.ok || !result.ok || !result.reference_id) {
+        throw new Error(result.error || 'Не удалось подтвердить ссылку.')
+      }
+      setWebpageReference({ id: result.reference_id, name: webpageUrl.trim() })
+      idempotencyKey.current = ''
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Не удалось импортировать ссылку.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const model = models.find(item => item.id === modelId)
   const isWan3 = modelId === 'wan_3' || modelId === 'wan_3_prime'
+  const isOmni = modelId === 'gemini_omni'
   const referencesIds = references.map(item => item.id)
   const videoIds = videoReferences.map(item => item.id)
   const audioIds = audioReferences.map(item => item.id)
+  const documentIds = documentReferences.map(item => item.id)
+  const linkIds = webpageReference ? [webpageReference.id] : []
   const quoteKey = JSON.stringify({
     model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
     duration, quality, reference_ids: referencesIds,
     video_reference_ids: videoIds, audio_reference_ids: audioIds,
-    ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+    ...(isWan3 ? {
+      wan_scenario: wanScenario,
+      file_reference_ids: documentIds, link_reference_ids: linkIds,
+    } : {}),
+    ...(isOmni ? {
+      omni_audio_asset_ids: omniAudioAsset ? [omniAudioAsset] : [],
+      omni_character_asset_ids: omniCharacterAssets,
+      ...(omniSeed.trim() ? { omni_seed: Number(omniSeed) } : {}),
+    } : {}),
     ...(model?.supports_layers ? {
       max_images: maxImages,
       text_recognition: textRecognition,
@@ -151,7 +227,15 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
       || (model.requires_reference && !references.length)
       || (model.requires_image && !references.length)
       || (model.requires_audio && !audioReferences.length)
-      || (model.id.startsWith('motion_control_') && (!references.length || !videoReferences.length))) {
+      || (model.id.startsWith('motion_control_') && (!references.length || !videoReferences.length))
+      || (isWan3 && (
+        (wanScenario === 'file' && !documentIds.length)
+        || (wanScenario === 'link' && !linkIds.length)
+        || (wanScenario === 'edit' && !videoIds.length)
+        || (wanScenario === 'first_frame' && referencesIds.length !== 1)
+        || (wanScenario === 'first_last' && referencesIds.length !== 2)
+        || (wanScenario === 'reference' && !(referencesIds.length || videoIds.length || audioIds.length))
+      ))) {
       return
     }
     const controller = new AbortController()
@@ -165,7 +249,16 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           duration, quality: quality || undefined, reference_ids: referencesIds,
           ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
           ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
-          ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+          ...(isWan3 ? {
+            wan_scenario: wanScenario,
+            ...(documentIds.length ? { file_reference_ids: documentIds } : {}),
+            ...(linkIds.length ? { link_reference_ids: linkIds } : {}),
+          } : {}),
+          ...(isOmni ? {
+            omni_audio_asset_ids: omniAudioAsset ? [omniAudioAsset] : [],
+            omni_character_asset_ids: omniCharacterAssets,
+            ...(omniSeed.trim() ? { omni_seed: Number(omniSeed) } : {}),
+          } : {}),
           ...(model.supports_layers ? {
             max_images: maxImages,
             text_recognition: textRecognition,
@@ -232,7 +325,16 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           reference_ids: referencesIds, quality: quality || undefined,
           ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
           ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
-          ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+          ...(isWan3 ? {
+            wan_scenario: wanScenario,
+            ...(documentIds.length ? { file_reference_ids: documentIds } : {}),
+            ...(linkIds.length ? { link_reference_ids: linkIds } : {}),
+          } : {}),
+          ...(isOmni ? {
+            omni_audio_asset_ids: omniAudioAsset ? [omniAudioAsset] : [],
+            omni_character_asset_ids: omniCharacterAssets,
+            ...(omniSeed.trim() ? { omni_seed: Number(omniSeed) } : {}),
+          } : {}),
           ...(model.supports_layers ? {
             max_images: maxImages,
             text_recognition: textRecognition,
@@ -278,9 +380,15 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           setTextRecognition(false)
           setOutputFormat(next?.layers_formats?.[0] || 'png')
           setWanScenario('text')
+          setOmniAudioAsset('')
+          setOmniCharacterAssets([])
+          setOmniSeed('')
           setReferences(previous => previous.slice(0, next?.max_references || 0))
           setVideoReferences(previous => previous.slice(0, next?.max_video_references || 0))
           setAudioReferences(previous => previous.slice(0, next?.max_audio_references || 0))
+          setDocumentReferences([])
+          setWebpageReference(null)
+          setWebpageUrl('')
           setQuote(null)
           idempotencyKey.current = ''
         }} className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
@@ -303,6 +411,49 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           {model.qualities.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </div> : null}
+      {isOmni ? <fieldset className="space-y-3 border border-[#a48350]/40 p-3">
+        <legend className="px-1 text-sm font-semibold text-[#f0c779]">
+          Gemini Omni — видео, голоса и персонажи
+        </legend>
+        <label className="block text-sm text-[#d7c0a2]">
+          Audio ID (необязательно)
+          <select value={omniAudioAsset} disabled={busy}
+            onChange={event => { setOmniAudioAsset(event.target.value); idempotencyKey.current = '' }}
+            className="mt-1 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+            <option value="">Без своего Audio ID</option>
+            {omniAssets.filter(asset => asset.kind === 'audio').map(asset =>
+              <option key={asset.asset_id} value={asset.asset_id}>{asset.name}</option>)}
+          </select>
+        </label>
+        <div className="space-y-1 text-sm text-[#d7c0a2]">
+          Character ID (до 3, необязательно)
+          {omniAssets.filter(asset => asset.kind === 'character').map(asset =>
+            <label key={asset.asset_id} className="flex min-h-10 items-center gap-2 text-sm">
+              <input type="checkbox" disabled={busy || (
+                omniCharacterAssets.length >= 3 && !omniCharacterAssets.includes(asset.asset_id)
+              )} checked={omniCharacterAssets.includes(asset.asset_id)}
+                onChange={event => {
+                  setOmniCharacterAssets(previous => event.target.checked
+                    ? [...previous, asset.asset_id] : previous.filter(id => id !== asset.asset_id))
+                  idempotencyKey.current = ''
+                }} />
+              {asset.name}
+            </label>)}
+        </div>
+        <label className="block text-sm text-[#d7c0a2]">
+          Seed (необязательно)
+          <input type="number" min={0} max={2147483647} step={1} value={omniSeed}
+            disabled={busy} onChange={event => {
+              setOmniSeed(event.target.value)
+              idempotencyKey.current = ''
+            }}
+            className="mt-1 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white" />
+        </label>
+        <p className="text-xs text-[#b4aea1]">
+          Для использования своего голоса или персонажа сначала создайте и оплатите
+          ID в разделе выше. Для Gemini Omni доступен один входной видеореференс.
+        </p>
+      </fieldset> : null}
       {isWan3 && model?.supported_modes ? <div className="space-y-2">
         <label className="block text-sm text-[#d7c0a2]" htmlFor="web-wan-scenario">
           Сценарий Wan 3.0
@@ -311,6 +462,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           onChange={event => {
             setWanScenario(event.target.value)
             setReferences([])
+            setVideoReferences([])
+            setAudioReferences([])
+            setDocumentReferences([])
+            setWebpageReference(null)
             idempotencyKey.current = ''
           }}
           className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
@@ -318,13 +473,59 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
             item === 'text' ? 'Текст → видео'
               : item === 'first_frame' ? 'Первый кадр → видео (1 фото)'
                 : item === 'first_last' ? 'Первый и последний кадр (2 фото)'
-                  : 'Референсы изображений → видео'
+                  : item === 'edit' ? 'Редактирование исходного видео'
+                    : item === 'file' ? 'Документ → видео'
+                      : item === 'link' ? 'Веб-страница → видео'
+                        : 'Фото, видео и аудио → видео'
           }</option>)}
         </select>
         <p className="text-xs text-[#adaba4]">
-          Автоматическая длительность, видео, аудио, файл и ссылки требуют
-          отдельного серверного измерения и тарификации.
+          Длительность входного видео измеряется на сервере. При выборе
+          «Авто» резервируются средства за максимум 30 секунд, после
+          обработки остаток возвращается по фактической длительности.
+          Файлы и публичные страницы проверяются на сервере до списания.
         </p>
+      </div> : null}
+      {isWan3 && wanScenario === 'file' ? <div className="space-y-2">
+        <label htmlFor="web-wan-document" className="block text-sm text-[#d7c0a2]">
+          Документ-референс (PDF, TXT, DOCX, XLSX, PPTX)
+        </label>
+        <input id="web-wan-document" type="file"
+          accept=".pdf,.txt,.md,.doc,.xls,.ppt,.docx,.xlsx,.pptx,.pages,.numbers,.key"
+          disabled={busy || uploading || documentReferences.length >= 1}
+          onChange={event => {
+            const file = event.target.files?.[0]
+            if (file) void uploadReference(file, 'file')
+            event.target.value = ''
+          }} className="block max-w-full text-xs text-[#d9c7ae]" />
+        {documentReferences.map(item => <div key={item.id} className="flex items-center gap-2 text-sm">
+          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+          <button type="button" className="text-[#f1c77a] underline"
+            onClick={() => { setDocumentReferences([]); idempotencyKey.current = '' }}>
+            Убрать
+          </button>
+        </div>)}
+      </div> : null}
+      {isWan3 && wanScenario === 'link' ? <div className="space-y-2">
+        <label htmlFor="web-wan-link" className="block text-sm text-[#d7c0a2]">
+          Ссылка на публичную HTTPS-страницу
+        </label>
+        <input id="web-wan-link" type="url" value={webpageUrl}
+          placeholder="https://example.org/article" disabled={busy || uploading}
+          onChange={event => {
+            setWebpageUrl(event.target.value)
+            setWebpageReference(null)
+            idempotencyKey.current = ''
+          }}
+          className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white" />
+        <button type="button" disabled={busy || uploading || !webpageUrl.trim()}
+          onClick={() => void importWebpage()}
+          className="min-h-10 border border-[#b89454] px-3 text-sm text-[#f1c77a] disabled:opacity-50">
+          Проверить и привязать страницу
+        </button>
+        {webpageReference ? <p className="text-xs text-[#d7c0a2]">
+          Привязана: {webpageReference.name}
+        </p> : null}
       </div> : null}
       {model?.supports_layers ? <fieldset className="space-y-3 border border-[#a48350]/40 p-3">
         <legend className="px-1 text-sm font-semibold text-[#f0c779]">Разделение на слои</legend>
@@ -447,7 +648,9 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           <select value={duration} disabled={busy}
             onChange={event => { setDuration(Number(event.target.value)); idempotencyKey.current = '' }}
             className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
-            {(model.durations || [5]).map(item => <option key={item} value={item}>{item} сек.</option>)}
+            {(model.durations || [5]).map(item => <option key={item} value={item}>{
+              item === -1 ? 'Авто (макс. резерв 30 сек.)' : item + ' сек.'
+            }</option>)}
           </select>
         </label> : null}
       </div>
@@ -466,6 +669,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
         activeTask.status === 'pending' ? 'генерируется' :
         activeTask.status === 'completed' ? 'готова' : 'ошибка, резерв возвращён'
       }</p>
+      {activeTask.result_seconds ? <p className="text-sm text-[#d9c7ae]">
+        Длительность результата: {activeTask.result_seconds} сек.
+        {activeTask.cost ? ' Списано: ' + activeTask.cost + ' кредитов.' : ''}
+      </p> : null}
       {activeTask.output_count ? <p className="text-sm text-[#d9c7ae]">
         Сохранено слоёв и изображений: {activeTask.output_count}.
         {activeTask.cost ? ' Итоговое списание: ' + activeTask.cost + ' кредитов.' : ''}
