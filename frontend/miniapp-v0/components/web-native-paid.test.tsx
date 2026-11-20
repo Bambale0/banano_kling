@@ -342,3 +342,50 @@ test.each([
     expect(posted?.reference_file_urls).toBeUndefined()
   },
 )
+
+
+test('Seedream 5.5 browser sends output format, transparent background and NSFW setting with quote', async () => {
+  const calls: Array<{ path: string; body: Record<string, unknown> | null }> = []
+  global.fetch = jest.fn().mockImplementation(async (path: string, options?: RequestInit) => {
+    const body = typeof options?.body === 'string' ? JSON.parse(options.body) : null
+    calls.push({ path, body })
+    if (path.endsWith('/models')) return {
+      ok: true, json: async () => ({ ok: true, enabled: true, models: [{
+        id: 'seedream_55', label: 'Seedream 5.5', type: 'image',
+        price: '3', ratios: ['1:1', '16:9'], qualities: ['1K', '1.5K', '2K'],
+        max_references: 10, supports_output_format: true,
+        supports_background: true, supports_nsfw_checker: true,
+      }] }),
+    }
+    if (path.endsWith('/quote')) return {
+      ok: true, json: async () => ({ ok: true, price: '3' }),
+    }
+    if (path.endsWith('/create')) return {
+      ok: true, json: async () => ({ ok: true, task_id: 'web_' + 'd'.repeat(32),
+        status: 'pending' }),
+    }
+    throw new Error('Unexpected ' + path)
+  }) as typeof fetch
+  render(<WebGenerationPanel onBalanceChanged={jest.fn()} onTaskChanged={jest.fn()} />)
+  await screen.findByRole('option', { name: 'Seedream 5.5 (фото)' })
+  fireEvent.change(screen.getByLabelText('Описание'), {
+    target: { value: 'A fox against a transparent background' },
+  })
+  fireEvent.change(screen.getByLabelText('Формат результата Seedream'), {
+    target: { value: 'png' },
+  })
+  fireEvent.change(screen.getByLabelText('Фон Seedream'), {
+    target: { value: 'transparent' },
+  })
+  fireEvent.click(screen.getByLabelText('Проверять NSFW'))
+  fireEvent.click(await screen.findByRole('button', { name: 'Создать за 3 кредитов' }))
+  expect(await screen.findByText('Задача: генерируется')).toBeTruthy()
+  for (const endpoint of ['/quote', '/create']) {
+    const payload = calls.filter(c => c.path.endsWith(endpoint)).at(-1)?.body
+    expect(payload).toEqual(expect.objectContaining({
+      model: 'seedream_55',
+      output_format: 'png', background: 'transparent',
+      nsfw_checker: true,
+    }))
+  }
+})

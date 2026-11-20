@@ -23,6 +23,9 @@ type Model = {
   requires_image?: boolean
   requires_audio?: boolean
   supports_layers?: boolean
+  supports_output_format?: boolean
+  supports_background?: boolean
+  supports_nsfw_checker?: boolean
   layers_max_images?: { min: number; max: number; default: number }
   layers_formats?: string[]
   supported_modes?: string[]
@@ -59,6 +62,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   const [maxImages, setMaxImages] = useState(30)
   const [textRecognition, setTextRecognition] = useState(false)
   const [outputFormat, setOutputFormat] = useState('png')
+  const [background, setBackground] = useState('auto')
+  const [nsfwChecker, setNsfwChecker] = useState(false)
   const [wanScenario, setWanScenario] = useState('text')
   const [omniAssets, setOmniAssets] = useState<OmniAsset[]>([])
   const [omniAudioAsset, setOmniAudioAsset] = useState('')
@@ -214,6 +219,11 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
       text_recognition: textRecognition,
       output_format: outputFormat,
     } : {}),
+    ...(model?.id === 'seedream_55' ? {
+      output_format: outputFormat,
+      background,
+    } : {}),
+    ...(model?.supports_nsfw_checker ? { nsfw_checker: nsfwChecker } : {}),
   })
   const quoteReady = Boolean(quote && quote.key === quoteKey)
   const price = quoteReady
@@ -264,6 +274,11 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
             text_recognition: textRecognition,
             output_format: outputFormat,
           } : {}),
+          ...(model.id === 'seedream_55' ? {
+            output_format: outputFormat,
+            background,
+          } : {}),
+          ...(model.supports_nsfw_checker ? { nsfw_checker: nsfwChecker } : {}),
         }),
       }).then(async response => {
         const result = await response.json() as { ok?: boolean; price?: string }
@@ -340,6 +355,11 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
             text_recognition: textRecognition,
             output_format: outputFormat,
           } : {}),
+          ...(model.id === 'seedream_55' ? {
+            output_format: outputFormat,
+            background,
+          } : {}),
+          ...(model.supports_nsfw_checker ? { nsfw_checker: nsfwChecker } : {}),
           expected_price: quote!.price,
         }),
       })
@@ -379,6 +399,8 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           setMaxImages(next?.layers_max_images?.default || 30)
           setTextRecognition(false)
           setOutputFormat(next?.layers_formats?.[0] || 'png')
+          setBackground('auto')
+          setNsfwChecker(false)
           setWanScenario('text')
           setOmniAudioAsset('')
           setOmniCharacterAssets([])
@@ -411,6 +433,42 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           {model.qualities.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </div> : null}
+      {model?.supports_output_format && !model?.supports_layers ? <div className="space-y-2">
+        <label className="block text-sm text-[#d7c0a2]" htmlFor="web-seedream-format">
+          Формат результата Seedream
+        </label>
+        <select id="web-seedream-format" value={outputFormat} disabled={busy}
+          onChange={event => {
+            setOutputFormat(event.target.value)
+            if (event.target.value === 'jpeg' && background === 'transparent') setBackground('auto')
+            idempotencyKey.current = ''
+          }}
+          className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+          <option value="png">PNG</option>
+          <option value="jpeg">JPEG</option>
+        </select>
+      </div> : null}
+      {model?.supports_background ? <div className="space-y-2">
+        <label className="block text-sm text-[#d7c0a2]" htmlFor="web-seedream-background">
+          Фон Seedream
+        </label>
+        <select id="web-seedream-background" value={background} disabled={busy}
+          onChange={event => {
+            setBackground(event.target.value)
+            if (event.target.value === 'transparent') setOutputFormat('png')
+            idempotencyKey.current = ''
+          }}
+          className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+          <option value="auto">Авто</option>
+          <option value="opaque">Непрозрачный</option>
+          <option value="transparent">Прозрачный (PNG)</option>
+        </select>
+      </div> : null}
+      {model?.supports_nsfw_checker ? <label className="flex min-h-11 items-center gap-3 text-sm text-[#d7c0a2]">
+        <input type="checkbox" checked={nsfwChecker} disabled={busy}
+          onChange={event => { setNsfwChecker(event.target.checked); idempotencyKey.current = '' }} />
+        Проверять NSFW
+      </label> : null}
       {isOmni ? <fieldset className="space-y-3 border border-[#a48350]/40 p-3">
         <legend className="px-1 text-sm font-semibold text-[#f0c779]">
           Gemini Omni — видео, голоса и персонажи

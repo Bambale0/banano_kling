@@ -238,3 +238,110 @@ async def test_seedream_edit_4k_dispatches_provider_high_quality_not_basic(monke
     )
     assert (task, rejected) == ("seedream-quality-4k", False)
     assert fake.await_args.kwargs["quality"] == "high"
+
+
+def test_seedream55_web_settings_match_provider_contract_and_never_silent_fallback():
+    base = {
+        "model": "seedream_55", "prompt": "Beautiful portrait with crisp lines",
+        "aspect_ratio": "1:1", "quality": "2K",
+        "request_key": "seedream55-web-settings-2026",
+    }
+    good = web_generation._normalize_request({
+        **base, "output_format": "png",
+        "background": "transparent", "nsfw_checker": True,
+    })
+    assert good["output_format"] == "png"
+    assert good["background"] == "transparent"
+    assert good["nsfw_checker"] is True
+    for invalid in (
+        {"output_format": "jpeg", "background": "transparent"},
+        {"output_format": "png", "background": "not-a-background"},
+        {"nsfw_checker": "true"},
+        {"aspect_ratio": "auto"},
+    ):
+        with pytest.raises(ValueError):
+            web_generation._normalize_request({**base, **invalid})
+    with pytest.raises(ValueError):
+        web_generation._normalize_request({
+            **base, "model": "flux_pro", "background": "transparent",
+        })
+
+
+@pytest.mark.asyncio
+async def test_seedream55_web_text_and_edit_send_all_checked_options(monkeypatch):
+    import importlib
+    from unittest.mock import AsyncMock
+
+    provider = importlib.import_module("bot.services.seedream55_service").seedream55_service
+    create = AsyncMock(return_value={"task_id": "seedream55-settings-ok"})
+    edit = AsyncMock(return_value={"task_id": "seedream55-edited-ok"})
+    monkeypatch.setattr(provider, "generate_text_to_image", create)
+    monkeypatch.setattr(provider, "generate_image", edit)
+    base = {
+        "model": "seedream_55", "prompt": "Sunset portrait on transparent background",
+        "quality": "1.5K", "duration": 5, "aspect_ratio": "1:1",
+        "output_format": "png", "background": "transparent",
+        "nsfw_checker": True,
+    }
+    task, rejected = await web_generation._submit_to_provider(
+        "web_" + "a" * 32, {**base, "reference_urls": []},
+    )
+    assert (task, rejected) == ("seedream55-settings-ok", False)
+    assert create.await_args.kwargs["output_format"] == "png"
+    assert create.await_args.kwargs["background"] == "transparent"
+    assert create.await_args.kwargs["nsfw_checker"] is True
+    task, rejected = await web_generation._submit_to_provider(
+        "web_" + "b" * 32, {
+            **base, "reference_urls": [
+                "https://neuromixbot.com/uploads/web_refs/owned.png",
+            ],
+        },
+    )
+    assert (task, rejected) == ("seedream55-edited-ok", False)
+    assert edit.await_args.kwargs["output_format"] == "png"
+    assert edit.await_args.kwargs["background"] == "transparent"
+    assert edit.await_args.kwargs["nsfw_checker"] is True
+
+
+@pytest.mark.parametrize("model,quality,duration", [
+    ("grok_imagine_v15", "720p", 6),
+    ("veo3_fast", "1080p", 6),
+    ("veo3_fast", "4k", 8),
+])
+def test_video_web_quality_billing_uses_actual_admin_resolution_rate(model, quality, duration):
+    from bot.services.preset_manager import preset_manager
+
+    catalogue = {row["id"]: row for row in web_generation._models()}
+    assert quality in catalogue[model]["qualities"]
+    quoted = web_generation._price("video", model, duration, quality)
+    official = preset_manager.get_video_cost_with_quality(model, duration, quality)
+    assert float(quoted) == official
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model,quality,method", [
+    ("grok_imagine_v15", "720p", "generate_image_to_video_v15"),
+    ("veo3_fast", "4k", "generate_video"),
+])
+async def test_video_quality_reaches_provider_not_silently_reduced(monkeypatch, model, quality, method):
+    import importlib
+    from unittest.mock import AsyncMock
+
+    module = "bot.services.grok_service" if model.startswith("grok") else "bot.services.veo_service"
+    attr = "grok_service" if model.startswith("grok") else "veo_service"
+    provider = getattr(importlib.import_module(module), attr)
+    fake = AsyncMock(return_value={"task_id": "rendering-task-2026"})
+    monkeypatch.setattr(provider, method, fake)
+    result, rejected = await web_generation._submit_to_provider(
+        "web_" + "1" * 32, {
+            "model": model, "prompt": "A city at sunset",
+            "aspect_ratio": "16:9", "duration": 6,
+            "quality": quality,
+            "reference_urls": [
+                "https://neuromixbot.com/uploads/web_refs/owned.png",
+            ],
+        },
+    )
+    assert result == "rendering-task-2026"
+    assert rejected is False
+    assert fake.await_args.kwargs["resolution"] == quality

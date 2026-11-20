@@ -126,7 +126,9 @@ def _quality_value(model: str, meta: dict, quality: str | None) -> str:
         ["auto"] if model == "seedream_55_layers" else []
     ) or meta.get("motion_modes") or (
         meta.get("omni_resolutions") if model == "gemini_omni" else
-        meta.get("wan_resolutions") if model in ("wan_3", "wan_3_prime")
+        meta.get("wan_resolutions") if model in ("wan_3", "wan_3_prime") else
+        meta.get("grok_resolutions") if model == "grok_imagine_v15" else
+        meta.get("veo_resolutions") if model == "veo3_fast"
         else []
     ) or []
     if not choices:
@@ -171,7 +173,19 @@ def _price(media_type: str, model: str, duration: int,
             raise ValueError("Model is not enabled for independent browser generation")
         if duration not in meta.get("durations", ()):
             raise ValueError("Unsupported duration")
-        if model in ("wan_3", "wan_3_prime"):
+        if model in ("grok_imagine_v15", "veo3_fast"):
+            selected_quality = _quality_value(model, meta, quality)
+            available_rates = {
+                str(key).lower(): value
+                for key, value in preset_manager.get_video_quality_costs(model).items()
+            }
+            rate = available_rates.get(selected_quality.lower())
+            if type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
+                raise ValueError("Missing verified resolution rate for video model")
+            raw = preset_manager.get_video_cost_with_quality(
+                model, duration, selected_quality,
+            )
+        elif model in ("wan_3", "wan_3_prime"):
             if duration != -1 and not 2 <= duration <= 30:
                 raise ValueError("Wan3 output duration must be 2-30 or auto")
             selected_quality = _quality_value(model, meta, quality)
@@ -318,6 +332,8 @@ def _models() -> list[dict]:
                 entry["qualities"] = list(
                     canonical.get("omni_resolutions") if model == "gemini_omni"
                     else canonical.get("wan_resolutions") if model in ("wan_3", "wan_3_prime")
+                    else canonical.get("grok_resolutions") if model == "grok_imagine_v15"
+                    else canonical.get("veo_resolutions") if model == "veo3_fast"
                     else canonical.get("motion_modes") or []
                 )
                 if model in ("wan_3", "wan_3_prime"):
@@ -364,6 +380,7 @@ def _normalize_request(body: dict) -> dict:
         "output_format", "wan_scenario",
         "omni_audio_asset_ids", "omni_character_asset_ids", "omni_seed",
         "file_reference_ids", "link_reference_ids",
+        "background", "nsfw_checker",
     }
     if set(body) - allowed:
         raise ValueError("Unexpected web generation fields")
@@ -483,9 +500,34 @@ def _normalize_request(body: dict) -> dict:
         if output_format not in ("png", "jpeg"):
             raise ValueError("Unsupported layers output format")
     else:
-        if any(name in body for name in ("max_images", "text_recognition", "output_format")):
+        if any(name in body for name in ("max_images", "text_recognition")):
             raise ValueError("Layers options are not supported by this model")
-        max_images, text_recognition, output_format = 30, False, "png"
+        if model != "seedream_55" and "output_format" in body:
+            raise ValueError("Output format is unsupported by this model")
+        max_images, text_recognition = 30, False
+        output_format = body.get("output_format", "png") if model == "seedream_55" else "png"
+    if model in ("seedream_55", "seedream_55_layers"):
+        if output_format not in ("png", "jpeg"):
+            raise ValueError("Unsupported Seedream 5.5 output format")
+        nsfw_checker = body.get("nsfw_checker", False)
+        if type(nsfw_checker) is not bool:
+            raise ValueError("Invalid Seedream 5.5 NSFW checker")
+        if model == "seedream_55":
+            background = body.get("background", "auto")
+            if background not in ("auto", "transparent", "opaque"):
+                raise ValueError("Invalid Seedream 5.5 background")
+            if background == "transparent" and output_format != "png":
+                raise ValueError("Transparent background requires PNG")
+            if not references and ratio == "auto":
+                raise ValueError("Seedream 5.5 text-only requires a concrete ratio")
+        else:
+            if "background" in body:
+                raise ValueError("Layer decomposition doesn't support backgrounds")
+            background = "auto"
+    else:
+        if any(key in body for key in ("background", "nsfw_checker")):
+            raise ValueError("These controls are exclusive to Seedream 5.5")
+        background, nsfw_checker = "auto", False
     if model == "gemini_omni":
         from bot.web_omni_assets import _ASSET_ID
 
@@ -532,7 +574,8 @@ def _normalize_request(body: dict) -> dict:
         "video_reference_ids": video_refs, "audio_reference_ids": audio_refs,
         "expected_price": expected_price,
         "max_images": max_images, "text_recognition": text_recognition,
-        "output_format": output_format, "wan_scenario": wan_scenario,
+        "output_format": output_format, "background": background,
+        "nsfw_checker": nsfw_checker, "wan_scenario": wan_scenario,
         "file_reference_ids": file_refs, "link_reference_ids": link_refs,
         "omni_audio_asset_ids": omni_audio_ids,
         "omni_character_asset_ids": omni_character_ids,
@@ -546,6 +589,7 @@ def _hash_request(payload: dict) -> str:
             "model", "media_type", "prompt", "aspect_ratio", "duration",
             "reference_ids", "video_reference_ids", "audio_reference_ids", "quality",
             "max_images", "text_recognition", "output_format", "wan_scenario",
+            "background", "nsfw_checker",
             "omni_audio_asset_ids", "omni_character_asset_ids", "omni_seed",
             "file_reference_ids", "link_reference_ids",
         )
@@ -920,6 +964,7 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
                 output_format=str(payload.get("output_format") or "png"),
                 max_images=int(payload["max_images"]),
                 text_recognition=bool(payload["text_recognition"]),
+                nsfw_checker=bool(payload.get("nsfw_checker", False)),
                 callBackUrl=callback or None,
             ))
         if model == "seedream_55":
@@ -928,10 +973,17 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
             if reference_urls:
                 return identifier_from(await seedream55_service.generate_image(
                     prompt, reference_urls, aspect_ratio=ratio,
-                    size=quality or "2K", callBackUrl=callback or None,
+                    size=quality or "2K",
+                    output_format=str(payload.get("output_format") or "png"),
+                    background=str(payload.get("background") or "auto"),
+                    nsfw_checker=bool(payload.get("nsfw_checker", False)),
+                    callBackUrl=callback or None,
                 ))
             return identifier_from(await seedream55_service.generate_text_to_image(
                 prompt, aspect_ratio=ratio, size=quality or "2K",
+                output_format=str(payload.get("output_format") or "png"),
+                background=str(payload.get("background") or "auto"),
+                nsfw_checker=bool(payload.get("nsfw_checker", False)),
                 callBackUrl=callback or None,
             ))
         if model == "seedream_5_pro":
@@ -984,7 +1036,7 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
 
             return identifier_from(await grok_service.generate_image_to_video_v15(
                 image_urls=reference_urls[:1], prompt=prompt,
-                duration=duration, aspect_ratio=ratio, resolution="480p",
+                duration=duration, aspect_ratio=ratio, resolution=quality or "480p",
                 callBackUrl=callback or None,
             ))
         if model == "seedance_2":
@@ -1003,7 +1055,7 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
                 image_urls=reference_urls or None, aspect_ratio=ratio,
                 generation_type="FIRST_AND_LAST_FRAMES_2_VIDEO"
                 if reference_urls else "TEXT_2_VIDEO",
-                resolution="720p", callBackUrl=callback or None,
+                resolution=quality or "720p", callBackUrl=callback or None,
             ))
         if model in ("wan_3", "wan_3_prime"):
             from bot.services.wan3_models import wan3_service_for_model

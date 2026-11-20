@@ -204,3 +204,34 @@ WEB_NATIVE_PAYMENTS_ENABLED disabled in production until then.
   uses a separate future ledger integration, and source-specific advanced
   options for all existing Telegram models need live contract smoke. The
   web feature flags intentionally remain off in production pending proof.
+
+
+## Additional provider-contract and real S3 input-path regression checks
+
+- Fixed Gemini Omni Character ID provider POST parameter mismatch:
+  KIE expects singular description, not descriptions. Added a wire-contract
+  regression alongside the matching Audio ID payload check.
+- Fixed regex used by owned_reference_media for the exact S3 filename;
+  the previous double-escaped dot incorrectly rejected all real wr_ uploaded
+  media paths even though mocked Wan unit tests passed. The new actual HTTP
+  upload → S3 pathname → SHA-256 revalidation → media probe test catches
+  the original defect; tampered bytes are rejected.
+- Seedream 5.5 basic text/edit web requests now support the existing
+  provider format PNG/JPEG, background auto/opaque/transparent and NSFW
+  checker options. Transparent JPEG and text-only auto ratio are rejected
+  before any reserve; all options are included in quote/idempotency hash
+  and passed to the provider. Layer decomposition also passes NSFW check.
+- Grok Imagine Video 1.5 supports the original 480p/720p resolutions;
+  Veo 3.1 Fast supports 720p/1080p/4k. Requested output resolution is
+  passed exactly to the provider, and price uses the configured per-quality
+  admin tariff with no generic fallback.
+- The checked-in test fixture lacks Wan3 resolution prices, but a
+  read-only check of the running production pricing config confirmed both
+  Wan3 models have per-resolution rates already configured at runtime.
+  Do not copy or hardcode those values into application code.
+- Isolated regression checkpoint: 263 backend passed, 27 Jest frontend
+  passed; optimized Next.js TypeScript build and mobile/desktop public-login
+  and web-paid E2E passed; targeted Ruff and staged diff check passed.
+  None of this is a live KIE provider charge or real Lava/S3 payment and
+  readback verification. Production flags must remain off until staged
+  rollout and real contract smoke are completed.
