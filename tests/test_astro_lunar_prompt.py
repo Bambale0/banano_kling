@@ -43,7 +43,10 @@ def _facts(*, leap=True):
         "ingresses": [{
             "at_utc": f"{month}-05T10:00:00+00:00",
             "at_local": f"{month}-05T11:00:00+01:00",
-            "moon_sign": "Телец",
+            "from_sign": "Овен",
+            "to_sign": "Телец",
+            "longitude_deg": 30.0,
+            "local_date": f"{month}-05",
         }],
         "events": [{
             "kind": "новолуние",
@@ -137,7 +140,7 @@ def test_new_lunar_signature_authenticates_exact_events_and_rejects_tampering():
     job = SimpleNamespace(owner_id=62, job_id=job_id, service_id="lunar",
                           facts=facts, fingerprint=signature)
     assert resolve_astro_job_plan(job, secret)[0].version == plan.version
-    altered = {**facts, "ingresses": [{**facts["ingresses"][0], "moon_sign": "Рак"}]}
+    altered = {**facts, "ingresses": [{**facts["ingresses"][0], "to_sign": "Рак"}]}
     job.facts = altered
     with pytest.raises(ValueError, match="template changed"):
         resolve_astro_job_plan(job, secret)
