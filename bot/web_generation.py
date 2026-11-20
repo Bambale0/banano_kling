@@ -369,6 +369,39 @@ def _models() -> list[dict]:
                         entry["enabled"] = False
                         entry["unavailable_reason"] = "Нет корректного тарифа для длительности."
             all_models.append(entry)
+
+    # The shipped Mini App also installs public models via its bootstrap
+    # extensions (seedance_25_public_release), outside VIDEO_MODELS.
+    # Project their existing capability metadata into the browser inventory;
+    # do NOT mark them billable until both entry points share the same
+    # account-aware task executor and verified settlement contract.
+    from bot.model_capabilities import VIDEO_MODEL_CAPABILITIES
+
+    installed_extension = VIDEO_MODEL_CAPABILITIES.get("seedance_2_5")
+    if installed_extension and not any(
+        item["id"] == installed_extension.key for item in all_models
+    ):
+        all_models.append({
+            "id": installed_extension.key,
+            "label": installed_extension.label,
+            "type": "video",
+            "description": (
+                "Доступна в Telegram Mini App через существующий Seedance 2.5 "
+                "backend; независимый веб-запуск пока не подключён."
+            ),
+            "ratios": list(installed_extension.aspect_ratios),
+            "durations": list(installed_extension.durations),
+            "qualities": list(installed_extension.resolutions),
+            "supported_modes": list(installed_extension.modes),
+            "max_references": installed_extension.max_reference_images,
+            "max_video_references": installed_extension.max_reference_videos,
+            "max_audio_references": installed_extension.max_reference_audio,
+            "enabled": False,
+            "unavailable_reason": (
+                "Seedance 2.5 уже работает в Telegram Mini App, но общий "
+                "веб-контур платежей и жизненного цикла задач ещё не объединён."
+            ),
+        })
     return all_models
 
 

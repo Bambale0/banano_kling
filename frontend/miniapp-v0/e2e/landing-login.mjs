@@ -174,6 +174,27 @@ try {
   await yandexGuest.close()
   console.log('login/Yandex configured -> authorization start with referral: OK')
 
+  // An anonymous /mini-app/ URL is a website login, not a silent
+  // Telegram WebApp bootstrap. Preserve referral and reject arbitrary query.
+  const anonymousApp = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const anonymousConsoleErrors = []
+  anonymousApp.on('pageerror', error => anonymousConsoleErrors.push(String(error)))
+  let anonymousStudioAttempts = 0
+  await anonymousApp.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: false, studio_ready: false }),
+  }))
+  await anonymousApp.route('**/mini-app/api/web-auth/studio', route => {
+    anonymousStudioAttempts += 1
+    return route.fulfill({ status: 403, body: 'Unexpected Telegram bridge' })
+  })
+  await anonymousApp.goto(origin + '/mini-app/?ref=NW0123456789ABCDEF&junk=ignored')
+  await anonymousApp.waitForURL('**/login?ref=NW0123456789ABCDEF')
+  assert.equal(anonymousStudioAttempts, 0)
+  assert.deepEqual(anonymousConsoleErrors, [])
+  await anonymousApp.close()
+  console.log('anonymous browser Mini App -> website login, referral preserved: OK')
+
   // Verified browser-only identities must enter their own private account,
   // without a synthetic Telegram identity or forced Telegram linking.
   const yandexOnly = await browser.newPage({ viewport: { width: 390, height: 844 } })

@@ -6,7 +6,7 @@ import { VkNativeWorkspace } from '@/components/vk-native-workspace'
 import { hasVkLaunchData, incomingAccountLink } from '@/lib/account-platform'
 import { reportVkLaunchStage } from '@/lib/vk-launch-telemetry'
 import { WebAccountWorkspace } from '@/components/web-account-workspace'
-import { browserEntryMode, hasExplicitTelegramLaunch } from '@/lib/web-account-entry'
+import { browserEntryMode, browserLoginUrl, hasExplicitTelegramLaunch, navigateToWebsiteLogin } from '@/lib/web-account-entry'
 import {
   startAccountAppSession,
   stopAccountAppSession,
@@ -104,7 +104,8 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 }
 
 export function AccountPlatformEntry({ children }: { children: ReactNode }) {
-  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | 'web' | 'web-error' | null>(null)
+  const [loginTarget, setLoginTarget] = useState('/login')
+  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | 'web' | 'login' | 'web-error' | null>(null)
   const [telegramInvitation, setTelegramInvitation] = useState(false)
   useEffect(() => {
     const vkSigned = hasVkLaunchData()
@@ -127,6 +128,12 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
       return
     }
     const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      if (!controller.signal.aborted) {
+        setPlatform('web-error')
+        controller.abort()
+      }
+    }, 10000)
     void (async () => {
       try {
         const response = await fetch('/mini-app/api/web-auth/config', {
@@ -159,12 +166,20 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
           }
           return
         }
-        setPlatform('telegram')
+        // An ordinary browser visitor without a verified session must be sent
+        // through the website login, never the legacy Telegram initData flow.
+        const target = browserLoginUrl(window.location.search)
+        setLoginTarget(target)
+        setPlatform('login')
+        navigateToWebsiteLogin(target)
       } catch {
         if (!controller.signal.aborted) setPlatform('web-error')
       }
-    })()
-    return () => controller.abort()
+    })().finally(() => window.clearTimeout(timeout))
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
+    }
   }, [])
 
   // Do not mount the shared application store before VK authentication finishes.
@@ -172,7 +187,10 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
   // to execute/hydrate the JS bundle. Returning null here produces an indefinite
   // white screen with no way back to VK.
   if (platform === null) {
-    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return null
+    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
+      <p role="status" className="text-sm text-muted-foreground">Проверяем авторизацию NEUROMIX…</p>
+      <a className="underline" href="/login">Открыть вход</a>
+    </main>
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Загрузка ВКонтакте">
       <h1 className="text-xl font-semibold">Открываем приложение ВКонтакте…</h1>
       <p role="status" className="text-sm text-muted-foreground">
@@ -183,6 +201,11 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
     </main>
   }
   if (platform === 'web') return <WebAccountWorkspace />
+  if (platform === 'login') return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
+    <h1 className="text-xl font-bold">Для продолжения войдите в NEUROMIX</h1>
+    <p className="text-sm text-muted-foreground">Открываем вход через сайт. Привязывать Telegram необязательно.</p>
+    <a href={loginTarget} className="underline">Войти в аккаунт</a>
+  </main>
   if (platform === 'web-error') {
     return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
       <h1 className="text-xl font-bold">Не удалось подтвердить веб-сессию</h1>

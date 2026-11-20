@@ -10,7 +10,9 @@ def test_every_miniapp_model_is_visible_in_browser_catalog():
         item["id"] for item in (*miniapp.IMAGE_MODELS, *miniapp.VIDEO_MODELS)
     }
     browser = {item["id"] for item in web_generation._models()}
-    assert browser == original  # No copied/hand-curated subset allowed.
+    # Public Seedance 2.5 is registered via a Mini App bootstrap extension,
+    # not the static VIDEO_MODELS tuple. Include that real provider capability.
+    assert browser == original | {"seedance_2_5"}
 
 
 def test_catalog_does_not_sell_models_without_implemented_provider_adapter():
@@ -143,3 +145,22 @@ async def test_unsupported_model_fails_quote_before_money_reservation(monkeypatc
         )
         assert quote.status == 400
         assert (await WalletService("live").snapshot(owner))["balance"]["reserved"] == "0.0000"
+
+
+def test_public_seedance25_extension_is_visible_without_unsafe_web_purchases():
+    from bot.model_capabilities import VIDEO_MODEL_CAPABILITIES
+
+    capability = VIDEO_MODEL_CAPABILITIES["seedance_2_5"]
+    catalog = {entry["id"]: entry for entry in web_generation._models()}
+    exposed = catalog["seedance_2_5"]
+    assert exposed["label"] == capability.label
+    assert exposed["durations"] == list(capability.durations)
+    assert exposed["ratios"] == list(capability.aspect_ratios)
+    assert exposed["qualities"] == list(capability.resolutions)
+    assert exposed["max_references"] == capability.max_reference_images
+    assert exposed["max_video_references"] == capability.max_reference_videos
+    assert exposed["max_audio_references"] == capability.max_reference_audio
+    assert exposed["enabled"] is False
+    assert "Seedance" in exposed["unavailable_reason"]
+    with pytest.raises(ValueError, match="Unknown model"):
+        web_generation._model_meta("seedance_2_5")

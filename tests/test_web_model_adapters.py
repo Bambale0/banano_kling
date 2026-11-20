@@ -120,7 +120,7 @@ def test_web_model_catalog_derived_from_public_tg_catalog_without_misleading_ena
     source = {item["id"] for item in (*miniapp.IMAGE_MODELS, *miniapp.VIDEO_MODELS)}
     catalog = web_generation._models()
     enabled = {item["id"] for item in catalog if item["enabled"]}
-    assert source == {item["id"] for item in catalog}
+    assert source | {"seedance_2_5"} == {item["id"] for item in catalog}
     implemented = web_generation._IMAGE_MODELS | web_generation._VIDEO_MODELS
     assert enabled.issubset(implemented)
     for row in catalog:
