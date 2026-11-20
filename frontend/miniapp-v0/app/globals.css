@@ -216,6 +216,21 @@
   padding-top: calc(max(16px, var(--miniapp-safe-top)) + 12px);
 }
 
+/* Genjutsu is its own vertical scrollport in a Radix Dialog. Its native
+   Telegram inset must not be overridden by the Dialog's utility padding
+   shorthands: without this rule the Close control lands beneath Telegram X. */
+.genjutsu-dialog-scrollport {
+  padding-top: max(0.75rem, var(--miniapp-safe-top));
+  padding-bottom: max(0.75rem, var(--miniapp-safe-bottom));
+}
+
+@media (min-width: 640px) {
+  .genjutsu-dialog-scrollport {
+    padding-top: 1.5rem;
+    padding-bottom: 1.5rem;
+  }
+}
+
 /* Feed/profile lightboxes cover the whole WebView, not just the app shell. */
 .miniapp-fullscreen-viewer {
   padding-top: max(24px, var(--miniapp-safe-top));
