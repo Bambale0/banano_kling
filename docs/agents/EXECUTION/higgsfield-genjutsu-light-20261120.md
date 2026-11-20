@@ -32,4 +32,5 @@
 
 ## Verification record
 - GitHub branch edits created through connected GitHub repository operations.
-- GitHub Actions / local pytest / frontend Jest / actual provider submission / production deploy: **pending verification**. Do not label this complete until the exact-head CI and subsequent production smoke results are observed.
+- At head `b1ddf496b5c80d773b3e9d89a0e56b4938d3811b` all 7 pull-request workflows completed successfully (Python, frontend, browser E2E, PostgreSQL and contracts). A later `tanyapi` base change requires the 4 required checks to be rerun against the current merge ref before merging. Do not bypass branch protection.
+- Production code SHA, frontend revision, authenticated admin smoke and real provider results still require verification after a successful guarded merge and deployment. Light pricing stays unconfigured and public Light launch disabled until supported by a real provider run.
