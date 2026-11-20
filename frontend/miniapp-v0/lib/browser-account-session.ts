@@ -1,7 +1,8 @@
 'use client'
 
 import { currentAccountPlatform } from './account-platform'
-import { getApiBasePath, getInitData } from './api'
+import { getApiBasePath } from './api'
+import { isBrowserPaymentSession } from './web-payments'
 
 const BROWSER_AUTH_SNAPSHOT_KEYS = [
   '__banano_tg_init_data',
@@ -11,12 +12,14 @@ const BROWSER_AUTH_SNAPSHOT_KEYS = [
   '__telegram__initParams',
 ] as const
 
-/** Browser-auth uses a server-signed Telegram payload with a browser_ query ID.
- * Native Telegram Mini Apps and VK sessions must never offer manual sign-out. */
+/** Browser-auth can mint browser_* credentials or revocable webstudio_*
+ * credentials after a verified website ↔ Telegram link. Both are WEBSITE
+ * sessions (not native Telegram WebViews). Keep the accepted signature shape
+ * aligned with the existing checkout policy to avoid missing a logout path.
+ * Native Telegram Mini Apps and VK sessions never offer manual sign-out. */
 export function isBrowserAccountSession(): boolean {
   if (typeof window === 'undefined' || currentAccountPlatform() !== 'telegram') return false
-  const queryId = new URLSearchParams(getInitData()).get('query_id')
-  return Boolean(queryId?.startsWith('browser_'))
+  return isBrowserPaymentSession()
 }
 
 /** Remove only browser authentication snapshots, preserving unrelated settings.
