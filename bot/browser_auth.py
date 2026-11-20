@@ -115,10 +115,17 @@ def _verify_telegram_login(raw: Any, bot_token: str) -> dict[str, Any]:
     }
 
 
-def _build_browser_init_data(user: dict[str, Any], bot_token: str) -> str:
+def _build_browser_init_data(
+    user: dict[str, Any], bot_token: str, *, query_id_prefix: str = "browser",
+) -> str:
+    # Legacy browser_* credentials remain supported for existing consumers.
+    # New webstudio_* credentials must be registered with the verified browser
+    # session and revoked when that session is logged out.
+    if query_id_prefix not in ("browser", "webstudio"):
+        raise ValueError("Invalid browser credential type")
     fields = {
         "auth_date": str(int(time.time())),
-        "query_id": f"browser_{secrets.token_urlsafe(18)}",
+        "query_id": f"{query_id_prefix}_{secrets.token_urlsafe(18)}",
         "user": json.dumps(user, ensure_ascii=False, separators=(",", ":")),
     }
     data_check_string = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))

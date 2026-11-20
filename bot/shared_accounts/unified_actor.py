@@ -67,6 +67,17 @@ async def resolve_account_actor(request, *, init_data: str | None = None) -> Acc
         # Require the still-active browser cookie AND its verified TG identity,
         # so a signed bridge cannot outlive logout or cross another account.
         query_id = dict(parse_qsl(init_data, keep_blank_values=True)).get("query_id", "")
+        if query_id.startswith("webstudio_"):
+            from bot.web_auth import verify_studio_bridge
+
+            account_id = await verify_studio_bridge(query_id, verified.external_id)
+            return AccountActor(
+                account_id=account_id,
+                auth_channel="web",
+                telegram_id=verified.external_id,
+                wallet_authority="web_live",
+                telegram_linked=True,
+            )
         if query_id.startswith("browser_"):
             browser = await resolve_account_actor(request)
             if not browser.telegram_linked:

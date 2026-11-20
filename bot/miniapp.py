@@ -1517,6 +1517,14 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     payload = _validate_init_data(init_data, config.BOT_TOKEN)
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
+    # Existing native Telegram WebView and legacy browser_* OIDC credentials
+    # are unaffected. New browser studio credentials are revocable with their
+    # issuing website session, and must not outlive logout on paid endpoints.
+    query_id = str(payload.get("query_id") or "")
+    if query_id.startswith("webstudio_"):
+        from bot.web_auth import verify_studio_bridge
+
+        await verify_studio_bridge(query_id, telegram_id)
     if await is_channel_subscription_required():
         result = await check_required_channel_subscription(app["bot"], telegram_id)
         if should_block_for_subscription(result):
