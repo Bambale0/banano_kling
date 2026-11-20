@@ -2968,6 +2968,11 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_media_cache_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
         asyncio.create_task(_lava_reconcile_loop(bot))
+        # Previously accepted web jobs must reconcile even when purchases
+        # are switched off; without a task table this worker only probes.
+        from bot.web_generation import run_generation_worker
+
+        asyncio.create_task(run_generation_worker())
         asyncio.create_task(_memory_dump_loop(bot))
         asyncio.create_task(_db_backup_loop())
         ensure_notification_campaign_worker(bot)

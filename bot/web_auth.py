@@ -879,3 +879,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     from bot.web_commerce import register_routes as register_web_payments
 
     register_web_payments(app, root)
+
+    from bot.web_generation import register_routes as register_web_generation
+
+    register_web_generation(app, root)
