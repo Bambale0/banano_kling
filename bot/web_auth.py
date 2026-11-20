@@ -379,6 +379,64 @@ async def web_auth_catalog(request: web.Request) -> web.Response:
 
     return _json({"ok": True, **public_browser_catalog()})
 
+async def web_auth_task_detail(request: web.Request) -> web.Response:
+    """Read-only legacy task detail for the browser's verified Telegram link.
+
+    Identity comes from a revocable server-side session and registered shared
+    identity. Client task_id is only an opaque owner-scoped lookup key.
+    """
+    from bot.shared_accounts.errors import AuthenticationError
+    from bot.shared_accounts.unified_actor import resolve_account_actor
+
+    if set(request.query) != {"task_id"}:
+        return _json({"ok": False, "error": "invalid_task_query"}, 400)
+    task_id = request.query.get("task_id", "")
+    if (not isinstance(task_id, str)
+            or not task_id.strip()
+            or len(task_id) > 256):
+        return _json({"ok": False, "error": "invalid_task_id"}, 400)
+
+    try:
+        actor = await resolve_account_actor(request)
+    except (AuthenticationError, ValueError):
+        return _json({"ok": False, "error": "session_required"}, 401)
+    except PermissionError:
+        return _json({"ok": False, "error": "account_unavailable"}, 403)
+
+    if not actor.telegram_linked or actor.telegram_id is None:
+        # Browser-only accounts do not get synthetic Telegram identifiers.
+        return _json({"ok": False, "error": "task_not_found"}, 404)
+
+    # Reuse the native owned task lookup and protected recipe sanitizer, rather
+    # than duplicating media/provider data access for browser clients.
+    from bot import miniapp
+    from bot.trend_task_privacy import sanitize_task_api_payload
+
+    try:
+        task = await miniapp._fetch_task_detail(actor.telegram_id, task_id.strip())
+        if task is None:
+            return _json({"ok": False, "error": "task_not_found"}, 404)
+        payload = await sanitize_task_api_payload({
+            "ok": True, "scope": "legacy_telegram", "task": task,
+        })
+        # A logout or revoked Telegram identity can race with slow media and
+        # sanitizer queries; re-resolve both proof and ownership before return.
+        try:
+            current = await resolve_account_actor(request)
+        except (AuthenticationError, ValueError, PermissionError):
+            return _json({"ok": False, "error": "session_required"}, 401)
+        if (current.account_id != actor.account_id
+                or not current.telegram_linked
+                or current.telegram_id != actor.telegram_id):
+            return _json({"ok": False, "error": "account_link_changed"}, 403)
+        return _json(payload)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Read-only account task detail failed")
+        return _json({"ok": False, "error": "task_unavailable"}, 503)
+
+
 async def web_auth_history(request: web.Request) -> web.Response:
     """Read-only legacy task history for an account with a verified TG link.
 
@@ -808,6 +866,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_get(root + "/catalog", web_auth_catalog)
     app.router.add_post(root + "/actor", web_auth_actor)
     app.router.add_get(root + "/history", web_auth_history)
+    app.router.add_get(root + "/task", web_auth_task_detail)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)
