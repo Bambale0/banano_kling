@@ -89,6 +89,14 @@ def validate_settings(raw: Mapping[str, Any]) -> dict[str, Any]:
     object_fields(raw, set(defaults), 'invalid_settings')
     data = copy.deepcopy(defaults)
     data.update(copy.deepcopy(raw))
+    # Existing production configurations predate Genjutsu Light. Preserve every
+    # established rate and explicit setting while adding the new, unpriced
+    # operations as disabled-by-default choices. A missing legacy operation
+    # remains an error; unknown operation names also remain rejected.
+    if isinstance(data['prices'], dict) and {'motion_transfer', 'object_swap', 'restyle'} <= set(data['prices']):
+        for operation, rates in defaults['prices'].items():
+            if operation not in data['prices']:
+                data['prices'][operation] = copy.deepcopy(rates)
     data['notification_templates'] = validate_notification_templates(data['notification_templates'])
     for key in ('public_enabled', 'admin_enabled'):
         if type(data[key]) is not bool:

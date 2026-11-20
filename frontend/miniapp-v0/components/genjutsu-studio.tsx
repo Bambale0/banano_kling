@@ -31,6 +31,8 @@ const operationCopy: Record<Operation, { title: string; description: string; exa
   motion_transfer: { title: 'Перенос движения', description: 'Сохраните движение и камеру, создайте новую сцену.', example: 'Новый образ', icon: Clapperboard },
   object_swap: { title: 'Замена объектов', description: 'Замените героя, одежду, предмет или окружение.', example: 'Другой герой или предмет', icon: ArrowLeftRight },
   restyle: { title: 'Стилизация', description: 'Измените визуальный стиль видео с готовым пресетом.', example: 'Новый стиль', icon: WandSparkles },
+  motion_transfer_light: { title: 'Перенос движения Light', description: 'Быстрый перенос движений по фото. Фрагмент от 4 до 15 секунд.', example: 'Движение · Light', icon: Clapperboard },
+  object_swap_light: { title: 'Замена объектов Light', description: 'Быстрая замена героя, одежды или предметов. Фрагмент от 4 до 15 секунд.', example: 'Замена · Light', icon: ArrowLeftRight },
 }
 const terminal = new Set(['completed', 'failed', 'canceled', 'partial'])
 const moderationErrors = new Set(['provider_nsfw', 'provider_moderation'])
@@ -379,6 +381,14 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
   const shownPresets = presets.filter(p => (!favoritesOnly || favorites.includes(p.id)) && p.name.toLowerCase().includes(presetSearch.toLowerCase()))
   const primaryStep = plan.steps[0]
   const primaryCaps = bootstrap?.catalog[primaryStep?.operation]
+  const verified = bootstrap?.limits.verified_operations
+  const verifiedOperations: string[] = Array.isArray(verified) ? verified : []
+  // Keep legacy choices available for existing drafts. New Light models stay
+  // hidden from public selection until live verification in the admin panel.
+  const visibleOperations = (Object.keys(bootstrap?.catalog || {}) as Operation[]).filter(
+    op => !op.endsWith('_light') || bootstrap?.is_admin
+      || op === primaryStep?.operation || verifiedOperations.includes(op),
+  )
 
   return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-clip pb-28" aria-label="Студия Genjutsu">
     <header className="sticky top-[max(0px,var(--miniapp-safe-top))] sm:top-0 z-20 flex min-w-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-1 py-3 backdrop-blur-xl sm:px-2">
@@ -456,8 +466,8 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <h3 className="text-lg font-semibold tracking-tight">Что можно изменить</h3>
             <p className="mt-1 text-sm text-muted-foreground">Выберите сценарий — остальные поля подстроятся автоматически.</p>
           </div>
-          <div data-testid="genjutsu-operation-grid" className="grid min-w-0 grid-cols-3 gap-2">
-            {(Object.keys(bootstrap.catalog) as Operation[]).map(op => {
+          <div data-testid="genjutsu-operation-grid" className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
+            {visibleOperations.map(op => {
               const copy = operationCopy[op]
               const Icon = copy.icon
               const active = primaryStep.operation === op
@@ -468,7 +478,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             })}
           </div>
           <p className="px-1 text-sm text-muted-foreground">{operationCopy[primaryStep.operation].description}</p>
-          <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
+          <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{visibleOperations.map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
         </section>
 
         <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3">
@@ -514,7 +524,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           {primaryStep.operation === 'restyle' && <section className="space-y-3"><div><h3 className="font-semibold">Стиль</h3><p className="mt-1 text-xs text-muted-foreground">Выберите визуальный пресет</p></div><label className={label}>Поиск стиля<input className={field} value={presetSearch} onChange={e => setPresetSearch(e.target.value)} /></label><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={favoritesOnly} onChange={e => setFavoritesOnly(e.target.checked)} />Только избранные</label><div className="grid max-h-80 grid-cols-2 gap-2 overflow-auto sm:grid-cols-3">{shownPresets.map(p => <div key={p.id} className={`overflow-hidden rounded-[20px] border p-2 ${primaryStep.preset_id === p.id ? 'border-white/30 bg-white/[0.06]' : 'border-white/[0.08]'}`}><button type="button" aria-pressed={primaryStep.preset_id === p.id} className="w-full text-left text-xs" onClick={() => patchStep(0, { preset_id: p.id })}><img src={p.preview_url} alt="" loading="lazy" className="mb-2 aspect-video w-full rounded-[14px] object-cover" /><span className="font-medium">{p.name}</span></button><button type="button" className="mt-2 text-xs text-muted-foreground" onClick={() => favorite(p.id)}>{favorites.includes(p.id) ? '★ В избранном' : '☆ В избранное'}</button></div>)}</div>{!presets.length && <p className="text-sm text-muted-foreground">Каталог стилей пока недоступен.</p>}{primaryStep.preset_id && !presets.some(p => p.id === primaryStep.preset_id) && <p role="alert" className="text-sm text-destructive">Сохранённый стиль не найден. Выберите доступный стиль.</p>}</section>}
 
           <section className="space-y-3">
-            <label className="block space-y-2"><span className="text-base font-semibold">Что изменить?</span><textarea className={`${field} min-h-[138px] resize-none`} rows={4} maxLength={primaryCaps?.max_prompt_length || 4000} value={primaryStep.prompt} onChange={e => patchStep(0, { prompt: e.target.value })} placeholder={primaryStep.operation === 'motion_transfer' ? 'Например, перенесите движения героя на персонажа с фото. Сохраните композицию и камеру.' : primaryStep.operation === 'object_swap' ? 'Например, замените одежду героя на образ с фото, сохранив лицо, позу и движение.' : 'Опишите желаемый стиль и то, что важно сохранить.'} /></label>
+            <label className="block space-y-2"><span className="text-base font-semibold">Что изменить?</span><textarea className={`${field} min-h-[138px] resize-none`} rows={4} maxLength={primaryCaps?.max_prompt_length || 4000} value={primaryStep.prompt} onChange={e => patchStep(0, { prompt: e.target.value })} placeholder={(primaryStep.operation === 'motion_transfer' || primaryStep.operation === 'motion_transfer_light') ? 'Например, перенесите движения героя на персонажа с фото. Сохраните композицию и камеру.' : (primaryStep.operation === 'object_swap' || primaryStep.operation === 'object_swap_light') ? 'Например, замените одежду героя на образ с фото, сохранив лицо, позу и движение.' : 'Опишите желаемый стиль и то, что важно сохранить.'} /></label>
           </section>
 
           {primaryCaps && <section className="space-y-3">
@@ -528,7 +538,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
           {plan.steps.slice(1).map((step, offset) => {
             const index = offset + 1
             const caps = bootstrap.catalog[step.operation]
-            return <section key={index} className={section}><div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">Дополнительный шаг {index + 1}</p><h3 className="font-medium">{operationLabels[step.operation]}</h3></div><Button size="sm" variant="ghost" onClick={() => edit({ ...plan, steps: plan.steps.filter((_, i) => i !== index) })}>Убрать</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className={label}>Операция шага {index + 1}<select className={field} value={step.operation} onChange={e => patchStep(index, { operation: e.target.value as Operation, preset_id: null })}>{(Object.keys(bootstrap.catalog) as Operation[]).map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label><label className={label}>Качество шага {index + 1}<select className={field} value={step.resolution} onChange={e => patchStep(index, { resolution: e.target.value })}>{caps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label></div><label className={label}>Что изменить — шаг {index + 1}<textarea className={field} rows={3} value={step.prompt} onChange={e => patchStep(index, { prompt: e.target.value })} /></label></section>
+            return <section key={index} className={section}><div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">Дополнительный шаг {index + 1}</p><h3 className="font-medium">{operationLabels[step.operation]}</h3></div><Button size="sm" variant="ghost" onClick={() => edit({ ...plan, steps: plan.steps.filter((_, i) => i !== index) })}>Убрать</Button></div><div className="grid gap-3 sm:grid-cols-2"><label className={label}>Операция шага {index + 1}<select className={field} value={step.operation} onChange={e => patchStep(index, { operation: e.target.value as Operation, preset_id: null })}>{visibleOperations.map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label><label className={label}>Качество шага {index + 1}<select className={field} value={step.resolution} onChange={e => patchStep(index, { resolution: e.target.value })}>{caps.resolutions.map(v => <option key={v}>{v}</option>)}</select></label></div><label className={label}>Что изменить — шаг {index + 1}<textarea className={field} rows={3} value={step.prompt} onChange={e => patchStep(index, { prompt: e.target.value })} /></label></section>
           })}
         </fieldset>
 

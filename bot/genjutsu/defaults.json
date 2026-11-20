@@ -37,6 +37,16 @@
       "480p": null,
       "720p": null,
       "1080p": null
+    },
+    "motion_transfer_light": {
+      "480p": null,
+      "720p": null,
+      "1080p": null
+    },
+    "object_swap_light": {
+      "480p": null,
+      "720p": null,
+      "1080p": null
     }
   },
   "owner_storage_bytes": 2147483648,
