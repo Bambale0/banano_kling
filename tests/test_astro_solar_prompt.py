@@ -1,12 +1,13 @@
 """Regression: NEUROMIX ASTROLOGY PRO solar prompt and historical tasks."""
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from bot.services.astro_report_pipeline import load_report_plan, report_fingerprint
+from bot.services.astro_report_pipeline import compose_report, load_report_plan, report_fingerprint
 from bot.services.astro_report_worker import resolve_astro_job_plan
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,9 +89,6 @@ def test_new_solar_signed_plan_and_tamper_rejection():
 
 
 def test_new_solar_prompt_never_receives_synthetic_months_as_transit_events():
-    import asyncio
-    from bot.services.astro_report_pipeline import compose_report
-
     class Checkpoints:
         def __init__(self):
             self.saved = {}
