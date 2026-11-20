@@ -378,7 +378,7 @@ async def test_legacy_telegram_repeat_redirects_before_billing(handler_name, mon
 
     url = markup.inline_keyboard[0][0].web_app.url
     assert parse_qs(urlsplit(url).query)["startapp"] == [
-        f'feed_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
+        f'remix_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
     ]
     assert "genjutsu_recipe" not in url
 
@@ -435,7 +435,7 @@ async def test_feed_keyboard_opens_genjutsu_preview_with_author_referral():
     from urllib.parse import parse_qs, urlsplit
 
     assert parse_qs(urlsplit(repeat.web_app.url).query)["startapp"] == [
-        f'feed_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
+        f'remix_{result["card"]["id"]}_ref_{ctx.owner.referral_code}'
     ]
     assert "genjutsu_recipe" not in repeat.web_app.url
 
