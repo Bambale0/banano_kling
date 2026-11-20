@@ -31,7 +31,7 @@ def test_full_owner_spec_coverage_and_minimum_words(service_id, expected):
     assert len(plan.sections) == expected_count
     assert plan.min_total_words == expected_min
     assert sum(s.min_words for s in plan.sections) >= expected_min
-    start_section = 1 if service_id == "natal" else 3
+    start_section = 1 if service_id in ("natal", "solar") else 3
     assert [s.id for s in plan.sections] == [
         f"section_{i:02d}" for i in range(start_section, expected_count + start_section)
     ]
