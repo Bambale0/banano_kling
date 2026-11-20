@@ -235,3 +235,7 @@ WEB_NATIVE_PAYMENTS_ENABLED disabled in production until then.
   None of this is a live KIE provider charge or real Lava/S3 payment and
   readback verification. Production flags must remain off until staged
   rollout and real contract smoke are completed.
+
+## 2026-11-20 CI provider field reconciliation
+
+- Full GitHub safe regression found a contract conflict: existing Telegram Character ID wire contract asserts `descriptions` plural, whereas the English KIE documentation shows `description` singular. KIE's current public model UI and Chinese official documentation show `descriptions` plural. Preserved existing shipped Telegram contract (plural) in shared provider adapter, aligned web regression to same contract; no unverified provider behavior changes in production. Run original Telegram test and web regression together; confirm actual response in a live provider smoke before declaring this ambiguity resolved.

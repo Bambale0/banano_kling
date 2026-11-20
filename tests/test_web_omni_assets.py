@@ -263,8 +263,8 @@ async def test_web_omni_asset_provider_never_retries_transient_post(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_gemini_omni_character_wire_uses_singular_description(monkeypatch):
-    """Official KIE /omni/character/create expects description, not descriptions."""
+async def test_gemini_omni_character_wire_matches_existing_public_kie_form(monkeypatch):
+    """Preserve the existing KIE character wire contract across Telegram and web."""
     post = AsyncMock(return_value={
         "code": 200, "data": {"characterId": "character-real-2026"},
     })
@@ -279,7 +279,7 @@ async def test_gemini_omni_character_wire_uses_singular_description(monkeypatch)
     assert result["asset_id"] == "character-real-2026"
     post.assert_awaited_once()
     assert post.await_args.args[1] == {
-        "description": "A fox with bright orange fur",
+        "descriptions": "A fox with bright orange fur",
         "image_urls": ["https://neuromixbot.com/uploads/web_refs/fox.png"],
         "character_name": "Fox Hero",
         "audio_ids": ["audio-owned-provider"],
