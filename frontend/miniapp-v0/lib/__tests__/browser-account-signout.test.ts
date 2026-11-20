@@ -25,6 +25,47 @@ test('web browser login can be signed out without exposing the option for native
   expect(isBrowserAccountSession()).toBe(false)
 })
 
+test('linked website studio session exposes logout; malformed and native launch do not', () => {
+  // This exactly matches the server web_auth._mint_session_bound_studio_init_data.
+  const webstudio = 'query_id=webstudio_' + 'x'.repeat(32) + '&auth_date=1795100000&hash=fixture'
+  window.__BANANO_TG_INIT_DATA__ = webstudio
+  expect(isBrowserAccountSession()).toBe(true)
+
+  window.__BANANO_TG_INIT_DATA__ = 'query_id=webstudio_' + 'z'.repeat(5) + '&auth_date=1795100000'
+  expect(isBrowserAccountSession()).toBe(false)
+
+  window.__BANANO_TG_INIT_DATA__ = nativeSession
+  expect(isBrowserAccountSession()).toBe(false)
+
+  setPlatformSessionToken('a'.repeat(43))
+  window.__BANANO_TG_INIT_DATA__ = webstudio
+  expect(isBrowserAccountSession()).toBe(false)
+})
+
+test('linked website studio logout revokes server token then removes cached identity', async () => {
+  const browserSession = 'query_id=webstudio_' + 'w'.repeat(32) + '&auth_date=1795100000&hash=fixture'
+  window.__BANANO_TG_INIT_DATA__ = browserSession
+  window.sessionStorage.setItem('__banano_tg_init_data', browserSession)
+  const savedFetch = global.fetch
+  const mockFetch = jest.fn().mockResolvedValue({
+    ok: true, json: async () => ({ ok: true }),
+  })
+  global.fetch = mockFetch as typeof fetch
+  // window.location.replace is not configurable in jsdom, so observe the
+  // server revoke + cleared identity before the navigation occurs.
+  try {
+    await signOutBrowserAccount().catch(() => {})
+    expect(mockFetch).toHaveBeenCalledWith('/mini-app/api/web-auth/logout', {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+    expect(getInitData()).toBe('')
+    expect(window.sessionStorage.getItem('__banano_tg_init_data')).toBeNull()
+  } finally {
+    global.fetch = savedFetch
+  }
+})
+
 test('signout drops all cached browser credentials and strips launch auth from URL', () => {
   window.history.replaceState({}, '', '/mini-app/?tgWebAppData=' + encodeURIComponent(browserSession) + '#tgWebAppData=' + encodeURIComponent(browserSession))
   window.__BANANO_TG_INIT_DATA__ = browserSession
