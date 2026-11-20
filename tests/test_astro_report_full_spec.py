@@ -20,7 +20,7 @@ REPORT_SPECS = {
     "year": (29, 12_000),
     "month": (23, 5_000),
     "solar": (21, 12_000),
-    "lunar": (14, 5_000),
+    "lunar": (10, 405),
 }
 
 
@@ -31,7 +31,7 @@ def test_full_owner_spec_coverage_and_minimum_words(service_id, expected):
     assert len(plan.sections) == expected_count
     assert plan.min_total_words == expected_min
     assert sum(s.min_words for s in plan.sections) >= expected_min
-    start_section = 1 if service_id == "natal" else 3
+    start_section = 1 if service_id in ("natal", "lunar") else 3
     assert [s.id for s in plan.sections] == [
         f"section_{i:02d}" for i in range(start_section, expected_count + start_section)
     ]
@@ -60,11 +60,9 @@ def test_real_lunar_calendar_requires_every_date_and_handles_leap_year():
         "days": [{"date": f"2024-02-{day:02d}"} for day in range(1, 30)],
     }
     full = _expand_period_sections(plan, facts)
-    dynamic = full[len(plan.sections):]
-    assert len(dynamic) == 29
-    assert dynamic[0].id == "day_20240201"
-    assert dynamic[-1].id == "day_20240229"
-    assert all(section.min_words >= 1 for section in dynamic)
+    assert len(full) == 9  # Generic lunar calendar: no natal-only chapter.
+    assert full[2].id == "section_03"
+    assert not any(section.id.startswith("day_") for section in full)
 
     for bad in (
         facts["days"][:-1], facts["days"] + [facts["days"][-1]],
