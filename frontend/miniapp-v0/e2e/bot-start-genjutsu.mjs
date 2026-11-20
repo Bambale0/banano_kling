@@ -145,8 +145,11 @@ try {
     await gate.waitFor()
     const openBot = gate.getByRole('link', { name: 'Открыть бота', exact: true })
     const chatUrl = await openBot.getAttribute('href')
-    assert.equal(chatUrl, 'https://t.me/test_bot?start=miniapp_delivery',
-      'The primary CTA opens the text chat, not the Mini App')
+    const expectedChatUrl = query.includes('remix_77')
+      ? 'https://t.me/test_bot?start=ref_E2EOWNER'
+      : 'https://t.me/test_bot?start=miniapp_delivery'
+    assert.equal(chatUrl, expectedChatUrl,
+      'The primary CTA opens the text bot with the current Repeat attribution, not the stale Telegram launch')
     const openedChat = page.waitForEvent('popup', { timeout: 8000 })
     await openBot.click()
     const chatPage = await openedChat
