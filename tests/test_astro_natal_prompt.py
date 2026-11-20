@@ -31,7 +31,7 @@ def test_complete_uploaded_master_prompt_loaded_only_for_natal():
     for number in range(1, 21):
         assert f"{number}. " in source
     for service in ("compatibility", "karma", "year", "month", "solar", "lunar"):
-        assert "NEUROMIX ASTROLOGY PRO" not in load_report_plan(service).system_prompt
+        assert source not in load_report_plan(service).system_prompt
 
 
 def test_natal_plan_guarantees_twelve_houses_and_twelve_domain_chapters():
