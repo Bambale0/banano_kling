@@ -10,6 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ExternalLink, Image as ImageIcon, LoaderCircle, LogOut, RefreshCw, Video } from 'lucide-react'
+import { BrowserNativePaidEntry } from './browser-native-paid-entry'
 
 type Actor = {
   account_id: string
@@ -334,7 +335,7 @@ export function BrowserAccountWorkspace() {
       <section aria-label="Каталог моделей" className="space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h2 className="text-xl font-bold">Модели</h2>
-          <p className="text-xs text-[#bcb1a2]">Общий каталог с Telegram · цены и генерация пока отключены для веб-сессий</p>
+          <p className="text-xs text-[#bcb1a2]">Общий каталог с Telegram · стоимость новых веб-задач проверяется отдельно на сервере</p>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[...(catalog?.image_models ?? []), ...(catalog?.video_models ?? [])].map((model, i) => <article
@@ -349,6 +350,12 @@ export function BrowserAccountWorkspace() {
           </article>)}
         </div>
       </section>
+
+      {actor ? <BrowserNativePaidEntry
+        accountId={actor.account_id}
+        telegramLinked={actor.telegram_linked}
+        onSessionExpired={expire}
+      /> : null}
 
       <section aria-label="Мои генерации" className="space-y-4">
         <h2 className="text-xl font-bold">Мои генерации</h2>
@@ -399,7 +406,7 @@ export function BrowserAccountWorkspace() {
             Открыть привязанную студию
           </a>
         </> : <span>
-          Платная генерация для независимых веб-аккаунтов пока недоступна: необходим безопасный общий учёт средств.
+          Веб-генерация включается сервером отдельно. Веб- и Telegram-балансы не объединяются автоматически.
         </span>}
       </footer>
     </div>

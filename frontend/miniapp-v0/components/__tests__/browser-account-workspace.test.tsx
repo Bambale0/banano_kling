@@ -115,5 +115,6 @@ test('an independent web account is not shown a false Telegram-wallet checkout',
   render(<BrowserAccountWorkspace />)
   expect(await screen.findByText('Nano Banana Pro')).toBeInTheDocument()
   expect(screen.queryByRole('link', { name: 'Открыть привязанную студию' })).not.toBeInTheDocument()
-  expect(screen.getByText(/Платная генерация для независимых веб-аккаунтов/i)).toBeInTheDocument()
+  expect(screen.getByText(/Веб-генерация включается сервером отдельно/i)).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Перейти к пополнению' })).not.toBeInTheDocument()
 })
