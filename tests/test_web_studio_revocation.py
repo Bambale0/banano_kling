@@ -1,5 +1,6 @@
 """Server-minted legacy Telegram studio credentials must die with web logout."""
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from aiohttp.test_utils import make_mocked_request
@@ -44,6 +45,15 @@ async def test_web_studio_credentials_revoke_with_cookie_and_prevent_wrong_teleg
     assert token_id.startswith("webstudio_")
     assert payload["user"]["id"] == tg_id
     await web_auth.verify_studio_bridge(token_id, tg_id)
+    # End-to-end proof: only the server-verified studio context can use
+    # website fiat checkout, not an untrusted query_id supplied in JSON.
+    monkeypatch.setattr(miniapp, "is_channel_subscription_required",
+                        AsyncMock(return_value=False))
+    verified_tg_id, verified_ctx = await miniapp._get_user_context({}, signed)
+    assert verified_tg_id == tg_id
+    assert verified_ctx['webstudio_session_verified'] is True
+    from bot.payment_platform_policy import vk_payment_provider_denied
+    assert vk_payment_provider_denied(verified_ctx, 'lava_card') is None
     from bot.shared_accounts.unified_actor import resolve_account_actor
     signed_actor = await resolve_account_actor(
         SimpleNamespace(cookies={}), init_data=signed,

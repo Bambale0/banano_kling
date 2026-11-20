@@ -1518,12 +1518,15 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
     telegram_user = payload["user"]
     telegram_id = int(telegram_user["id"])
     query_id = str(payload.get("query_id") or "")
+    webstudio_session_verified = False
     if query_id.startswith("webstudio_"):
         # Bound to a still-active verified website session before any paid
-        # user context or legacy job can be created.
+        # user context or legacy job can be created. The payment surface
+        # guard must only trust this server-owned proof, not the query prefix.
         from bot.web_auth import verify_studio_bridge
 
         await verify_studio_bridge(query_id, telegram_id)
+        webstudio_session_verified = True
     if await is_channel_subscription_required():
         result = await check_required_channel_subscription(app["bot"], telegram_id)
         if should_block_for_subscription(result):
@@ -1601,6 +1604,7 @@ async def _get_user_context(app: web.Application, init_data: str, start_param_fa
         "user": user,
         "platform": "telegram",
         "platform_external_id": telegram_id,
+        "webstudio_session_verified": webstudio_session_verified,
     }
 
 

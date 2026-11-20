@@ -206,6 +206,29 @@ def test_browser_login_and_stars_remain_available():
     assert vk_payment_provider_denied({'platform': 'vk'}, 'lava_card') is None
 
 
+@pytest.mark.parametrize('provider', ['lava_card', 'lava_sbp', 'freekassa_card', 'freekassa_sbp', 'robokassa'])
+def test_verified_website_studio_allows_fiat_checkout_only_with_server_bridge_proof(provider):
+    ctx = {
+        'platform': 'telegram',
+        'payload': {'query_id': 'webstudio_verified-session-abcdef123456'},
+        'webstudio_session_verified': True,
+    }
+    assert vk_payment_provider_denied(ctx, provider) is None
+
+
+@pytest.mark.parametrize('query_id', [
+    'tg_native',
+    'webstudio_fake',
+    'webstudio_',
+    'webstudio_verified-session-abcdef123456',
+    'webstudio_' + 'a' * 41,
+])
+def test_unverified_webstudio_and_native_telegram_cannot_pay_with_fiat(query_id):
+    ctx = {'platform': 'telegram', 'payload': {'query_id': query_id}}
+    assert vk_payment_provider_denied(ctx, 'lava_card').status == 403
+    assert vk_payment_provider_denied(ctx | {'webstudio_session_verified': False}, 'freekassa_sbp').status == 403
+
+
 async def test_outbound_payment_keyboard_uses_current_fsm_promo():
     from aiogram.methods import SendMessage
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
