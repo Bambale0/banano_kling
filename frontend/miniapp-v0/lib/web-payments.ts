@@ -1,8 +1,18 @@
 import { getInitData } from './api'
 import { currentAccountPlatform } from './account-platform'
 
+/**
+ * Signed website entry can use either the original browser_* Telegram OIDC
+ * bridge or the webstudio_* bridge minted for a verified linked web account.
+ *
+ * Both load the existing Mini App bundle, but neither is a native Telegram
+ * WebView: redirecting their fiat checkout to /login creates an auth loop.
+ * Actual authorization and wallet ownership stay server-side.
+ */
 export function isBrowserPaymentSession(): boolean {
-  return new URLSearchParams(getInitData()).get('query_id')?.startsWith('browser_') === true
+  const queryId = new URLSearchParams(getInitData()).get('query_id') || ''
+  return queryId.startsWith('browser_')
+    || /^webstudio_[A-Za-z0-9_-]{16,40}$/.test(queryId)
 }
 
 export function isTelegramPaymentSurface(): boolean {

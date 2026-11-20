@@ -33,6 +33,10 @@ try {
     { platform: 'ios', engine: webkit, device: 'iPhone 13', bridge: 'native' },
     { platform: 'android', engine: chromium, device: 'Pixel 7', bridge: 'native' },
     { platform: 'ios', engine: webkit, device: 'iPhone 13', bridge: 'throws' },
+    // Browser entered from a Yandex/Google linked web account via web_auth_studio.
+    // It receives webstudio_*, not browser_*, and must show the website checkout.
+    { platform: 'ios', engine: webkit, device: 'iPhone 13', bridge: 'webstudio' },
+    { platform: 'android', engine: chromium, device: 'Pixel 7', bridge: 'webstudio' },
   ]
   for (const scenario of scenarios.filter(item => !process.env.PAYMENT_BROWSER_PLATFORM || item.platform === process.env.PAYMENT_BROWSER_PLATFORM)) {
     const { platform, engine, device, bridge } = scenario
@@ -138,11 +142,16 @@ try {
     assert.equal(starsRequests, 1)
     assert.equal(paymentRequests, 0)
     await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
-    await page.evaluate(() => {
-      window.Telegram.WebApp.initData = 'query_id=browser_synthetic-payment'
+    await page.evaluate((source) => {
+      window.Telegram.WebApp.initData = source === 'webstudio'
+        ? 'query_id=webstudio_verified-session-abcdef123456'
+        : 'query_id=browser_synthetic-payment'
       window.__openedPayments = []
-    })
+    }, bridge)
     await page.locator('header button').last().click()
+    // A website-minted Telegram-shaped session must NOT be forced to the
+    // website login a second time: it already runs in a browser.
+    assert.equal(await page.getByRole('button', { name: 'Баланс и пополнение на сайте' }).count(), 0)
     await page.getByRole('button', { name: 'Карта', exact: true }).click()
     const proceed = page.getByRole('link', { name: 'Перейти к оплате', exact: true })
     await proceed.waitFor()
