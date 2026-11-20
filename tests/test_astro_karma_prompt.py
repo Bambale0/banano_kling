@@ -84,3 +84,56 @@ def test_new_karma_hmac_authentic_and_tampering_fails_closed():
     job.fingerprint = "0" * 64
     with pytest.raises(ValueError, match="template changed"):
         resolve_astro_job_plan(job, secret)
+
+
+def test_karma_generator_receives_new_full_instruction_and_17_sections():
+    import asyncio
+
+    from bot.services.astro_report_pipeline import compose_report
+
+    class Store:
+        def __init__(self):
+            self.saved = {}
+
+        async def read(self, *, owner_id, fingerprint, section_id):
+            return self.saved.get((owner_id, fingerprint, section_id))
+
+        async def save_if_absent(self, *, owner_id, fingerprint, section_id, text):
+            return self.saved.setdefault((owner_id, fingerprint, section_id), text)
+
+    class Provider:
+        def __init__(self):
+            self.calls = []
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            request = json.loads(user_instruction)
+            self.calls.append((request, system_prompt))
+            assert json_response is True
+            return json.dumps({
+                "section_id": request["section_id"],
+                "text": "Этот символический разбор опирается только на известные факты. " *
+                        (request["minimum_words"] + 1),
+            }, ensure_ascii=False)
+
+    plan = load_report_plan("karma")
+    provider = Provider()
+    facts = {
+        "schema_version": "astro.karma.facts.v1",
+        "chart": {"bodies": {"Saturn": {"lon": 12.4}}},
+        "not_calculated": ["lunar nodes", "houses", "Chiron"],
+    }
+    result = asyncio.run(compose_report(
+        owner_id=613, plan=plan, facts=facts,
+        secret="test-only-karma-provider-secret",
+        store=Store(), provider=provider,
+    ))
+    assert len(provider.calls) == 17
+    assert len(result["sections"]) == 17
+    assert result["word_count"] >= plan.min_total_words
+    assert [call[0]["section_id"] for call in provider.calls] == [
+        f"section_{i:02d}" for i in range(1, 18)
+    ]
+    assert all(call[0]["service"] == "karma" for call in provider.calls)
+    assert all(call[1] == plan.system_prompt for call in provider.calls)
+    assert all(call[0]["astronomical_facts"]["not_calculated"] ==
+               ["lunar nodes", "houses", "Chiron"] for call in provider.calls)
