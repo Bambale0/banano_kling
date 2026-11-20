@@ -47,6 +47,45 @@ const imageItem = {
   feed_references_visible: false,
 }
 
+describe('FeedTab image preview loading failure', () => {
+  it('retains repeat action and clears media error on a new preview', async () => {
+    const setActiveTab = jest.fn()
+    const setPromptPreset = jest.fn()
+    mockedUseApp.mockReturnValue({
+      state: {
+        mode: 'live',
+        user: { credits: 100, isAdmin: false },
+        imageModels: [{ id: 'banana_pro', label: 'Nano Banana Pro', description: 'image',
+          cost: 2, ratios: ['1:1'], requires_reference: false, max_references: 4 }],
+        videoModels: [], recentTasks: [], savedReferences: [], paymentPackages: [],
+        lastSync: new Date(),
+      },
+      feedDeepLink: null, consumeFeedDeepLink: jest.fn(), setActiveTab,
+      setPromptPreset, setVideoPromptPreset: jest.fn(), openProfile: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+    mockedFetchFeed.mockResolvedValue({
+      feed: [imageItem],
+      models: [{ id: 'banana_pro', label: 'Nano Banana Pro' }],
+    } as Awaited<ReturnType<typeof fetchFeed>>)
+
+    const view = render(<FeedTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть фото' }))
+    const preview = view.container.querySelector('.miniapp-fullscreen-viewer img')
+    expect(preview).not.toBeNull()
+    fireEvent.error(preview!)
+    expect(screen.getByText(/Изображение не загрузилось.*можно повторить/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Повторить$/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Закрыть' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть фото' }))
+    expect(screen.queryByText(/Изображение не загрузилось.*можно повторить/i)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Повторить$/i }))
+    expect(setPromptPreset).toHaveBeenCalledWith(expect.objectContaining({
+      sourceFeedGenId: 55, prompt: '',
+    }))
+    expect(setActiveTab).toHaveBeenCalledWith(1)
+  })
+})
+
 describe('FeedTab image remix prompt isolation', () => {
   it('opens the image form with an empty editable changes field while retaining source lineage', async () => {
     const setActiveTab = jest.fn()

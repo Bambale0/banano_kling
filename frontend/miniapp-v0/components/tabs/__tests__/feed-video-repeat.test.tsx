@@ -111,6 +111,47 @@ describe('FeedTab editable video repeat', () => {
     expect(mockedRepeatFeedVideo).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /Настроить/i })).not.toBeInTheDocument()
   })
+  it('keeps repeat available when video media fails after a delayed load', async () => {
+    const setActiveTab = jest.fn()
+    const setVideoPromptPreset = jest.fn()
+    mockedUseApp.mockReturnValue({
+      state: {
+        mode: 'live', user: { credits: 100, isAdmin: false },
+        imageModels: [], videoModels: [{
+          id: 'seedance_2_5', label: 'Seedance 2.5', description: 'video',
+          durations: [12], ratios: ['9:16'], supports: ['text', 'imgtxt', 'video'],
+          costs: { '12': 12 },
+        }],
+        recentTasks: [], savedReferences: [], paymentPackages: [], lastSync: new Date(),
+      },
+      feedDeepLink: null, consumeFeedDeepLink: jest.fn(), setActiveTab,
+      setPromptPreset: jest.fn(), setVideoPromptPreset, openProfile: jest.fn(),
+    } as unknown as ReturnType<typeof useApp>)
+    mockedFetchFeed.mockResolvedValue({
+      feed: [videoItem],
+      models: [{ id: 'seedance_2_5', label: 'Seedance 2.5' }],
+    } as Awaited<ReturnType<typeof fetchFeed>>)
+
+    const view = render(<FeedTab />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Открыть видео' }))
+    const preview = view.container.querySelector('.miniapp-fullscreen-viewer video')
+    expect(preview).not.toBeNull()
+
+    // This is what a slow/expired provider CDN URL does after the preview
+    // already opened. The user must not lose the Repeat action.
+    fireEvent.error(preview!)
+    expect(screen.getByRole('button', { name: /^Повторить$/i })).toBeInTheDocument()
+    expect(screen.getByText(/Видео не загрузилось.*можно повторить/i)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Повторить$/i }))
+    await waitFor(() => {
+      expect(setVideoPromptPreset).toHaveBeenCalledWith(expect.objectContaining({
+        model: 'seedance_2_5', sourceFeedGenId: 42, promptHidden: true,
+      }))
+    })
+    expect(setActiveTab).toHaveBeenCalledWith(2)
+  })
+
   it('opens opaque Genjutsu recipes without generic video fallback or generation', async () => {
     const setActiveTab = jest.fn()
     const setVideoPromptPreset = jest.fn()
