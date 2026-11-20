@@ -246,6 +246,86 @@ def _fact_catalog(facts: dict) -> dict[str, Any]:
     return selected
 
 
+def _verified_report_facts(plan: ReportPlan, facts: dict) -> dict[str, Any]:
+    """Keep the original v2 HMAC catalog immutable; bind new lunar fields in v3.
+
+    Lunar ingresses and city originate in the trusted astronomy/GeoNames
+    calculation. Older signed lunar jobs intentionally retain their historical
+    catalog so a prompt upgrade cannot invalidate their encrypted checkpoints.
+    """
+    selected = _fact_catalog(facts)
+    if plan.service_id != "lunar" or not plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        return selected
+
+    place = facts.get("calendar_place")
+    if place is not None:
+        if (
+            not isinstance(place, dict)
+            or set(place) != {"name", "country_code", "place_id", "latitude",
+                              "longitude", "timezone", "source"}
+            or not isinstance(place.get("name"), str)
+            or not 1 <= len(place["name"]) <= 120
+            or any(ord(char) < 32 or char in "<>{}\\"
+                   for char in place["name"])
+            or not isinstance(place.get("country_code"), str)
+            or re.fullmatch(r"[A-Z]{2}", place["country_code"]) is None
+            or type(place.get("place_id")) is not int
+            or not 1 <= place["place_id"] <= 2_147_483_647
+            or type(place.get("latitude")) not in (float, int)
+            or not -90 <= place["latitude"] <= 90
+            or type(place.get("longitude")) not in (float, int)
+            or not -180 <= place["longitude"] <= 180
+            or not isinstance(place.get("timezone"), str)
+            or re.fullmatch(r"[A-Za-z][A-Za-z0-9_+./-]{0,79}",
+                            place["timezone"]) is None
+            or place["source"] != "GeoNames"
+            or place["timezone"] != facts.get("timezone")
+        ):
+            raise AstroReportError("Некорректные проверенные данные города календаря.")
+        selected["calendar_place"] = place
+
+    ingresses = facts.get("ingresses")
+    if ingresses is not None:
+        expected_keys = {
+            "from_sign", "to_sign", "longitude_deg", "at_utc",
+            "at_local", "local_date",
+        }
+        if not isinstance(ingresses, list) or len(ingresses) > 20:
+            raise AstroReportError("Некорректные рассчитанные переходы Луны.")
+        for ingress in ingresses:
+            if (
+                not isinstance(ingress, dict)
+                or set(ingress) != expected_keys
+                or type(ingress["longitude_deg"]) not in (int, float)
+                or not 0 <= ingress["longitude_deg"] < 360
+                or any(
+                    not isinstance(ingress.get(key), str)
+                    or not 1 <= len(ingress[key]) <= 64
+                    or any(ord(c) < 32 or c in "<>{}" for c in ingress[key])
+                    for key in ("from_sign", "to_sign", "at_utc",
+                                "at_local", "local_date")
+                )
+                or re.fullmatch(r"\d{4}-\d{2}-\d{2}",
+                                ingress["local_date"]) is None
+            ):
+                raise AstroReportError("Некорректные рассчитанные переходы Луны.")
+        selected["ingresses"] = ingresses
+
+    for key in ("lunar_day_convention", "reference_time"):
+        value = facts.get(key)
+        if value is not None:
+            if (
+                not isinstance(value, str)
+                or not 1 <= len(value) <= 250
+                or any(ord(c) < 32 or c in "<>{}" for c in value)
+            ):
+                raise AstroReportError("Некорректное описание лунных расчётов.")
+            selected[key] = value
+    return selected
+
+
 def report_fingerprint(
     *,
     owner_id: int,
@@ -278,7 +358,7 @@ def report_fingerprint(
     ).encode("utf-8")
     payload = {"owner": owner_id, "service": plan.service_id, "plan": plan.version,
                "policy_digest": hashlib.sha256(policy).hexdigest(),
-               "facts": _fact_catalog(facts)}
+               "facts": _verified_report_facts(plan, facts)}
     # Legacy jobs keep their original fingerprint. New reports use a per-job
     # namespace so identical birth facts never reuse another report/checkpoint.
     if generation_id is not None:
@@ -331,7 +411,10 @@ def _validate_written_facts(text: str, facts: dict) -> None:
         )
 
 
-def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> str:
+def _parse_section(
+    raw: str, spec: SectionSpec, facts: dict | None = None,
+    *, required_dates: list[str] | None = None,
+) -> str:
     """Require structured section, not hallucinated external citations."""
     try:
         doc = json.loads(raw)
@@ -346,6 +429,7 @@ def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> st
         raise AstroSectionValidationError("Повреждённый раздел отчёта.", reason="invalid_text")
     if facts is not None:
         _validate_written_facts(text, facts)
+    _validate_lunar_table(text, required_dates)
     return text.strip()
 
 
@@ -391,12 +475,60 @@ def _repair_unsupported_sentences(raw: str, spec: SectionSpec, facts: dict) -> s
     return repaired
 
 
+def _lunar_expected_dates(facts: dict) -> list[str]:
+    """Use the verified civil month, rejecting gaps and duplicate day rows."""
+    period = facts.get("period")
+    if not isinstance(period, str):
+        raise AstroReportError("Нет проверенного периода лунного календаря.")
+    match = re.fullmatch(r"([0-9]{4})-(0[1-9]|1[0-2])", period)
+    if match is None:
+        raise AstroReportError("Некорректный месяц лунного календаря.")
+    year, month = map(int, match.groups())
+    if not 1900 <= year <= 2100:
+        raise AstroReportError("Период вне поддерживаемого диапазона.")
+    expected = [
+        date(year, month, day).isoformat()
+        for day in range(1, calendar.monthrange(year, month)[1] + 1)
+    ]
+    days = facts.get("days")
+    if not isinstance(days, list):
+        raise AstroReportError("Отсутствуют расчётные дни лунного календаря.")
+    actual = [row.get("date") if isinstance(row, dict) else None for row in days]
+    if actual != expected:
+        raise AstroReportError("Календарные дни неполны, дублированы или перепутаны.")
+    return expected
+
+
+def _validate_lunar_table(text: str, dates: list[str] | None) -> None:
+    """Require exactly one ISO-dated Markdown row per verified calendar day."""
+    if dates is None:
+        return
+    actual = re.findall(
+        r"(?m)^\|\s*((?:19|20|21)\d{2}-\d{2}-\d{2})\s*\|",
+        text,
+    )
+    if actual != dates:
+        raise AstroSectionValidationError(
+            "Таблица лунного месяца содержит не все рассчитанные дни.",
+            reason="incomplete_lunar_table",
+        )
+
+
 def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec, ...]:
     """No daily/monthly narrative may silently skip a real calendar day/month.
 
     Reject missing, duplicated, out-of-range and nonchronological facts.
     Never use client-provided date titles or unverified model-generated dates.
     """
+    # V3 uses one checked compact table instead of 28–31 independent paid
+    # LLM sections. A natal subsection exists only for a verified natal chart.
+    if plan.service_id == "lunar" and plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        _lunar_expected_dates(facts)
+        if isinstance(facts.get("natal_chart"), dict) and facts["natal_chart"]:
+            return plan.sections
+        return plan.sections[:-1]
     dynamic = plan.dynamic_period
     if dynamic is None:
         return plan.sections
@@ -477,7 +609,22 @@ async def compose_report(
         owner_id=owner_id, plan=plan, facts=facts, secret=secret,
         generation_id=generation_id,
     )
-    available = _fact_catalog(facts)
+    available = _verified_report_facts(plan, facts)
+    # A civil month anchored to a solar return is not a verified transit.
+    # Keep signed source facts intact, but do not expose placeholder months to
+    # the v3 solar interpretation model as evidence of event periods.
+    if plan.service_id == "solar" and plan.dynamic_period is None:
+        periods = available.get("periods")
+        if (isinstance(periods, list) and periods
+            and all(isinstance(item, dict) and item.get("convention") ==
+                    "twelve_civil_months_anchored_to_exact_solar_return"
+                    for item in periods)):
+            available.pop("periods")
+    lunar_dates = None
+    if plan.service_id == "lunar" and plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        lunar_dates = _lunar_expected_dates(available)
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     )
@@ -497,11 +644,15 @@ async def compose_report(
         raise ValueError("Invalid Astro section concurrency configuration")
 
     async def build_section(section: SectionSpec) -> dict[str, str]:
+        required_dates = (
+            lunar_dates if section.id == "section_03" else None
+        )
         prior = await store.read(owner_id=owner_id, fingerprint=fingerprint, section_id=section.id)
         if prior is not None:
             # A resumed section has already passed the same content gates.
             if _word_count(prior) < section.min_words:
                 raise AstroReportError("Сохранённый раздел не прошёл проверку целостности.")
+            _validate_lunar_table(prior, required_dates)
             text = prior
         else:
             request = {
@@ -529,11 +680,18 @@ async def compose_report(
                     json_response=True,
                 )
                 try:
-                    candidate = _parse_section(response, section, available)
+                    candidate = _parse_section(
+                        response, section, available, required_dates=required_dates,
+                    )
                     break
                 except AstroSectionValidationError as exc:
                     if exc.reason == "unsupported_claim":
                         repaired = _repair_unsupported_sentences(response, section, available)
+                        if repaired is not None:
+                            try:
+                                _validate_lunar_table(repaired, required_dates)
+                            except AstroSectionValidationError:
+                                repaired = None
                         if repaired is not None:
                             candidate = repaired
                             logger.info(
@@ -562,6 +720,10 @@ async def compose_report(
                             "но сохраните содержательность и минимальный объём. "
                             "Не додумывайте значения."
                         ) if exc.reason == "unsupported_claim" else (
+                            "Сохраните полную Markdown-таблицу: одна строка на "
+                            "каждый день, начиная с | YYYY-MM-DD |, строго по "
+                            "списку days, от первого до последнего числа."
+                        ) if exc.reason == "incomplete_lunar_table" else (
                             "Перепишите этот раздел по исходным фактам с соблюдением "
                             "структуры JSON и минимальной длины."
                         ),

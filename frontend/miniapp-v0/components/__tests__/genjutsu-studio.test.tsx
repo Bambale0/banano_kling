@@ -39,6 +39,80 @@ async function inputs() {
   fireEvent.change(screen.getByLabelText('Добавить референс к шагу 1'), { target: { value: 'face' } })
 }
 
+test('model switch stays on legacy for non-admin until Light is verified', async () => {
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const selector = await screen.findByRole('combobox', { name: 'Модель Genjutsu' })
+  expect(selector).toHaveValue('legacy')
+  expect(screen.getByRole('option', { name: 'Genjutsu Light' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Новый образ' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Движение · Light' })).not.toBeInTheDocument()
+})
+
+test('admin can switch to Light and back without stale prices or lost source/reference', async () => {
+  const ordinary = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return { ...bootstrap, is_admin: true }
+    return ordinary(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  await inputs()
+  fireEvent.click(screen.getByRole('button', { name: 'Рассчитать стоимость' }))
+  expect(await screen.findByText('90 бананов')).toBeInTheDocument()
+  const selector = screen.getByRole('combobox', { name: 'Модель Genjutsu' })
+  fireEvent.change(selector, { target: { value: 'light' } })
+  expect(selector).toHaveValue('light')
+  expect(screen.queryByText('90 бананов')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Движение · Light' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Новый стиль' })).not.toBeInTheDocument()
+  expect(screen.getByText('4–15 секунд')).toBeInTheDocument()
+  expect(screen.getByLabelText('Видео из библиотеки')).toHaveValue('video')
+  expect(screen.getByLabelText('Добавить референс к шагу 1')).toBeInTheDocument()
+  fireEvent.change(selector, { target: { value: 'legacy' } })
+  expect(screen.getByRole('button', { name: 'Новый стиль' })).toBeInTheDocument()
+  expect(screen.getByLabelText('Операция шага 1')).toHaveValue('motion_transfer')
+})
+
+test('verified public Light can be selected without exposing unverified Light operations', async () => {
+  const ordinary = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return {
+      ...bootstrap, limits: { ...bootstrap.limits, verified_operations: ['motion_transfer_light'] },
+    }
+    return ordinary(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const selector = await screen.findByRole('combobox', { name: 'Модель Genjutsu' })
+  fireEvent.change(selector, { target: { value: 'light' } })
+  expect(screen.getByRole('button', { name: 'Движение · Light' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Замена · Light' })).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Операция шага 1')).toHaveValue('motion_transfer_light')
+})
+
+test('unverified Light modes are not offered to public users', async () => {
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const choices = await screen.findByLabelText('Операция шага 1')
+  expect(choices.querySelector('option[value="motion_transfer"]')).not.toBeNull()
+  expect(choices.querySelector('option[value="motion_transfer_light"]')).toBeNull()
+  expect(choices.querySelector('option[value="object_swap_light"]')).toBeNull()
+})
+
+test('verified Light mode is selectable and uses the 15-second source-video limit', async () => {
+  const ordinary = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return {
+      ...bootstrap,
+      limits: { ...bootstrap.limits, verified_operations: ['motion_transfer_light'] },
+    }
+    return ordinary(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const choices = await screen.findByLabelText('Операция шага 1')
+  expect(choices.querySelector('option[value="motion_transfer_light"]')).not.toBeNull()
+  expect(choices.querySelector('option[value="object_swap_light"]')).toBeNull()
+  fireEvent.change(choices, { target: { value: 'motion_transfer_light' } })
+  expect(screen.getByText('4–15 секунд')).toBeInTheDocument()
+})
+
 test('all API qualities are available and mode change never silently drops reference roles', async () => {
   render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
   await inputs()

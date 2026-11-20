@@ -58,6 +58,29 @@ describe('Trend showcase viewport loading', () => {
   })
 })
 
+describe('Trend showcase portrait 9:16 Telegram layout', () => {
+  it('keeps the title fixed above an independently scrollable video and action region', () => {
+    const portrait = {
+      ...trend(25, original, videoPoster),
+      title: 'Этот вайб 😍😍😍',
+      generation_settings: { kind: 'video', ratio: '9:16', preview_type: 'video' },
+    } as ShowcaseTrend
+    show(portrait)
+    fireEvent.click(screen.getByRole('button', { name: 'Открыть тренд Этот вайб 😍😍😍' }))
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveClass('miniapp-trend-preview-dialog')
+    const header = dialog.querySelector('[data-testid="trend-preview-header"]')
+    const scroller = dialog.querySelector('[data-testid="trend-preview-scroll-region"]')
+    expect(header).toContainElement(screen.getByText('Этот вайб 😍😍😍'))
+    expect(scroller).toContainElement(dialog.querySelector('video'))
+    expect(scroller).toContainElement(screen.getByRole('button', { name: /Повторить/ }))
+    expect(scroller).toContainElement(screen.getByRole('button', { name: 'Поделиться трендом' }))
+    expect(scroller).toHaveClass('min-h-0', 'overflow-y-auto')
+    expect(dialog.getElementsByTagName('video')[0]).toHaveClass('max-h-[52dvh]')
+    expect(dialog.querySelector('[data-slot="dialog-close"]')).toBeInTheDocument()
+  })
+})
+
 describe('Trend showcase S3 preview performance', () => {
   // The gallery assertions concern media after the card enters the viewport.
   // Jest's shared IntersectionObserver mock does not emit intersections.

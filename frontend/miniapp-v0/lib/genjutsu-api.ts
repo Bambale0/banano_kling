@@ -2,7 +2,7 @@
 
 import { getApiBasePath, getInitData, getStartParamFallback } from './api'
 
-export type Operation = 'motion_transfer' | 'object_swap' | 'restyle'
+export type Operation = 'motion_transfer' | 'object_swap' | 'restyle' | 'motion_transfer_light' | 'object_swap_light'
 export type Asset = { id: string; kind: 'image' | 'video' | 'audio'; url: string | null; duration_ms?: number; width?: number; height?: number; size_bytes?: number; has_audio?: boolean }
 export type Reference = { asset_id: string; role: string; label: string; binding?: 'user' | 'fixed' }
 export type Step = { operation: Operation; resolution: string; prompt: string; preserve: string; references: Reference[]; preset_id: string | null }
@@ -74,7 +74,7 @@ export function openGenjutsu(options: { task_id?: string; run_id?: string; recip
 export function freshStep(): Step { return { operation: 'motion_transfer', resolution: '720p', prompt: '', preserve: '', references: [], preset_id: null } }
 export function freshPlan(): Plan { return { source_asset_id: '', steps: [freshStep()], variants: 1, continuation: 'automatic' } }
 
-export const operationLabels: Record<Operation, string> = { motion_transfer: 'Перенос движения', object_swap: 'Замена в видео', restyle: 'Стилизация' }
+export const operationLabels: Record<Operation, string> = { motion_transfer: 'Перенос движения', object_swap: 'Замена в видео', restyle: 'Стилизация', motion_transfer_light: 'Перенос движения · Light', object_swap_light: 'Замена объектов · Light' }
 export const roleLabels: Record<string, string> = { character: 'Персонаж', wardrobe: 'Одежда', product: 'Товар', object: 'Предмет', location: 'Локация', style: 'Стиль' }
 export const statusLabels: Record<string, string> = {
   ready: 'Готовится к отправке', submitting: 'Отправляется', submission_unknown: 'Проверяем отправку', recovery_review: 'Нужна безопасная проверка',

@@ -17,6 +17,11 @@ permissions:
 jobs:
   browser-e2e:
     runs-on: ubuntu-24.04
+    # Browser binaries and signed OS libraries are preinstalled at the exact
+    # Playwright version locked by frontend/miniapp-v0/package-lock.json.
+    # Avoid the flaky, slow hosted-runner apt mirror without skipping E2E.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     defaults:
       run:
         working-directory: frontend/miniapp-v0
@@ -46,14 +51,12 @@ jobs:
       - name: Build production Mini App
         run: npm run build
 
-      - name: Prepare signed Ubuntu apt mirror
-        run: |
-          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
-          bash ../../scripts/ci/prepare-ubuntu-apt.sh
+      - name: Verify signed Ubuntu apt mirror fallback fixture
+        run: bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
 
-      - name: Install Chromium and WebKit runtimes
+      - name: Verify Chromium and WebKit runtimes
         timeout-minutes: 10
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install chromium webkit
 
       - name: Prepare mounted static export
         run: |
@@ -73,6 +76,7 @@ jobs:
           node e2e/critical-flows.mjs
           node e2e/repeat-personalization.mjs
           node e2e/trend-share-clipboard.mjs
+          node e2e/trend-category-showcase.mjs
           node e2e/bot-start-gate.mjs
           BOT_WRITE_NATIVE_E2E=1 node e2e/bot-start-media-targets.mjs
           BOT_WRITE_NATIVE_E2E=1 BOT_WRITE_E2E_BROWSER=webkit node e2e/bot-start-media-targets.mjs

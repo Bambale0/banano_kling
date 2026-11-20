@@ -71,11 +71,36 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
       <h3 className="font-medium">Управление доступом и тарифами · версия {version}</h3>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.admin_enabled} onChange={e => setSettings({ ...settings, admin_enabled: e.target.checked })} />Тестовые запуски администратора</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.public_enabled} onChange={e => setSettings({ ...settings, public_enabled: e.target.checked })} />Новые запуски пользователей</label>
-      <p className="text-xs text-muted-foreground">Публичное включение требует подключения провайдера, хранилища, тарифов и боевой проверки всех режимов/качеств. Выключение не прерывает принятые задачи.</p>
+      <p className="text-xs text-muted-foreground">Публичное включение требует подключения провайдера, хранилища, тарифов и боевой проверки всех включаемых режимов/качеств. Непроверенные новые модели не блокируют уже проверенные. Выключение не прерывает принятые задачи.</p>
       <p className="text-xs text-muted-foreground">Тариф за оплачиваемую секунду применяется к сумме секунд видеореференса и генерации. В Genjutsu длительность результата определяется выбранным фрагментом.</p>
-      {(Object.keys(settings.prices) as Operation[]).map(op => <section key={op} className="space-y-2 border-t border-border pt-3"><h4>{operationLabels[op]}</h4><div className="grid grid-cols-3 gap-2">{Object.entries(settings.prices[op]).map(([res, price]) => <label key={res} className="text-xs text-muted-foreground">{res}: бананов / сек.<input className={field} type="number" min={1} step={1} value={price ?? ''} placeholder="Не задано" onChange={e => setSettings({ ...settings, prices: { ...settings.prices, [op]: { ...settings.prices[op], [res]: e.target.value ? Number(e.target.value) : null } } })} /><span>{coverage.some(c => c.operation === op && c.resolution === res) ? 'Боевой результат сохранён' : 'Нужен боевой тест'}</span></label>)}</div>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.verified_operations.includes(op)} onChange={e => setSettings({ ...settings, verified_operations: e.target.checked ? [...settings.verified_operations, op] : settings.verified_operations.filter(v => v !== op) })} />Режим проверен</label>
-      </section>)}
+      {(['light', 'legacy'] as const).map(group => {
+        const operations = (Object.keys(settings.prices) as Operation[]).filter(
+          op => op.endsWith('_light') === (group === 'light'),
+        )
+        if (!operations.length) return null
+        return <section key={group} aria-label={group === 'light' ? 'Тарифы Higgsfield Light' : 'Тарифы Genjutsu'} className="space-y-3 border-t border-border pt-4">
+          <h4 className="font-semibold">{group === 'light' ? 'Higgsfield Genjutsu Light · цены' : 'Обычный Genjutsu · цены'}</h4>
+          {group === 'light' && <p className="text-xs text-muted-foreground">Введите цену за оплачиваемую секунду для каждого качества. Тарифы сохраняются на сервере; пустое поле запрещает платный запуск этого качества. Для ролика 5 с расчёт включает 5 с исходного видео + 5 с результата. После успешных боевых проверок всех трёх качеств можно включить режим для пользователей.</p>}
+          {operations.map(op => {
+            const rates = settings.prices[op]
+            const passed = Object.keys(rates).filter(res => coverage.some(c => c.operation === op && c.resolution === res)).length
+            const allTested = passed === Object.keys(rates).length
+            const allPriced = Object.values(rates).every(rate => typeof rate === 'number' && Number.isInteger(rate) && rate > 0)
+            return <div key={op} className="space-y-2 rounded-xl border border-border p-3">
+              <h5 className="font-medium">{operationLabels[op]}</h5>
+              <p className="text-xs text-muted-foreground">Боевые проверки: {passed}/{Object.keys(rates).length} · {allPriced ? 'цены заполнены' : 'цены не заполнены'}</p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">{Object.entries(rates).map(([res, price]) => <label key={res} className="space-y-1 text-xs text-muted-foreground">
+                {res} · бананов / сек.
+                <input aria-label={`${operationLabels[op]} · ${res} · цена за секунду`} className={field} type="number" min={1} max={10000} step={1} value={price ?? ''} placeholder="Не задано" onChange={e => setSettings({ ...settings, prices: { ...settings.prices, [op]: { ...rates, [res]: e.target.value ? Number(e.target.value) : null } } })} />
+                <span className="block">{coverage.some(c => c.operation === op && c.resolution === res) ? 'Боевой результат сохранён' : 'Нужен боевой тест'}</span>
+                {group === 'light' && <span className="block">{price === null ? 'Ролик 5 с: цена не задана' : `Ролик 5 с: ${price * 10} 🍌`}</span>}
+              </label>)}</div>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`${operationLabels[op]} · открыть пользователям`} checked={settings.verified_operations.includes(op)} disabled={group === 'light' && (!allTested || !allPriced)} onChange={e => setSettings({ ...settings, verified_operations: e.target.checked ? [...settings.verified_operations, op] : settings.verified_operations.filter(v => v !== op) })} />Режим проверен и доступен пользователям</label>
+              {group === 'light' && !allTested && <p className="text-xs text-muted-foreground">Открытие заблокировано до успешного результата от Higgsfield по каждому качеству.</p>}
+            </div>
+          })}
+        </section>
+      })}
       <details><summary className="cursor-pointer text-sm">Лимиты и параметры восстановления</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">{Object.entries(settings).filter(([key, value]) => typeof value === 'number' && labels[key]).map(([key, value]) => <label key={key} className="text-xs text-muted-foreground">{labels[key]}<input type="number" step={1} className={field} value={Number(value)} onChange={e => setSettings({ ...settings, [key]: Number(e.target.value) })} /></label>)}</div></details>
       {notificationTemplates && <details>
         <summary className="cursor-pointer text-sm">Тексты уведомлений</summary>
