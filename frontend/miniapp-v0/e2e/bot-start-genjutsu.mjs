@@ -29,20 +29,20 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true })
-  for (const query of ['?genjutsu=1', '?startapp=genjutsu', '?startapp=prompt_77', '?startapp=genjutsu_recipe_' + recipe.id]) {
+  for (const query of ['?genjutsu=1', '?startapp=genjutsu', '?startapp=prompt_77', '?startapp=genjutsu_recipe_' + recipe.id, '?startapp=remix_77_ref_E2EOWNER']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' })
     const page = await context.newPage()
     page.setDefaultTimeout(8000)
     const forbidden = [], errors = []
     const started = false
     page.on('pageerror', error => errors.push(error.message))
-    await page.addInitScript(() => {
+    await page.addInitScript((staleStart) => {
       window.__opened = []
-      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-offer-e2e', initDataUnsafe: {}, ready() {}, expand() {},
+      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-offer-e2e', initDataUnsafe: staleStart ? { start_param: staleStart } : {}, ready() {}, expand() {},
         openTelegramLink(url) { window.__opened.push(url) }, isVersionAtLeast() { return false }, requestWriteAccess() { throw Error('native permission called') },
         onEvent(name, handler) { window.addEventListener('fixture:' + name, handler) },
         offEvent(name, handler) { window.removeEventListener('fixture:' + name, handler) } } }
-    })
+    }, query.includes('remix_77') ? 'ref_OLD_LAUNCH' : '')
     // Mock Telegram destination: verify a real click-generated chat URL
     // without making any outbound request to Telegram.
     await context.route('https://t.me/**', route => route.fulfill({
@@ -57,6 +57,12 @@ try {
         let response = { ok: true }
         if (path === 'bootstrap') response = { ...bootstrap, telegram_chat_available: started, telegram_bot_start_required: !started }
         else if (path === 'prompts/detail') response = { ok: true, prompt: { id: 77, title: 'Recipe link', model: 'genjutsu', category: 'video', tags: ['trend'], generation_settings: { genjutsu_recipe_id: recipe.id } } }
+        else if (path === 'feed/item') {
+          assert.equal(body.gen_id, 77)
+          response = { ok: true, feed_item: { id: 77, task_id: 'feed-genjutsu-fixture', model: 'genjutsu',
+            gen_type: 'video', publication_scope: 'feed', genjutsu_recipe_id: recipe.id,
+            prompt_hidden: true, references_hidden: true, prompt: null, reference_images: [], reference_videos: [] } }
+        }
         else if (path === 'trends/catalog') { assert.equal(request.method(),'POST'); response = { ok: true, categories: [] } }
         else if (path === 'prompts') response = { ok: true, prompts: [] }
         else if (path === 'genjutsu' && body.action === 'availability') response = { ok: true, visible: true }
@@ -72,6 +78,20 @@ try {
     await page.goto(baseUrl + query)
     const region = page.getByRole('region', { name: 'Студия Genjutsu' })
     await region.waitFor()
+    if (query.includes('remix_77')) {
+      await region.getByText(recipe.title, { exact: true }).waitFor()
+      // The ordinary Photo tab remains mounted behind Radix Dialog and can
+      // legitimately appear in the DOM. Assert the *active* modal contains
+      // the Genjutsu editor rather than counting inactive background text.
+      const activeDialog = page.getByRole('dialog').filter({ has: region })
+      await activeDialog.waitFor()
+      assert.equal(await activeDialog.getByText('Генерация фото', { exact: true }).count(), 0,
+        'The active Genjutsu repeat dialog must not show the Nano Banana photo editor')
+      assert.equal(await activeDialog.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).count(), 1,
+        'The active dialog must expose the Genjutsu quote flow, not generic image generation')
+      assert.equal(await region.getByText(/secret prompt/i).count(), 0,
+        'Repeating a copy-protected work must not expose its private prompt')
+    }
     await page.waitForLoadState('networkidle')
     const gate = page.locator('[role="dialog"][aria-labelledby="bot-write-access-title"]')
     assert.equal(await gate.count(), 0, 'Genjutsu must not be covered by optional delivery modal: ' + query)
