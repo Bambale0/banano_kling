@@ -71,6 +71,8 @@ async def calculate_verified_facts(service: str, values: dict) -> dict:
             "name": zone["name"],
             "country_code": zone["country_code"],
             "place_id": zone["place_id"],
+            "latitude": zone["latitude"],
+            "longitude": zone["longitude"],
             "timezone": zone["timezone"],
             "source": "GeoNames",
         }
