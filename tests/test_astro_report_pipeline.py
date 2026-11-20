@@ -86,6 +86,10 @@ def test_seven_services_have_versioned_long_report_plans():
         if name == "natal":
             assert loaded.min_total_words == 11_000
             assert len(loaded.sections) == 30
+        elif name == "solar":
+            # The owner explicitly removed artificial 12k-word padding.
+            assert loaded.min_total_words == 765
+            assert len(loaded.sections) == 17
         else:
             assert loaded.min_total_words >= 5000
 
