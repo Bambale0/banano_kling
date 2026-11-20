@@ -80,8 +80,15 @@ try {
     await region.waitFor()
     if (query.includes('remix_77')) {
       await region.getByText(recipe.title, { exact: true }).waitFor()
-      assert.equal(await page.getByText('Генерация фото', { exact: true }).count(), 0,
-        'Genjutsu repeat must open its private recipe, never the default Nano Banana photo editor')
+      // The ordinary Photo tab remains mounted behind Radix Dialog and can
+      // legitimately appear in the DOM. Assert the *active* modal contains
+      // the Genjutsu editor rather than counting inactive background text.
+      const activeDialog = page.getByRole('dialog').filter({ has: region })
+      await activeDialog.waitFor()
+      assert.equal(await activeDialog.getByText('Генерация фото', { exact: true }).count(), 0,
+        'The active Genjutsu repeat dialog must not show the Nano Banana photo editor')
+      assert.equal(await activeDialog.getByRole('button', { name: 'Рассчитать стоимость', exact: true }).count(), 1,
+        'The active dialog must expose the Genjutsu quote flow, not generic image generation')
       assert.equal(await region.getByText(/secret prompt/i).count(), 0,
         'Repeating a copy-protected work must not expose its private prompt')
     }
