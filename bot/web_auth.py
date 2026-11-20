@@ -12,7 +12,7 @@ import os
 import re
 import secrets
 import time
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 from uuid import uuid4
 
 import aiohttp
@@ -30,6 +30,8 @@ _FLOW_SECONDS = 600
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _EMAIL_RE = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,190}$")
 _PROVIDERS = ("google", "yandex", "telegram", "email")
+_WEB_REFERRAL_RE = re.compile(r"^NW[A-F0-9]{16}$")
+
 
 _DDL = (
     """CREATE TABLE IF NOT EXISTS web_auth_sessions (
@@ -52,6 +54,17 @@ _DDL = (
         expires_at_epoch BIGINT NOT NULL)""",
     """CREATE INDEX IF NOT EXISTS web_auth_flows_limits
        ON web_auth_flows(provider, subject, created_at_epoch)""",
+    """CREATE TABLE IF NOT EXISTS web_referral_codes (
+        code TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL UNIQUE REFERENCES shared_accounts(id),
+        created_at_epoch BIGINT NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS web_referral_attributions (
+        referred_account_id TEXT PRIMARY KEY REFERENCES shared_accounts(id),
+        referrer_account_id TEXT NOT NULL REFERENCES shared_accounts(id),
+        created_at_epoch BIGINT NOT NULL,
+        CHECK(referred_account_id != referrer_account_id))""",
+    """CREATE INDEX IF NOT EXISTS web_referral_referrer
+       ON web_referral_attributions(referrer_account_id)""",
 )
 
 
@@ -306,6 +319,24 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
                 else:
                     account_id = uuid4().hex
                     await db.execute("INSERT INTO shared_accounts(id) VALUES (?)", (account_id,))
+                # Only a newly created account may adopt a referral. Linking
+                # an existing identity must never rewrite its attribution.
+                if not source and not existing:
+                    destination = _safe_next(flow.get("destination"))
+                    ref = parse_qs(urlsplit(destination).query).get("ref", [""])[0]
+                    if _WEB_REFERRAL_RE.fullmatch(ref):
+                        ref_owner = await (await db.execute(
+                            "SELECT account_id FROM web_referral_codes WHERE code = ?",
+                            (ref,),
+                        )).fetchone()
+                        if ref_owner and str(ref_owner[0]) != account_id:
+                            await db.execute(
+                                """INSERT INTO web_referral_attributions
+                                   (referred_account_id, referrer_account_id, created_at_epoch)
+                                   VALUES (?, ?, ?)
+                                   ON CONFLICT(referred_account_id) DO NOTHING""",
+                                (account_id, str(ref_owner[0]), now),
+                            )
                 if not existing:
                     if is_telegram:
                         await db.execute(
@@ -388,6 +419,54 @@ async def web_auth_config(request: web.Request) -> web.Response:
                   }})
 
 
+async def web_referral_link(request: web.Request) -> web.Response:
+    """Stable, messenger-independent referral link for a verified web account.
+
+    Registration attribution is written when a new verified identity signs in.
+    No money or referral reward is credited on mere registration.
+    """
+    account_id = await _session_account(request)
+    if not account_id:
+        return _json({"ok": False, "error": "session_required"}, 401)
+    await _ensure_tables()
+    async with db_backend.connect() as db:
+        if db_backend.is_postgres():
+            lock = int.from_bytes(hashlib.sha256(
+                ("web:referral:" + account_id).encode()).digest()[:8], "big") % (2**63)
+            await db.execute("SELECT pg_advisory_xact_lock(?)", (lock,))
+        else:
+            await db.execute("BEGIN IMMEDIATE")
+        row = await (await db.execute(
+            "SELECT code FROM web_referral_codes WHERE account_id = ?", (account_id,),
+        )).fetchone()
+        if row:
+            code = str(row[0])
+        else:
+            code = "NW" + secrets.token_hex(8).upper()
+            await db.execute(
+                """INSERT INTO web_referral_codes(code, account_id, created_at_epoch)
+                   VALUES (?, ?, ?) ON CONFLICT(account_id) DO NOTHING""",
+                (code, account_id, int(time.time())),
+            )
+            row = await (await db.execute(
+                "SELECT code FROM web_referral_codes WHERE account_id = ?",
+                (account_id,),
+            )).fetchone()
+            if not row:
+                raise RuntimeError("Referral code persistence failed")
+            code = str(row[0])
+        registrations = await (await db.execute(
+            "SELECT COUNT(*) FROM web_referral_attributions WHERE referrer_account_id = ?",
+            (account_id,),
+        )).fetchone()
+        await db.commit()
+    return _json({
+        "ok": True, "code": code,
+        "url": _public_origin() + "/login?" + urlencode({"ref": code}),
+        "registrations": int(registrations[0]),
+    })
+
+
 async def web_account(request: web.Request) -> web.Response:
     """A first-class browser identity; never manufacture a Telegram user ID.
 
@@ -417,6 +496,11 @@ async def web_account(request: web.Request) -> web.Response:
         "ok": True, "account_id": account_id, "studio_mode": "web",
         "connected": sorted(str(row[0]) for row in rows),
         "telegram_linked": bool(linked),
+        "providers": {
+            "yandex": all(_credentials("yandex")),
+            "google": all(_credentials("google")),
+            "email": _email_enabled(),
+        },
         "balance": balance,
         # This is a real account, but the legacy Telegram-dependent generation
         # pipeline is explicitly inaccessible: no counterfeit identity or funds.
@@ -579,6 +663,65 @@ async def email_verify(request: web.Request) -> web.Response:
     return await verify_otp(request)
 
 
+async def telegram_oidc_login(request: web.Request) -> web.Response:
+    """Verified Telegram OIDC login/link into a shared-account web session.
+
+    The OIDC nonce is issued by the existing Telegram browser-auth config.
+    Never treat an unsigned JSON profile or an id_token without that cookie as
+    proof of account ownership.
+    """
+    if not _valid_browser_origin(request):
+        return _json({"ok": False, "error": "Invalid origin"}, 403)
+    if request.content_length and request.content_length > 8192:
+        return _json({"ok": False, "error": "Invalid request"}, 413)
+    from bot.browser_auth import (
+        _OIDC_NONCE_COOKIE, _telegram_oidc_client_id, _build_browser_init_data,
+    )
+    from bot.telegram_oidc import fetch_telegram_jwks, verify_telegram_id_token
+    from bot.config import config
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("id_token"), str):
+            raise ValueError("Invalid Telegram OIDC payload")
+        nonce = request.cookies.get(_OIDC_NONCE_COOKIE, "")
+        client_id = _telegram_oidc_client_id()
+        if not nonce or not client_id:
+            raise ValueError("Missing Telegram OIDC challenge")
+        verified = verify_telegram_id_token(
+            body["id_token"], client_id=client_id, nonce=nonce,
+            jwks=await fetch_telegram_jwks(),
+        )
+        mode = "link" if body.get("intent") == "link" else "login"
+        source = await _session_account(request)
+        if mode == "link" and not source:
+            return _json({"ok": False, "error": "Session required"}, 401)
+        flow = {
+            "mode": mode,
+            "source": source if mode == "link" else None,
+            "destination": _safe_next(body.get("next")),
+        }
+        completed = await _complete_identity(request, "telegram", str(verified["id"]), flow)
+        if _SESSION_COOKIE not in completed.cookies:
+            return _json({"ok": False, "error": "Account linking failed"}, 409)
+        payload = {
+            "ok": True, "redirect": completed.location,
+        }
+        payload["init_data"] = _build_browser_init_data(verified, config.BOT_TOKEN)
+        response = _json(payload)
+        _set_session_cookie(response, completed.cookies[_SESSION_COOKIE].value)
+        response.del_cookie(
+            _OIDC_NONCE_COOKIE,
+            path=(config.MINI_APP_PATH or "/mini-app").rstrip("/") + "/api/browser-auth",
+            secure=True, httponly=True, samesite="Lax",
+        )
+        return response
+    except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        return _json({"ok": False, "error": "Invalid Telegram proof"}, 401)
+    except (aiohttp.ClientError, TimeoutError, ConnectionError):
+        return _json({"ok": False, "error": "Telegram verification unavailable"}, 503)
+
+
 async def telegram_login(request: web.Request) -> web.StreamResponse:
     if not _valid_browser_origin(request):
         return _json({"ok": False, "error": "Invalid request origin"}, 403)
@@ -604,7 +747,10 @@ async def telegram_login(request: web.Request) -> web.StreamResponse:
             from urllib.parse import quote
             fragment = "tgWebAppData=" + quote(_build_browser_init_data(verified, config.BOT_TOKEN), safe="")
             redirect += ("&" if "#" in redirect else "#") + fragment
-        response = _json({"ok": True, "redirect": redirect})
+        response = _json({
+            "ok": True, "redirect": redirect,
+            "init_data": _build_browser_init_data(verified, config.BOT_TOKEN),
+        })
         _set_session_cookie(response, result.cookies[_SESSION_COOKIE].value)
         return response
     except (ValueError, TypeError, AttributeError, json.JSONDecodeError):
@@ -636,6 +782,9 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     root = miniapp_root + "/api/web-auth"
     app.router.add_get(root + "/config", web_auth_config)
     app.router.add_get(root + "/account", web_account)
+    app.router.add_get(root + "/referral", web_referral_link)
+    from bot.web_tasks import setup_web_task_routes
+    setup_web_task_routes(app, root)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)

@@ -11,7 +11,17 @@ type BrowserAccount = {
   connected: string[]
   telegram_linked: boolean
   can_generate: boolean
+  providers?: { yandex?: boolean; google?: boolean; email?: boolean }
   balance: { available: string; reserved: string; revision: number }
+}
+
+type WebTask = {
+  task_id: string
+  type: 'image' | 'video'
+  model: string
+  status: 'pending' | 'completed' | 'failed'
+  result_url: string | null
+  created_at_epoch: number
 }
 
 const methodNames: Record<string, string> = {
@@ -20,6 +30,12 @@ const methodNames: Record<string, string> = {
 
 export function WebAccountWorkspace() {
   const [account, setAccount] = useState<BrowserAccount | null>(null)
+  const [referral, setReferral] = useState<{ url: string; registrations: number } | null>(null)
+  const [copied, setCopied] = useState(false)
+  const [history, setHistory] = useState<WebTask[] | null>(null)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyError, setHistoryError] = useState('')
   const [error, setError] = useState('')
   const [exiting, setExiting] = useState(false)
 
@@ -42,12 +58,56 @@ export function WebAccountWorkspace() {
           throw new Error('Некорректный ответ сервера.')
         }
         if (!controller.signal.aborted) setAccount(data)
+        // A self-owned referral link has no messenger URL and never credits
+        // money on registration; confirmed purchases are handled separately.
+        try {
+        const referralResponse = await fetch('/mini-app/api/web-auth/referral', {
+          credentials: 'same-origin', cache: 'no-store',
+          headers: { Accept: 'application/json' }, signal: controller.signal,
+        })
+        if (referralResponse.ok) {
+          const referralPayload = await referralResponse.json() as {
+            ok?: boolean; url?: string; registrations?: number
+          }
+          if (referralPayload.ok && referralPayload.url?.startsWith(window.location.origin + '/login?')
+            && !controller.signal.aborted) {
+            setReferral({ url: referralPayload.url, registrations: Number(referralPayload.registrations || 0) })
+          }
+        }
+        } catch {
+          // Referral link is optional; a temporary referral-service failure
+          // must never make an authenticated account appear logged out.
+        }
       } catch {
         if (!controller.signal.aborted) setError('Не удалось загрузить веб-аккаунт. Обновите страницу.')
       }
     })()
     return () => controller.abort()
   }, [])
+
+  const loadHistory = async (cursor?: string) => {
+    if (historyBusy) return
+    setHistoryBusy(true)
+    setHistoryError('')
+    try {
+      const url = new URL('/mini-app/api/web-auth/history', window.location.origin)
+      if (cursor) url.searchParams.set('cursor', cursor)
+      const response = await fetch(url.pathname + url.search, {
+        credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      })
+      const data = await response.json() as {
+        ok?: boolean; recent_tasks?: WebTask[]; next_cursor?: string | null
+      }
+      if (!response.ok || !data.ok || !Array.isArray(data.recent_tasks)) throw new Error('history')
+      setHistory(previous => cursor ? [...(previous || []), ...data.recent_tasks!] : data.recent_tasks!)
+      setNextCursor(data.next_cursor || null)
+    } catch {
+      setHistoryError('Не удалось загрузить историю веб-работ. Попробуйте снова.')
+    } finally {
+      setHistoryBusy(false)
+    }
+  }
 
   const signOut = async () => {
     if (exiting) return
@@ -70,6 +130,7 @@ export function WebAccountWorkspace() {
       <div className="mx-auto max-w-4xl space-y-7">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#8e7144]/40 pb-5">
           <a href="/" className="text-xl font-black tracking-[0.15em]">NEUROMIX</a>
+          <a href="/mini-app/" className="text-sm text-[#efd09a] underline">Вернуться в студию</a>
           <button type="button" disabled={exiting}
             className="inline-flex min-h-11 items-center gap-2 border border-[#99805a]/50 px-4 text-sm text-[#ead9bb] hover:bg-[#c99e53]/10 disabled:opacity-60"
             onClick={() => void signOut()}>
@@ -101,6 +162,18 @@ export function WebAccountWorkspace() {
                 {account.connected.map(provider => methodNames[provider] || provider).join(' · ') || 'Веб-аккаунт'}
               </p>
               <p className="mt-3 text-xs text-[#8e908e]">Идентификатор аккаунта: {account.account_id.slice(0, 8)}</p>
+              <div className="mt-5 space-y-2">
+                <p className="text-xs text-[#bbb2a6]">Привязать другой способ входа (по желанию)</p>
+                {(account.providers?.yandex && !account.connected.includes('yandex')) ? <a
+                  className="block text-sm text-[#e6c37f] underline"
+                  href="/mini-app/api/web-auth/start/yandex?intent=link">Связать Яндекс ID</a> : null}
+                {(account.providers?.google && !account.connected.includes('google')) ? <a
+                  className="block text-sm text-[#e6c37f] underline"
+                  href="/mini-app/api/web-auth/start/google?intent=link">Связать Google</a> : null}
+                {(account.providers?.email && !account.connected.includes('email')) ? <a
+                  className="block text-sm text-[#e6c37f] underline"
+                  href="/login?link=email">Связать почту</a> : null}
+              </div>
             </section>
             <section className="border border-[#a48350]/40 bg-[#141919] p-5">
               <h2 className="mb-3 font-semibold">Отдельный веб-баланс</h2>
@@ -108,9 +181,61 @@ export function WebAccountWorkspace() {
               <p className="mt-3 text-xs text-[#a5a29d]">Не объединён с балансом Telegram без подтверждённой привязки.</p>
             </section>
           </div>
+          {referral ? <section className="space-y-3 border border-[#a48350]/40 p-5" aria-label="Реферальная ссылка">
+            <h2 className="text-xl font-bold">Пригласить в NEUROMIX</h2>
+            <p className="text-sm text-[#c7c0b4]">Веб-ссылка работает без Telegram и других мессенджеров.
+              Регистрации сами по себе не начисляют вознаграждение.</p>
+            <div className="flex flex-wrap gap-2">
+              <input type="text" readOnly aria-label="Веб-реферальная ссылка"
+                value={referral.url} className="min-h-11 min-w-0 flex-1 border border-[#92754a] bg-black/30 px-3 text-sm" />
+              <button type="button" className="min-h-11 border border-[#c7a061] px-4 text-sm text-[#efd09a]"
+                onClick={() => {
+                  void navigator.clipboard.writeText(referral.url).then(() => {
+                    setCopied(true)
+                  }).catch(() => { setCopied(false) })
+                }}>
+                {copied ? 'Скопировано' : 'Скопировать'}
+              </button>
+            </div>
+            <p className="text-xs text-[#9d9b96]">Регистраций по ссылке: {referral.registrations}</p>
+          </section> : null}
+          <section className="space-y-4 border border-[#a48350]/40 p-5" aria-label="История веб-работ">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-bold">Мои веб-работы</h2>
+              <button type="button" disabled={historyBusy} onClick={() => void loadHistory()}
+                className="min-h-10 border border-[#c7a061]/70 px-3 text-sm text-[#f3cf92] disabled:opacity-60">
+                {historyBusy ? 'Загружаем…' : history ? 'Обновить историю' : 'Показать историю'}
+              </button>
+            </div>
+            <p className="text-sm text-[#bab4aa]">Только результаты, принадлежащие этому веб-аккаунту.
+              Работы Telegram без подтверждённой связки сюда не копируются.</p>
+            {historyError ? <p role="alert" className="text-sm text-red-300">{historyError}</p> : null}
+            {history?.length === 0 ? <p role="status" className="text-sm text-[#c7c0b4]">
+              Веб-работ пока нет.
+            </p> : null}
+            {history?.length ? <div className="space-y-3">
+              {history.map(task => <article key={task.task_id}
+                className="space-y-2 border border-[#9d7c47]/35 bg-[#111716] p-3">
+                <p className="text-sm font-semibold">{task.type === 'image' ? 'Изображение' : 'Видео'} · {task.model}</p>
+                <p className="text-xs text-[#b8b7b1]">
+                  {task.status === 'completed' ? 'Готово' : task.status === 'pending' ? 'В обработке' : 'Не удалось завершить'}
+                </p>
+                {task.result_url ? <a href={task.result_url} target="_blank" rel="noreferrer"
+                  className="text-sm text-[#f1ca8a] underline">Открыть результат</a> : null}
+              </article>)}
+              {nextCursor ? <button type="button" disabled={historyBusy}
+                className="min-h-10 border border-[#c7a061]/70 px-3 text-sm text-[#f3cf92]"
+                onClick={() => void loadHistory(nextCursor)}>Показать ещё</button> : null}
+            </div> : null}
+          </section>
           <section className="space-y-4 border border-[#a48350]/40 p-5">
             <h2 className="text-xl font-bold">Генерации в браузере</h2>
-            {account.can_generate ? (
+            {account.telegram_linked ? (
+              <p role="status" className="text-sm text-[#d5c8aa]">
+                Аккаунт Telegram подключён. Можно пользоваться существующей студией
+                и её балансом; независимый веб-кошелёк остаётся отдельным.
+              </p>
+            ) : account.can_generate ? (
               <p role="status">Веб-генерации доступны.</p>
             ) : (
               <p role="status" className="text-sm leading-relaxed text-[#c7c0b4]">

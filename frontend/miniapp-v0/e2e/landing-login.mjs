@@ -24,6 +24,14 @@ const server = createServer(async (req, res) => {
       json(res, 200, { ok: true, bot_username: 'ExampleBot', oidc_client_id: '123456', oidc_nonce: 'ci-test-nonce-1234567890123456789012' })
       return
     }
+    if (path === '/mini-app/api/browser-auth/account' && req.method === 'POST') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+      posts.push(body)
+      json(res, 200, { ok: true, init_data: initData, redirect: '/login' })
+      return
+    }
     if (path === '/mini-app/api/browser-auth' && req.method === 'POST') {
       const chunks = []
       for await (const chunk of req) chunks.push(chunk)
@@ -165,27 +173,71 @@ try {
   await yandexGuest.close()
   console.log('login/Yandex configured -> authorization start with referral: OK')
 
+  // Verified browser-only identities must enter their own private account,
+  // without a synthetic Telegram identity or forced Telegram linking.
   const yandexOnly = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let legacyStudioAttempts = 0
   await yandexOnly.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, studio_ready: false, providers: {
+      yandex: true, google: false, email: false,
+    } }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/account', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true, account_id: '0123456789abcdef0123456789abcdef',
+      studio_mode: 'web', connected: ['yandex'], telegram_linked: false,
+      can_generate: false, providers: { yandex: true, google: false, email: false },
+      balance: { available: '0.0000', reserved: '0.0000', revision: 0 },
+    }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/referral', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true, code: 'NW0123456789ABCDEF',
+      url: origin + '/login?ref=NW0123456789ABCDEF',
+      registrations: 0,
+    }),
+  }))
+  await yandexOnly.route('**/mini-app/api/web-auth/studio', route => {
+    legacyStudioAttempts += 1
+    return route.fulfill({ status: 409, contentType: 'application/json',
+      body: JSON.stringify({ ok: false, error: 'needs_telegram_link' }) })
+  })
+  await yandexOnly.goto(origin + '/login')
+  await yandexOnly.waitForURL('**/mini-app/')
+  await yandexOnly.getByRole('heading', { name: 'Ваш аккаунт NEUROMIX' }).waitFor()
+  assert.equal(await yandexOnly.getByText('Яндекс ID').count(), 1)
+  assert.equal(await yandexOnly.getByRole('link', { name: /Связать Telegram/ }).count(), 1)
+  assert.equal(legacyStudioAttempts, 0, 'Yandex-only user must not be sent to legacy Telegram studio')
+  assert.equal(await yandexOnly.getByText('Вход подтверждён').count(), 1)
+  assert.equal(await yandexOnly.getByRole('textbox', { name: 'Веб-реферальная ссылка' })
+    .inputValue(), origin + '/login?ref=NW0123456789ABCDEF')
+  await yandexOnly.close()
+  console.log('login/Yandex-only -> standalone authenticated web account (no Telegram): OK')
+
+  // Telegram linking remains a deliberate opt-in action initiated by the
+  // user, still verified server-side with a signed Telegram Login payload.
+  const voluntaryLink = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await voluntaryLink.route('**/mini-app/api/web-auth/config', route => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ ok: true, authenticated: true, studio_ready: false, providers: { yandex: true } }),
   }))
-  await yandexOnly.route('**/telegram-widget.js?22', route => route.fulfill({
+  await voluntaryLink.route('**/telegram-widget.js?22', route => route.fulfill({
     status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
   }))
-  await yandexOnly.route('**/mini-app/api/web-auth/telegram', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, redirect: '/login?linked=telegram' }),
+  await voluntaryLink.route('**/mini-app/api/web-auth/telegram', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, redirect: '/login?linked=telegram', init_data: initData }),
   }))
-  await yandexOnly.route('**/mini-app/api/web-auth/studio', route => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, init_data: initData }),
-  }))
-  await yandexOnly.goto(origin + '/login')
-  await yandexOnly.getByText('Вход через Яндекс подтверждён').waitFor()
-  await yandexOnly.locator('#ci-telegram-login').click()
-  await yandexOnly.waitForURL('**/mini-app/**')
-  assert.ok(yandexOnly.url().includes('#tgWebAppData='))
-  await yandexOnly.close()
-  console.log('login/Yandex-only -> explicit verified Telegram link -> studio: OK')
+  await voluntaryLink.goto(origin + '/login?link=telegram')
+  await voluntaryLink.getByText('Веб-вход подтверждён').waitFor()
+  await voluntaryLink.locator('#ci-telegram-login').click()
+  await voluntaryLink.waitForURL('**/mini-app/**')
+  assert.ok(voluntaryLink.url().includes('#tgWebAppData='))
+  await voluntaryLink.close()
+  console.log('login/Yandex-only -> explicit verified Telegram linking -> legacy studio: OK')
 
   const yandexLinked = await browser.newPage({ viewport: { width: 390, height: 844 } })
   await yandexLinked.route('**/mini-app/api/web-auth/config', route => route.fulfill({

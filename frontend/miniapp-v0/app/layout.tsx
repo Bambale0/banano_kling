@@ -8,7 +8,7 @@ const telegramBootstrapScript = `
   // Public login is not a Telegram WebView: do not dispatch host events or
   // request fullscreen while a visitor is choosing an authentication method.
   var loginPath = window.location.pathname;
-  if (loginPath === '/login' || loginPath === '/login/' || loginPath === '/mini-app/login' || loginPath === '/mini-app/login/') return;
+  if (loginPath === '/login' || loginPath === '/login/' || loginPath === '/account' || loginPath === '/account/' || loginPath === '/mini-app/login' || loginPath === '/mini-app/login/') return;
   var attempts = 0;
   var fullscreenRequested = false;
   var vkLaunch = ${JSON.stringify(process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk')} || new URLSearchParams(window.location.search).has('vk_app_id') || new URLSearchParams(window.location.search).has('vk_user_id');

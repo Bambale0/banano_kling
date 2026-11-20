@@ -25,8 +25,8 @@
 
 ## Verification (isolated worktree; no production data)
 
-- Python (Docker image with isolated temp SQLite and network disabled): tests/test_web_auth_identity.py + tests/test_web_auth_native_entry.py — **16 passed**.
-- Jest: web-account-entry.test.ts, web-account-workspace.test.tsx, browser-account-signout.test.ts — **12 passed**.
+- Python (Docker image with isolated temp SQLite and network disabled): tests/test_web_auth_identity.py + tests/test_web_auth_native_entry.py — **22 passed**.
+- Jest: web-account-entry.test.ts, web-account-workspace.test.tsx, browser-account-signout.test.ts — **17 passed**.
 - TypeScript: tsc --noEmit — 0 errors.
 - Next.js: CI=1 npm run build (static export, compile and production TypeScript) — success.
 - Production deployment not attempted for this incomplete feature.
@@ -40,3 +40,54 @@
 5. Add migration/integration tests for both PostgreSQL and SQLite, full native Telegram regression and production rollback/smoke before enabling can_generate in any environment.
 
 **Release gate:** this foundation should remain a draft PR until a separately validated independent generation/payment path exists or the operator explicitly accepts an account-only first release. Do not describe Yandex-only photo/video generation as working.
+
+
+## Extension: cross-platform login, voluntary linking, independent referrals and history
+
+Changes added after the first PR commit:
+
+- Google OAuth and Email OTP are visible in the browser login UI only if
+  the backend configuration enables those providers. Email OTP stays
+  browser-memory-only, rate-limited and HMAC verified; OAuth PKCE/state remains.
+- Telegram OIDC and the verified legacy signed Login Widget both use the
+  shared-account namespace. Linking requires both an existing authenticated
+  session and fresh proof of the secondary provider. OIDC nonce cookie scope
+  is preserved at /mini-app/api/browser-auth; old incompatible Telegram
+  mappings fall back to verified legacy browser-auth without forced merges.
+- Account management is available at /account/ even when Telegram is linked.
+  Explicit native Telegram launches retain priority over browser cookies.
+- GET /web-auth/referral issues a stable messenger-independent
+  /login?ref=NW... URL. Attribution is recorded only for first-time verified
+  registrations. No credit/reward is given merely for a registration.
+- GET /web-auth/history and /web-auth/task/{task_id} use a separate
+  web_generation_tasks store and account ownership checks. The web UI
+  supports read-only history, 20-item pagination with tied timestamp handling,
+  and safe HTTPS media results. Provider task producer is NOT yet connected.
+- Playwright E2E regression changed from an obsolete forced Telegram-link
+  expectation to mandatory Yandex-only web access plus separate voluntary
+  Telegram linking and existing linked-user handling.
+
+Latest verification:
+- Backend isolated Docker: 22 tests passed.
+- Frontend Jest: 17 tests passed.
+- Next.js production static export: success including /account/ page.
+- Local browser Playwright landing-login E2E: all tested flows passed.
+
+Verified anonymous production auth-config:
+Yandex enabled, Telegram enabled, Google disabled, email disabled.
+The latter two require provider credentials/configuration before go-live.
+
+### Critical unimplemented paid lifecycle — blocking full release
+
+- Immutable web invoice ownership, amount/currency verification and unique
+  ledger credit after authenticated provider webhook, with replay and crash
+  recovery. Legacy Telegram payment transactions cannot be reused blindly.
+- Web-native provider queue: pricing from live settings, account-scoped
+  reservation/capture/release/refund, idempotency, provider retries and
+  reconciliation. Never create a synthetic Telegram ID.
+- Full photo/video model support, reference uploads, history writes, web
+  delivery, durable S3 output, entitlement checks, account merge/reconciliation,
+  paid referral rewards and end-to-end regression/smoke tests.
+- No independent web-paid generation or web topup endpoint is registered.
+  Web-only can_generate remains false. Keep draft and do not merge into
+  production until the entire paid lifecycle is independently tested.

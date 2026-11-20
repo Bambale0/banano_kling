@@ -738,6 +738,12 @@ export function ProfileTab() {
         </div>
 
         {isOwnProfile && isLive && isBrowserAccountSession() ? (
+          <a href="/account/" className="flex min-h-11 w-full items-center justify-center
+            rounded-xl border border-border/60 px-4 text-sm text-foreground hover:bg-accent">
+            Способы входа и связанные аккаунты
+          </a>
+        ) : null}
+        {isOwnProfile && isLive && isBrowserAccountSession() ? (
           <AlertDialog open={logoutOpen} onOpenChange={(open) => {
             if (!open && logoutPending) return
             setLogoutOpen(open)
