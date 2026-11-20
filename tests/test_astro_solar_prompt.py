@@ -85,3 +85,53 @@ def test_new_solar_signed_plan_and_tamper_rejection():
     job.fingerprint = "0" * 64
     with pytest.raises(ValueError, match="template changed"):
         resolve_astro_job_plan(job, secret)
+
+
+def test_new_solar_prompt_never_receives_synthetic_months_as_transit_events():
+    import asyncio
+    from bot.services.astro_report_pipeline import compose_report
+
+    class Checkpoints:
+        def __init__(self):
+            self.saved = {}
+
+        async def read(self, *, owner_id, fingerprint, section_id):
+            return self.saved.get((owner_id, fingerprint, section_id))
+
+        async def save_if_absent(self, *, owner_id, fingerprint, section_id, text):
+            return self.saved.setdefault((owner_id, fingerprint, section_id), text)
+
+    class Provider:
+        def __init__(self):
+            self.requests = []
+
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            data = json.loads(user_instruction)
+            self.requests.append(data)
+            assert json_response
+            return json.dumps({
+                "section_id": data["section_id"],
+                "text": "В исходных фактах нет подтверждённых транзитов. " *
+                        (data["minimum_words"] + 2),
+            }, ensure_ascii=False)
+
+    provider = Provider()
+    facts = {
+        "schema_version": "astro.solar.facts.v1",
+        "solar_return_at_utc": "2026-11-20T12:00:00+00:00",
+        "period": "2026",
+        "periods": [{
+            "date": "2026-11-20",
+            "convention": "twelve_civil_months_anchored_to_exact_solar_return",
+        }],
+        "not_calculated": ["dated transit events"],
+    }
+    report = asyncio.run(compose_report(
+        owner_id=31, plan=load_report_plan("solar"), facts=facts,
+        secret="fixture-for-solar-no-hallucinations",
+        store=Checkpoints(), provider=provider,
+    ))
+    assert len(report["sections"]) == 17
+    assert len(provider.requests) == 17
+    assert all("periods" not in request["astronomical_facts"] for request in provider.requests)
+    assert all("solar_return_at_utc" in request["astronomical_facts"] for request in provider.requests)
