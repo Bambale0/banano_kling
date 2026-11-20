@@ -496,7 +496,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // launch snapshot; otherwise an old recipe link can resurrect its form.
     const startParam = historyLocation
       ? startParamFromLocation(historyLocation.search, historyLocation.hash)
-      : getStartParamFallback()
+      // The explicit current URL is this WebView's navigation request.
+      // Telegram's immutable initDataUnsafe.start_param can still describe an
+      // older launch, and must not redirect a new remix link into Photo/Trends.
+      // This preference is for navigation only: backend attribution/auth still
+      // use signed initData and keep their existing trust boundary.
+      : (startParamFromLocation(window.location.search, window.location.hash) || getStartParamFallback())
     const rawStartParam = genjutsuRecipeStartParam(startParam, historyLocation?.search ?? window.location.search) || startParam
     if (!rawStartParam || handledStartParamRef.current === rawStartParam) return
 
