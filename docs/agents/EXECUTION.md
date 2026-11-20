@@ -1,3 +1,12 @@
+## 2026-11-20 — Genjutsu Mini App header overlay (#665)
+
+- Baseline production: `8be8af25661f90656ed7b5abae6af0a0da8ccad2`. User-provided Telegram desktop screenshots show model selector and Close header floating across the Genjutsu operation tiles/tabs while scrolling.
+- Root cause from code: nested `DialogContent` is the independent vertical scrollport, but the child `GenjutsuStudio` header has `position: sticky`, `top: var(--miniapp-safe-top)` and `z-index: 20`. The sticky header detaches from normal layout and paints above its navigation. The Dialog additionally used overlapping `p-3` and arbitrary `pt-[max(...)]` utility classes; in the built CSS the shorthand could override the native Telegram safe-top inset, leaving Close under the native X when sticky was removed.
+- Fix: keep Genjutsu title, model selector and Close button in ordinary scroll flow; remove sticky positioning, extra z-index and translucent backdrop. The dedicated `.genjutsu-dialog-scrollport` CSS class documents the intended native padding, while explicit inline `DialogContent` top/bottom padding ensures it wins the actual browser cascade (E2E confirmed the class was present but computed padding stayed 12px with an 80px Telegram inset). The minimum is 24px, preserving desktop spacing. Preserve responsive layout, server feature gating, prices and all provider/payment contracts.
+- Public browser regression seam: `frontend/miniapp-v0/e2e/bot-start-genjutsu.mjs` verifies geometry before and after independent Dialog scroll for 320px/390px with simulated Telegram 48px native content inset. The header must remain before tabs and scroll out of view, not float over content.
+- CI/release: required checks in PR #665, GitHub native auto-merge into protected `tanyapi`, exact-SHA Docker/frontend deployment and read-only smoke. No migrations, configuration, payments or external provider calls.
+- Risks: Telegram client-specific safe inset availability differs across versions; verify after deploy at real viewport and keep browser regression in CI.
+
 ## 2026-11-16 — Astro #560: explicit GeoNames city picker in admin Mini App
 
 - BirthFields now provides a server-backed city lookup with explicit canonical place ID, country and timezone; IANA timezone auto-fills natal/compatibility forms only after deliberate selection.
