@@ -117,30 +117,38 @@ function LegacyTelegramWidget({ linkYandex = false }: { linkYandex?: boolean } =
       try {
         // This is the existing production server-side signature verifier,
         // not a fabricated Telegram ID or a separate authentication system.
-        const response = await fetch(
-          linkYandex ? '/mini-app/api/web-auth/telegram' : '/mini-app/api/browser-auth', {
+        let response = await fetch(
+          '/mini-app/api/web-auth/telegram', {
           method: 'POST',
           headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
           credentials: 'same-origin',
           cache: 'no-store',
           signal: controller.signal,
-          body: JSON.stringify(linkYandex ? { telegram_auth: user, intent: 'link' } : { telegram_auth: user }),
+          body: JSON.stringify({
+            telegram_auth: user, intent: linkYandex ? 'link' : 'login',
+            next: '/login' + window.location.search,
+          }),
         })
-        const data = await response.json() as {
-          ok?: boolean
-          init_data?: string
+        let data = await response.json() as {
+          ok?: boolean; init_data?: string
         }
-        if (!response.ok || !data.ok) throw new Error('verification-failed')
-        if (linkYandex) {
-          const studio = await fetch('/mini-app/api/web-auth/studio', {
-            method: 'POST', credentials: 'same-origin',
-            headers: { Accept: 'application/json' }, cache: 'no-store',
+        if (response.status === 409 && !linkYandex) {
+          // Existing legacy Telegram accounts with an older shared-link
+          // mapping must retain their working Telegram studio. Only a
+          // verified legacy login can be the fallback; never force-link.
+          const legacy = await fetch('/mini-app/api/browser-auth', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
             signal: controller.signal,
+            body: JSON.stringify({ telegram_auth: user }),
           })
-          const payload = await studio.json() as { ok?: boolean; init_data?: string }
-          if (!studio.ok || !payload.ok || !payload.init_data) throw new Error('studio-unavailable')
-          if (!cancelled) window.location.replace(studioUrlWithSession(payload.init_data))
-        } else if (typeof data.init_data === 'string' && data.init_data && !cancelled) {
+          data = await legacy.json() as { ok?: boolean; init_data?: string }
+          response = legacy
+        }
+        // Both the verified shared-account route and its signed legacy
+        // fallback must return a successful HTTP response and verified payload.
+        if (!response.ok || !data.ok) throw new Error('verification-failed')
+        if (typeof data.init_data === 'string' && data.init_data && !cancelled) {
           window.location.replace(studioUrlWithSession(data.init_data))
         } else {
           throw new Error('missing-session')
@@ -229,7 +237,7 @@ function telegramOIDCClient(): TelegramOIDCClient | null {
 }
 
 /** Primary one-click login: the official OIDC SDK opens the Telegram approval prompt. */
-function TelegramOIDCLogin() {
+function TelegramOIDCLogin({ linkAccount = false }: { linkAccount?: boolean }) {
   const [config, setConfig] = useState<{ clientId: number; nonce: string } | null>(null)
   const [state, setState] = useState<'loading' | 'ready' | 'verifying' | 'error'>('loading')
   const [message, setMessage] = useState('Готовим быстрый вход через Telegram…')
@@ -341,15 +349,28 @@ function TelegramOIDCLogin() {
         setMessage('Проверяем подтверждение Telegram…')
         void (async () => {
           try {
-            const response = await fetch('/mini-app/api/browser-auth', {
+            const response = await fetch('/mini-app/api/browser-auth/account', {
               method: 'POST',
               headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
               credentials: 'same-origin',
               cache: 'no-store',
-              body: JSON.stringify({ id_token: result.id_token }),
+              body: JSON.stringify({
+                id_token: result.id_token,
+                intent: linkAccount ? 'link' : 'login',
+                next: '/login' + window.location.search,
+              }),
             })
-            const data = await response.json() as { ok?: boolean; init_data?: string }
-            if (!response.ok || !data.ok || !data.init_data) throw new Error('auth-failed')
+            let data = await response.json() as { ok?: boolean; init_data?: string }
+            if (response.status === 409 && !linkAccount) {
+              const legacy = await fetch('/mini-app/api/browser-auth', {
+                method: 'POST', credentials: 'same-origin', cache: 'no-store',
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id_token: result.id_token }),
+              })
+              data = await legacy.json() as { ok?: boolean; init_data?: string }
+              if (!legacy.ok) throw new Error('auth-failed')
+            } else if (!response.ok) throw new Error('auth-failed')
+            if (!data.ok || !data.init_data) throw new Error('auth-failed')
             if (mounted.current) window.location.replace(studioUrlWithSession(data.init_data))
           } catch {
             if (mounted.current) {
@@ -396,15 +417,15 @@ function TelegramOIDCLogin() {
   )
 }
 
-type YandexConfig = {
+type BrowserProviderConfig = {
   ok?: boolean
   authenticated?: boolean
   studio_ready?: boolean
-  providers?: { yandex?: boolean }
+  providers?: { yandex?: boolean; google?: boolean; email?: boolean; telegram?: boolean }
 }
 
-function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticated: boolean) => void }) {
-  const [config, setConfig] = useState<YandexConfig | null>(null)
+export function BrowserProviderLogin({ onSessionDetected }: { onSessionDetected: (authenticated: boolean) => void }) {
+  const [config, setConfig] = useState<BrowserProviderConfig | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
     const controller = new AbortController()
@@ -415,12 +436,23 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
           headers: { Accept: 'application/json' }, signal: controller.signal,
         })
         if (!response.ok) return
-        const data = await response.json() as YandexConfig
+        const data = await response.json() as BrowserProviderConfig
         if (!controller.signal.aborted) {
           setConfig(data)
           onSessionDetected(Boolean(data.authenticated))
         }
-        if (data.authenticated && data.studio_ready) {
+        const query = new URLSearchParams(window.location.search)
+        const linkIntent = query.get('link')
+        const isExplicitLink = linkIntent === 'telegram' || linkIntent === 'email'
+        if (data.authenticated && (query.has('linked') || query.has('manage'))) {
+          window.location.replace('/account/')
+          return
+        }
+        if (data.authenticated && !data.studio_ready && !isExplicitLink) {
+          window.location.replace('/mini-app/')
+          return
+        }
+        if (data.authenticated && data.studio_ready && !isExplicitLink) {
           const studio = await fetch('/mini-app/api/web-auth/studio', {
             method: 'POST', credentials: 'same-origin', cache: 'no-store',
             headers: { Accept: 'application/json' }, signal: controller.signal,
@@ -433,21 +465,28 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
           }
         }
       } catch {
-        if (!controller.signal.aborted) setError('Не удалось проверить вход через Яндекс.')
+        if (!controller.signal.aborted) setError('Не удалось проверить веб-авторизацию.')
       }
     }
     void load()
     return () => controller.abort()
   }, [onSessionDetected])
 
-  if (!config?.providers?.yandex && !config?.authenticated) return null
+  if (!config?.providers?.yandex && !config?.providers?.google && !config?.providers?.email && !config?.authenticated) return null
+  if (config.authenticated && !config.studio_ready
+    && !['telegram', 'email'].includes(new URLSearchParams(window.location.search).get('link') || '')) {
+    return <p role="status" className="text-sm text-[#d7b56f]">Вход подтверждён. Открываем веб-аккаунт…</p>
+  }
+  if (config.authenticated && new URLSearchParams(window.location.search).get('link') === 'email') {
+    return <EmailCodeLogin intent="link" />
+  }
   if (config.authenticated && !config.studio_ready) {
     return (
       <section className="space-y-3 border border-[#d5af60]/40 bg-[#d5af60]/[0.055] p-4" aria-label="Вход через Яндекс">
-        <p className="font-semibold text-[#f3d392]">Вход через Яндекс подтверждён</p>
+        <p className="font-semibold text-[#f3d392]">Веб-вход подтверждён</p>
         <p className="text-sm text-[#ddd6c8]">
-          Чтобы пользоваться генерациями и своим балансом, один раз свяжи этот аккаунт с Telegram.
-          После привязки ты сможешь входить через Яндекс.
+          Привязка Telegram добровольная. Она нужна только для доступа к уже существующим
+          работам и балансу Telegram; независимая веб-учётная запись не требует мессенджера.
         </p>
         <LegacyTelegramWidget linkYandex />
         {error ? <p role="status" className="text-xs text-amber-300">{error}</p> : null}
@@ -457,18 +496,113 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
   if (config.authenticated) return <p role="status" className="text-sm text-[#d7b56f]">Открываем студию… {error}</p>
 
   return (
-    <a
-      href="/mini-app/api/web-auth/start/yandex"
-      onClick={event => {
-        event.preventDefault()
-        window.location.assign('/mini-app/api/web-auth/start/yandex?next=' +
-          encodeURIComponent('/login' + window.location.search))
-      }}
-      className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
-    >
-      Продолжить с Яндекс ID
-    </a>
+    <div className="space-y-3">
+      {config.providers?.yandex ? <a
+        href="/mini-app/api/web-auth/start/yandex"
+        onClick={event => {
+          event.preventDefault()
+          window.location.assign('/mini-app/api/web-auth/start/yandex?next=' +
+            encodeURIComponent('/login' + window.location.search))
+        }}
+        className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
+      >Продолжить с Яндекс ID</a> : null}
+      {config.providers?.google ? <a
+        href="/mini-app/api/web-auth/start/google"
+        onClick={event => {
+          event.preventDefault()
+          window.location.assign('/mini-app/api/web-auth/start/google?next=' +
+            encodeURIComponent('/login' + window.location.search))
+        }}
+        className="flex min-h-12 items-center justify-center border border-[#e7b154]/50 bg-white/[0.03] px-4 text-sm font-semibold text-[#f3d392] hover:bg-[#e7b154]/10"
+      >Продолжить с Google</a> : null}
+      {config.providers?.email ? <EmailCodeLogin intent="login" /> : null}
+    </div>
   )
+}
+
+/** Email OTP is deliberately server-backed. The code/challenge stay in component
+ * memory, never in URL, logs, sessionStorage or localStorage.
+ */
+export function EmailCodeLogin({ intent }: { intent: 'login' | 'link' }) {
+  const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
+  const [challengeId, setChallengeId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [error, setError] = useState('')
+  const active = useRef(false)
+
+  const requestCode = async () => {
+    if (active.current) return
+    active.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/email/start', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), intent, next: '/login' + window.location.search }),
+      })
+      const result = await response.json() as { ok?: boolean; challenge_id?: string; message?: string }
+      if (!response.ok || !result.ok || !result.challenge_id) throw new Error('send')
+      setChallengeId(result.challenge_id)
+      setMessage(result.message || 'Введите код из письма.')
+    } catch {
+      setError('Не удалось отправить код. Проверьте почту и попробуйте позже.')
+    } finally {
+      setBusy(false)
+      active.current = false
+    }
+  }
+
+  const verifyCode = async () => {
+    if (active.current) return
+    active.current = true
+    setBusy(true)
+    setError('')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/email/verify', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challenge_id: challengeId, code }),
+      })
+      const result = await response.json() as { ok?: boolean; redirect?: string }
+      if (!response.ok || !result.ok || !result.redirect?.startsWith('/') || result.redirect.startsWith('//')) throw new Error('verify')
+      window.location.replace(result.redirect)
+    } catch {
+      setError('Код недействителен или срок его действия истёк. Попробуйте ещё раз.')
+    } finally {
+      setBusy(false)
+      active.current = false
+    }
+  }
+
+  return <section className="space-y-3 border border-[#9c814c]/40 p-4" aria-label="Вход по почте">
+    <p className="font-semibold text-[#efd1a1]">{intent === 'link' ? 'Привязать почту' : 'Войти по почте'}</p>
+    {!challengeId ? <form className="space-y-3" onSubmit={event => { event.preventDefault(); void requestCode() }}>
+      <label className="block text-sm text-[#c5bead]" htmlFor="web-email">Адрес электронной почты</label>
+      <input id="web-email" type="email" required autoComplete="email" value={email}
+        onChange={event => setEmail(event.target.value)} disabled={busy} maxLength={254}
+        className="min-h-12 w-full border border-[#c49b5a]/50 bg-black/30 px-3 text-white" />
+      <button type="submit" disabled={busy || !email.trim()} className="min-h-11 w-full border border-[#e7b154]/70 text-[#f1c77a] disabled:opacity-50">
+        {busy ? 'Отправляем…' : 'Получить код'}
+      </button>
+    </form> : <form className="space-y-3" onSubmit={event => { event.preventDefault(); void verifyCode() }}>
+      <p role="status" className="text-xs text-[#c5bead]">{message}</p>
+      <label className="block text-sm text-[#c5bead]" htmlFor="web-email-code">Код из письма</label>
+      <input id="web-email-code" type="text" required inputMode="numeric" pattern="[0-9]{6}"
+        autoComplete="one-time-code" value={code} maxLength={6}
+        onChange={event => setCode(event.target.value.replace(/[^0-9]/g, ''))} disabled={busy}
+        className="min-h-12 w-full border border-[#c49b5a]/50 bg-black/30 px-3 text-white" />
+      <button type="submit" disabled={busy || code.length !== 6}
+        className="min-h-11 w-full border border-[#e7b154]/70 text-[#f1c77a] disabled:opacity-50">
+        {busy ? 'Проверяем…' : 'Подтвердить код'}
+      </button>
+      <button type="button" onClick={() => { setChallengeId(''); setCode(''); setMessage('') }}
+        className="w-full py-2 text-xs text-[#d4b276] underline">Другой адрес</button>
+    </form>}
+    {error ? <p role="alert" className="text-sm text-red-300">{error}</p> : null}
+  </section>
 }
 
 export function LoginPanel() {
@@ -512,16 +646,19 @@ export function LoginPanel() {
               Продолжить создавать.
             </CardTitle>
             <CardDescription className="max-w-xs text-sm leading-relaxed text-[#b9b6af]">
-              Нажми кнопку и подтверди вход в Telegram — и можно снова создавать.
+              Выберите Яндекс ID или Telegram — система подтвердит ваш аккаунт.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
-            {!webAuthenticated ? <TelegramOIDCLogin /> : null}
-            <YandexWebLogin onSessionDetected={setWebAuthenticated} />
+            {(!webAuthenticated || new URLSearchParams(
+              typeof window === 'undefined' ? '' : window.location.search,
+            ).get('link') === 'telegram')
+              ? <TelegramOIDCLogin linkAccount={webAuthenticated} /> : null}
+            <BrowserProviderLogin onSessionDetected={setWebAuthenticated} />
             <div className="flex items-start gap-3 border-t border-[#998054]/30 pt-5">
               <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-[#e5b25c]" />
               <p className="text-xs leading-relaxed text-[#a8a8a3]">
-                Мы не просим пароль от Telegram. Вход подтверждается в самом Telegram.
+                Пароли сервисов не передаются NEUROMIX. Яндекс ID и Telegram подтверждают вход у своего провайдера.
               </p>
             </div>
           </CardContent>

@@ -386,6 +386,14 @@ def setup_browser_auth_routes(app: web.Application) -> None:
     setup_shared_account_routes(app, miniapp_root)
     from bot.web_auth import setup_web_auth_routes
     setup_web_auth_routes(app, miniapp_root)
+    from bot.web_auth import telegram_oidc_login
+    # OIDC nonce cookie is deliberately scoped to /api/browser-auth.
+    # Keep the account-link route within that path or browsers cannot send
+    # the signed challenge and would reject every legitimate login.
+    app.router.add_post(
+        miniapp_root + "/api/browser-auth/account",
+        telegram_oidc_login,
+    )
     app.router.add_get(
         miniapp_root + "/api/browser-auth/config",
         browser_telegram_auth_config,

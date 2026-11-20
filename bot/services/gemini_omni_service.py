@@ -539,6 +539,7 @@ class GeminiOmniService(KlingService):
         name: str,
         voice_description: str = "",
         example_dialogue: str = "",
+        retry_transient: bool = True,
     ) -> Dict[str, Any]:
         if not name or not name.strip():
             return self._build_error("name_required", "Введите имя для Audio ID")
@@ -559,7 +560,11 @@ class GeminiOmniService(KlingService):
             bool(payload.get("voice_description")),
             bool(payload.get("example_dialogue")),
         )
-        data = await self._kie_post_raw(self.AUDIO_ENDPOINT, payload)
+        data = (
+            await self._kie_post_raw(self.AUDIO_ENDPOINT, payload)
+            if retry_transient else
+            await self._kie_post_once(self.AUDIO_ENDPOINT, payload)
+        )
         if data.get("error"):
             return data
 
@@ -615,6 +620,7 @@ class GeminiOmniService(KlingService):
         image_urls: List[str],
         character_name: str,
         audio_ids: Optional[List[str]] = None,
+        retry_transient: bool = True,
     ) -> Dict[str, Any]:
         if not description or not description.strip():
             return self._build_error(
@@ -649,7 +655,11 @@ class GeminiOmniService(KlingService):
             len(cleaned_audio_ids),
             payload["character_name"],
         )
-        data = await self._kie_post_raw(self.CHARACTER_ENDPOINT, payload)
+        data = (
+            await self._kie_post_raw(self.CHARACTER_ENDPOINT, payload)
+            if retry_transient else
+            await self._kie_post_once(self.CHARACTER_ENDPOINT, payload)
+        )
         if data.get("error"):
             return data
 

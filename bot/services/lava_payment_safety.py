@@ -505,6 +505,19 @@ async def safe_handle_lava_webhook(
         logger.warning("Rejected Lava webhook without contractId event=%s", event_type)
         return web.Response(status=400)
 
+    # Native web orders have UUID account ownership and never appear in the
+    # Telegram transactions table. Run this AFTER Lava IP/secret verification
+    # but BEFORE legacy payment lookup; never trust an unsolicited success.
+    from bot.web_commerce import verified_webhook
+
+    try:
+        web_result = await verified_webhook(payload, contract_id, event_type)
+    except Exception:
+        logger.exception("Native web Lava routing failed contract_id=%s", contract_id)
+        return web.Response(status=503)
+    if web_result is not None:
+        return web_result
+
     try:
         transaction = await _lookup_lava_transaction(
             contract_id=contract_id,

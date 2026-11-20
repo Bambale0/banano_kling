@@ -5,6 +5,8 @@ import { SharedAccountLinkPreview } from '@/components/shared-account-link-previ
 import { VkNativeWorkspace } from '@/components/vk-native-workspace'
 import { hasVkLaunchData, incomingAccountLink } from '@/lib/account-platform'
 import { reportVkLaunchStage } from '@/lib/vk-launch-telemetry'
+import { WebAccountWorkspace } from '@/components/web-account-workspace'
+import { browserEntryMode, browserLoginUrl, hasExplicitTelegramLaunch, navigateToWebsiteLogin } from '@/lib/web-account-entry'
 import {
   startAccountAppSession,
   stopAccountAppSession,
@@ -102,23 +104,93 @@ function VkAccountGate({ children }: { children: ReactNode }) {
 }
 
 export function AccountPlatformEntry({ children }: { children: ReactNode }) {
-  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | null>(null)
+  const [loginTarget, setLoginTarget] = useState('/login')
+  const [platform, setPlatform] = useState<'telegram' | 'vk' | 'vk-launch-required' | 'web' | 'login' | 'web-error' | null>(null)
   const [telegramInvitation, setTelegramInvitation] = useState(false)
   useEffect(() => {
     const vkSigned = hasVkLaunchData()
-    if (vkSigned) reportVkLaunchStage('vk-react-mounted')
-    setPlatform(vkSigned ? 'vk'
-      : process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk' ? 'vk-launch-required' : 'telegram')
-    if (!vkSigned && process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') {
-      setTelegramInvitation(Boolean(incomingAccountLink()))
+    if (vkSigned) {
+      reportVkLaunchStage('vk-react-mounted')
+      setPlatform('vk')
+      return
+    }
+    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM === 'vk') {
+      setPlatform('vk-launch-required')
+      return
+    }
+    const invitation = Boolean(incomingAccountLink())
+    setTelegramInvitation(invitation)
+
+    // A real Telegram Mini App launch takes precedence over a browser cookie.
+    // Cached browser initData is NOT evidence of a native Telegram launch.
+    if (invitation || hasExplicitTelegramLaunch()) {
+      setPlatform('telegram')
+      return
+    }
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => {
+      if (!controller.signal.aborted) {
+        setPlatform('web-error')
+        controller.abort()
+      }
+    }, 10000)
+    void (async () => {
+      try {
+        const response = await fetch('/mini-app/api/web-auth/config', {
+          credentials: 'same-origin', cache: 'no-store',
+          headers: { Accept: 'application/json' }, signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('Web authentication unavailable')
+        const config = await response.json() as {
+          ok?: boolean; authenticated?: boolean; studio_ready?: boolean
+        }
+        if (controller.signal.aborted) return
+        if (config.ok !== true) throw new Error('Invalid web auth config')
+        const mode = browserEntryMode(Boolean(config.authenticated), Boolean(config.studio_ready))
+        if (mode === 'web') {
+          setPlatform('web')
+          return
+        }
+        if (mode === 'linked') {
+          // Only a real, *verified* Telegram link may enter the legacy studio.
+          const studio = await fetch('/mini-app/api/web-auth/studio', {
+            method: 'POST', credentials: 'same-origin', cache: 'no-store',
+            headers: { Accept: 'application/json' }, signal: controller.signal,
+          })
+          const result = await studio.json() as { ok?: boolean; init_data?: string }
+          if (!studio.ok || result.ok !== true || !result.init_data) throw new Error('Studio unavailable')
+          if (!controller.signal.aborted) {
+            const url = new URL('/mini-app/', window.location.origin)
+            url.hash = new URLSearchParams({ tgWebAppData: result.init_data }).toString()
+            window.location.replace(url.toString())
+          }
+          return
+        }
+        // An ordinary browser visitor without a verified session must be sent
+        // through the website login, never the legacy Telegram initData flow.
+        const target = browserLoginUrl(window.location.search)
+        setLoginTarget(target)
+        setPlatform('login')
+        navigateToWebsiteLogin(target)
+      } catch {
+        if (!controller.signal.aborted) setPlatform('web-error')
+      }
+    })().finally(() => window.clearTimeout(timeout))
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
     }
   }, [])
+
   // Do not mount the shared application store before VK authentication finishes.
   // The first HTML response must also be useful when an older VK WebView fails
   // to execute/hydrate the JS bundle. Returning null here produces an indefinite
   // white screen with no way back to VK.
   if (platform === null) {
-    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return null
+    if (process.env.NEXT_PUBLIC_MINIAPP_PLATFORM !== 'vk') return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
+      <p role="status" className="text-sm text-muted-foreground">Проверяем авторизацию NEUROMIX…</p>
+      <a className="underline" href="/login">Открыть вход</a>
+    </main>
     return <main className="mx-auto min-h-dvh w-full max-w-lg space-y-5 p-6" aria-label="Загрузка ВКонтакте">
       <h1 className="text-xl font-semibold">Открываем приложение ВКонтакте…</h1>
       <p role="status" className="text-sm text-muted-foreground">
@@ -126,6 +198,20 @@ export function AccountPlatformEntry({ children }: { children: ReactNode }) {
         Telegram для входа не нужен.
       </p>
       <VkLoginLink />
+    </main>
+  }
+  if (platform === 'web') return <WebAccountWorkspace />
+  if (platform === 'login') return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
+    <h1 className="text-xl font-bold">Для продолжения войдите в NEUROMIX</h1>
+    <p className="text-sm text-muted-foreground">Открываем вход через сайт. Привязывать Telegram необязательно.</p>
+    <a href={loginTarget} className="underline">Войти в аккаунт</a>
+  </main>
+  if (platform === 'web-error') {
+    return <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center gap-4 p-6">
+      <h1 className="text-xl font-bold">Не удалось подтвердить веб-сессию</h1>
+      <p role="alert" className="text-sm text-muted-foreground">Проверьте соединение и попробуйте ещё раз.</p>
+      <a href="/mini-app/" className="underline">Повторить</a>
+      <a href="/login" className="underline">Открыть вход</a>
     </main>
   }
   if (platform === 'vk-launch-required') {

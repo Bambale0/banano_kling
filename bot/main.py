@@ -275,6 +275,21 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
                 )
         except Exception:
             logger.exception("Lava reconcile loop failed")
+        # Web-account topups use a separate ledger and must reconcile even
+        # if a Telegram legacy payment is stuck or the callback was lost.
+        try:
+            from bot.web_commerce import reconcile_pending as reconcile_web_payments
+
+            web_results = await reconcile_web_payments(limit=25)
+            if web_results:
+                logger.info(
+                    "Web Lava reconciliation: checked=%s credited=%s unavailable=%s",
+                    len(web_results),
+                    sum(item.get("action") == "credited" for item in web_results),
+                    sum(item.get("action") == "provider_unavailable" for item in web_results),
+                )
+        except Exception:
+            logger.exception("Web Lava reconciliation tick failed")
         await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
 
 async def _memory_dump_loop(bot: Bot) -> None:
@@ -2950,6 +2965,9 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         asyncio.create_task(_media_cache_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
         asyncio.create_task(_lava_reconcile_loop(bot))
+        from bot.web_generation import run_generation_worker
+
+        asyncio.create_task(run_generation_worker())
         asyncio.create_task(_memory_dump_loop(bot))
         asyncio.create_task(_db_backup_loop())
         ensure_notification_campaign_worker(bot)
