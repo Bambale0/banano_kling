@@ -260,3 +260,50 @@ async def test_web_omni_asset_provider_never_retries_transient_post(monkeypatch)
     assert response["error"] == "temporarily_unavailable"
     post_once.assert_awaited_once()
     retrying_post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gemini_omni_character_wire_uses_singular_description(monkeypatch):
+    """Official KIE /omni/character/create expects description, not descriptions."""
+    post = AsyncMock(return_value={
+        "code": 200, "data": {"characterId": "character-real-2026"},
+    })
+    monkeypatch.setattr(gemini_omni_service, "_kie_post_once", post)
+    result = await gemini_omni_service.create_character(
+        description="A fox with bright orange fur",
+        image_urls=["https://neuromixbot.com/uploads/web_refs/fox.png"],
+        character_name="Fox Hero",
+        audio_ids=["audio-owned-provider"],
+        retry_transient=False,
+    )
+    assert result["asset_id"] == "character-real-2026"
+    post.assert_awaited_once()
+    assert post.await_args.args[1] == {
+        "description": "A fox with bright orange fur",
+        "image_urls": ["https://neuromixbot.com/uploads/web_refs/fox.png"],
+        "character_name": "Fox Hero",
+        "audio_ids": ["audio-owned-provider"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_gemini_omni_audio_wire_uses_registered_voice_and_name(monkeypatch):
+    post = AsyncMock(return_value={
+        "code": 200, "data": {"audioId": "owned-provider-audio-505"},
+    })
+    monkeypatch.setattr(gemini_omni_service, "_kie_post_once", post)
+    result = await gemini_omni_service.create_audio(
+        audio_id="achernar",
+        name="Friendly voice",
+        voice_description="A calm voice",
+        example_dialogue="Hello everybody",
+        retry_transient=False,
+    )
+    assert result["asset_id"] == "owned-provider-audio-505"
+    post.assert_awaited_once()
+    assert post.await_args.args[1] == {
+        "audio_id": "achernar",
+        "name": "Friendly voice",
+        "voice_description": "A calm voice",
+        "example_dialogue": "Hello everybody",
+    }

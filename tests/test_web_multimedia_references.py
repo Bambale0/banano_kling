@@ -181,3 +181,64 @@ async def test_typed_multimedia_task_reserves_and_delivers_to_own_browser_histor
         assert (await WalletService("live").snapshot(owner))["balance"] == {
             "available": "3.0000", "reserved": "0.0000", "revision": 3,
         }
+
+
+@pytest.mark.asyncio
+async def test_owned_media_probe_requires_real_reference_key_and_matching_s3_digest(
+    monkeypatch, tmp_path,
+):
+    """Public web upload -> S3 storage key -> hash recheck -> Wan media probe."""
+    import hashlib
+    from unittest.mock import AsyncMock
+
+    from bot.services import media_storage
+    from bot.services.wan3_prime_media import MediaInfo
+    from bot.services.wan3_prime_storage import ActualWan3PrimeProbe
+
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_references, "is_s3_enabled", lambda: True)
+    payload = bytes.fromhex("000000186674797069736f6d") + b"A" * 24
+    def archive(relative, data, **_):
+        assert data == payload
+        return "https://neuromixbot.com/uploads/" + relative
+    monkeypatch.setattr(web_references, "persist_upload_bytes", archive)
+    source = tmp_path / "owned.mp4"
+    source.write_bytes(payload)
+    monkeypatch.setattr(media_storage, "materialize_upload", lambda relative: str(source))
+    probe = AsyncMock(return_value=MediaInfo(
+        kind="video", duration_seconds=5.25, extension=".mp4",
+        width=1280, height=720, size_bytes=len(payload),
+    ))
+    monkeypatch.setattr(ActualWan3PrimeProbe, "probe_file", probe)
+    response = await web_auth._complete_identity(
+        SimpleNamespace(), "yandex", "owned-media-real-regression",
+        {"mode":"login","source":None,"destination":"/login"},
+    )
+    cookie=response.cookies["nm_web_session"].value
+    account=await web_auth._session_account(
+        SimpleNamespace(cookies={"nm_web_session":cookie}),
+    )
+    app=web.Application()
+    web_auth.setup_web_auth_routes(app,"/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        form=FormData()
+        form.add_field("video",payload,filename="clip.mp4",content_type="video/mp4")
+        created=await client.post(
+            "/mini-app/api/web-auth/web-generation/reference",
+            data=form,headers={"Origin":"https://neuromixbot.com",
+                               "Cookie":"nm_web_session="+cookie},
+        )
+        assert created.status == 200, await created.text()
+        reference=(await created.json())["reference_id"]
+    validated=await web_references.owned_reference_media(
+        account,[reference],kind="video",
+    )
+    assert len(validated)==1
+    assert validated[0].duration_seconds == 5.25
+    assert validated[0].sha256 == hashlib.sha256(payload).hexdigest()
+    probe.assert_awaited_once()
+    source.write_bytes(payload+b"tampered")
+    with pytest.raises(ValueError,match="SHA256"):
+        await web_references.owned_reference_media(
+            account,[reference],kind="video",
+        )

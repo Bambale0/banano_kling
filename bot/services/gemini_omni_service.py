@@ -637,7 +637,7 @@ class GeminiOmniService(KlingService):
             )
 
         payload: Dict[str, Any] = {
-            "descriptions": description[:2000],
+            "description": description[:2000],
             "image_urls": cleaned_images,
             "character_name": (character_name or "Character").strip()[:20],
         }

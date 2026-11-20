@@ -125,7 +125,7 @@ async def owned_reference_media(
         # original web_refs namespace. Extension is signature-derived.
         suffix = path.rsplit("/", 1)[-1]
         if (not suffix.startswith(reference_id + ".")
-                or not re.fullmatch(r"wr_[a-f0-9]{32}\\.(?:png|jpg|jpeg|webp|mp4|webm|mp3|wav|ogg|pdf|txt|md|doc|xls|ppt|docx|xlsx|pptx|pages|numbers|key)", suffix)):
+                or not re.fullmatch(r"wr_[a-f0-9]{32}\.(?:png|jpg|jpeg|webp|mp4|webm|mp3|wav|ogg|pdf|txt|md|doc|xls|ppt|docx|xlsx|pptx|pages|numbers|key)", suffix)):
             raise ValueError("Invalid owner reference storage key")
         relative = "web_refs/" + suffix
         local = await asyncio.to_thread(materialize_upload, relative)
