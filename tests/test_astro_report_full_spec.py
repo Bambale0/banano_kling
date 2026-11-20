@@ -19,7 +19,7 @@ REPORT_SPECS = {
     "karma": (27, 8_000),
     "year": (29, 12_000),
     "month": (23, 5_000),
-    "solar": (21, 12_000),
+    "solar": (17, 765),
     "lunar": (14, 5_000),
 }
 
@@ -90,10 +90,11 @@ def test_yearly_months_require_exact_twelve_calculated_rows():
         _expand_period_sections(plan, {**facts, "samples": None})
 
 
-def test_solar_requires_real_twelve_periods_not_a_fake_template():
+def test_solar_v3_does_not_invent_monthly_forecasts_from_civil_periods():
     from bot.services.astro_report_pipeline import _expand_period_sections
-    with pytest.raises(AstroReportError, match="расчётные факты"):
-        _expand_period_sections(load_report_plan("solar"), {"period": "2026"})
+    plan = load_report_plan("solar")
+    assert plan.dynamic_period is None
+    assert _expand_period_sections(plan, {"period": "2026"}) == plan.sections
 
 
 def test_report_fingerprint_changes_when_prompt_changes_without_version_bump():
