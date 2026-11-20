@@ -251,3 +251,35 @@ test('unmount invalidates a pending VK login, not only an established one', asyn
   await Promise.resolve()
   expect(stopAccountAppSession).toHaveBeenCalledTimes(1)
 })
+
+test('explicit browser query enters verified browser actor, never the Telegram store', async () => {
+  const original = global.fetch
+  const webApp = window.Telegram?.WebApp
+  const originalInitData = webApp?.initData
+  global.fetch = jest.fn().mockResolvedValue({
+    ok: false, status: 401, json: async () => ({ ok: false }),
+  }) as typeof fetch
+  try {
+    window.history.replaceState({}, '', '/?web=1')
+    // The shared Jest setup provides mock Telegram initData. Simulate a
+    // standalone browser, where the SDK exists but no WebView launch exists.
+    if (webApp) webApp.initData = ''
+    render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+    expect(await screen.findByRole('link', { name: 'Войти в NEUROMIX' })).toHaveAttribute('href', '/login')
+    expect(screen.queryByText('Общая студия')).not.toBeInTheDocument()
+    expect(global.fetch).toHaveBeenCalledWith('/mini-app/api/web-auth/actor', expect.objectContaining({
+      credentials: 'same-origin', cache: 'no-store',
+    }))
+  } finally {
+    global.fetch = original
+    // Restore the exact native launch fixture for unrelated legacy tests.
+    if (webApp) webApp.initData = originalInitData || ''
+  }
+})
+
+test('real Telegram launch metadata keeps the native MiniAppShell even with web query', () => {
+  window.history.replaceState({}, '', '/?web=1#tgWebAppData=verified-launch-data&tgWebAppVersion=8')
+  render(<AccountPlatformEntry><p>Общая студия</p></AccountPlatformEntry>)
+  expect(screen.getByText('Общая студия')).toBeInTheDocument()
+  expect(screen.queryByText('Войти в NEUROMIX')).not.toBeInTheDocument()
+})
