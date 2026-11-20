@@ -29,7 +29,7 @@ try {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   browser = await chromium.launch({ headless: true })
-  for (const query of ['?genjutsu=1', '?startapp=genjutsu', '?startapp=prompt_77', '?startapp=genjutsu_recipe_' + recipe.id]) {
+  for (const query of ['?genjutsu=1', '?startapp=genjutsu', '?startapp=prompt_77', '?startapp=genjutsu_recipe_' + recipe.id, '?startapp=remix_77_ref_E2EOWNER']) {
     const context = await browser.newContext({ viewport: { width: 390, height: 900 }, serviceWorkers: 'block' })
     const page = await context.newPage()
     page.setDefaultTimeout(8000)
@@ -57,6 +57,12 @@ try {
         let response = { ok: true }
         if (path === 'bootstrap') response = { ...bootstrap, telegram_chat_available: started, telegram_bot_start_required: !started }
         else if (path === 'prompts/detail') response = { ok: true, prompt: { id: 77, title: 'Recipe link', model: 'genjutsu', category: 'video', tags: ['trend'], generation_settings: { genjutsu_recipe_id: recipe.id } } }
+        else if (path === 'feed/item') {
+          assert.equal(body.gen_id, 77)
+          response = { ok: true, feed_item: { id: 77, task_id: 'feed-genjutsu-fixture', model: 'genjutsu',
+            gen_type: 'video', publication_scope: 'feed', genjutsu_recipe_id: recipe.id,
+            prompt_hidden: true, references_hidden: true, prompt: null, reference_images: [], reference_videos: [] } }
+        }
         else if (path === 'trends/catalog') { assert.equal(request.method(),'POST'); response = { ok: true, categories: [] } }
         else if (path === 'prompts') response = { ok: true, prompts: [] }
         else if (path === 'genjutsu' && body.action === 'availability') response = { ok: true, visible: true }
@@ -72,6 +78,13 @@ try {
     await page.goto(baseUrl + query)
     const region = page.getByRole('region', { name: 'Студия Genjutsu' })
     await region.waitFor()
+    if (query.includes('remix_77')) {
+      await region.getByText(recipe.title, { exact: true }).waitFor()
+      assert.equal(await page.getByText('Генерация фото', { exact: true }).count(), 0,
+        'Genjutsu repeat must open its private recipe, never the default Nano Banana photo editor')
+      assert.equal(await region.getByText(/secret prompt/i).count(), 0,
+        'Repeating a copy-protected work must not expose its private prompt')
+    }
     await page.waitForLoadState('networkidle')
     const gate = page.locator('[role="dialog"][aria-labelledby="bot-write-access-title"]')
     assert.equal(await gate.count(), 0, 'Genjutsu must not be covered by optional delivery modal: ' + query)
