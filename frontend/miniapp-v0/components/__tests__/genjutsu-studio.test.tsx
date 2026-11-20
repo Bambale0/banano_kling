@@ -39,6 +39,31 @@ async function inputs() {
   fireEvent.change(screen.getByLabelText('Добавить референс к шагу 1'), { target: { value: 'face' } })
 }
 
+test('unverified Light modes are not offered to public users', async () => {
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const choices = await screen.findByLabelText('Операция шага 1')
+  expect(choices.querySelector('option[value="motion_transfer"]')).not.toBeNull()
+  expect(choices.querySelector('option[value="motion_transfer_light"]')).toBeNull()
+  expect(choices.querySelector('option[value="object_swap_light"]')).toBeNull()
+})
+
+test('verified Light mode is selectable and uses the 15-second source-video limit', async () => {
+  const ordinary = call.getMockImplementation()!
+  call.mockImplementation(async (action: string, body: Record<string, unknown>) => {
+    if (action === 'bootstrap') return {
+      ...bootstrap,
+      limits: { ...bootstrap.limits, verified_operations: ['motion_transfer_light'] },
+    }
+    return ordinary(action, body)
+  })
+  render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
+  const choices = await screen.findByLabelText('Операция шага 1')
+  expect(choices.querySelector('option[value="motion_transfer_light"]')).not.toBeNull()
+  expect(choices.querySelector('option[value="object_swap_light"]')).toBeNull()
+  fireEvent.change(choices, { target: { value: 'motion_transfer_light' } })
+  expect(screen.getByText('4–15 секунд')).toBeInTheDocument()
+})
+
 test('all API qualities are available and mode change never silently drops reference roles', async () => {
   render(<GenjutsuStudio initial={initial} onClose={jest.fn()} />)
   await inputs()
