@@ -68,6 +68,56 @@ class AuthConflict(Exception):
     """A verified identity belongs to another account: never auto-merge funds."""
 
 
+class FinancialCutoverRequired(Exception):
+    """A legacy identity link would hide existing independent web liabilities."""
+
+
+async def _web_financial_liabilities_exist(db, account_id: str) -> bool:
+    """Fail closed before adding Telegram identity to a funded website owner.
+
+    Existing payment orders are potential deferred credits, including late
+    provider webhooks after a flag rollback. Tasks can own completed S3 media
+    or unsettled reserves. Both must survive a future verified wallet merge.
+    """
+    owner = (account_id,)
+    for table in ("shared_wallets", "web_payment_orders", "web_generation_tasks"):
+        if db_backend.is_postgres():
+            exists = await (await db.execute(
+                "SELECT to_regclass(?) IS NOT NULL", (table,),
+            )).fetchone()
+        else:
+            exists = await (await db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )).fetchone()
+        if not exists or not exists[0]:
+            continue
+        if table == "shared_wallets":
+            query = (
+                "SELECT 1 FROM shared_wallets WHERE scope='live' AND account_id=? "
+                "AND (available_units<>0 OR reserved_units<>0) LIMIT 1"
+            )
+        else:
+            query = (
+                "SELECT 1 FROM " + table + " WHERE account_id IN ("
+                "WITH RECURSIVE owned(id) AS (SELECT ? UNION ALL "
+                "SELECT a.id FROM shared_accounts a JOIN owned o "
+                "ON a.merged_into=o.id WHERE a.status='merged') "
+                "SELECT id FROM owned) LIMIT 1"
+            )
+        if await (await db.execute(query, owner)).fetchone():
+            return True
+    return False
+
+
+async def _has_telegram_identity(db, account_id: str) -> bool:
+    row = await (await db.execute(
+        "SELECT 1 FROM shared_account_identities WHERE platform='telegram' "
+        "AND account_id=? LIMIT 1", (account_id,),
+    )).fetchone()
+    return bool(row)
+
+
 def _digest(token: str) -> str:
     if not isinstance(token, str) or not _TOKEN_RE.fullmatch(token):
         raise ValueError("Invalid token")
@@ -269,11 +319,38 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
                 existing = str(row[0]) if row else None
                 if source:
                     account_id = source
+                    if existing and existing != source:
+                        # The shared account linker takes catalog BEFORE
+                        # account row locks. Preserve the same global order,
+                        # otherwise competing merges could deadlock.
+                        from bot.shared_accounts.commercial_store import lock_catalog
+
+                        await lock_catalog(db)
+                    # Serialize verification with concurrent wallet
+                    # reservations, captures and account merges. No financial
+                    # obligation may be created between the cutover probe and
+                    # committing the legacy identity.
+                    lock = " FOR UPDATE" if db_backend.is_postgres() else ""
                     active = await (await db.execute(
-                        "SELECT status FROM shared_accounts WHERE id = ?", (account_id,),
+                        "SELECT status FROM shared_accounts WHERE id = ?" + lock,
+                        (account_id,),
                     )).fetchone()
                     if not active or active[0] != "active":
                         raise ValueError("Account unavailable")
+                    # The web live ledger is not yet unified with Telegram.
+                    # A new Telegram identity (or a merge with an existing
+                    # Telegram-linked account) would hide already-paid web
+                    # credits/tasks from the linked user's current UI.
+                    # Guard inside the identity transaction, before merging.
+                    would_link_legacy = is_telegram or (
+                        bool(existing) and await _has_telegram_identity(db, existing)
+                    )
+                    if would_link_legacy and (
+                        await _web_financial_liabilities_exist(db, account_id)
+                        or (existing is not None and existing != account_id
+                            and await _web_financial_liabilities_exist(db, existing))
+                    ):
+                        raise FinancialCutoverRequired()
                     if existing and existing != account_id:
                         # Both existing accounts have been independently proven:
                         # a live source browser session plus this fresh verified
@@ -358,6 +435,8 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
             except Exception:
                 await db.rollback()
                 raise
+    except FinancialCutoverRequired:
+        return _redirect("/login?error=financial-cutover-required")
     except (AuthConflict, PreviewConflict, ValueError):
         return _redirect("/login?error=already-linked")
     # A link returns to connected methods; sign-in preserves the original route.

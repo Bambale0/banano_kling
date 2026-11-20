@@ -238,6 +238,24 @@ async def create_payment(request: web.Request) -> web.Response:
         else:
             await db.execute("BEGIN IMMEDIATE")
         try:
+            # Serialize the final purchase authorization with Telegram
+            # linking, which holds the same shared account row lock.
+            # The earlier HTTP auth check cannot prevent a concurrent link
+            # completing before this transaction starts.
+            suffix = " FOR UPDATE" if db_backend.is_postgres() else ""
+            owner = await (await db.execute(
+                "SELECT status FROM shared_accounts WHERE id=?" + suffix,
+                (account,),
+            )).fetchone()
+            linked = await (await db.execute(
+                "SELECT 1 FROM shared_account_identities "
+                "WHERE account_id=? AND platform IN ('telegram','vk') LIMIT 1",
+                (account,),
+            )).fetchone()
+            if not owner or owner[0] != "active" or linked:
+                await db.rollback()
+                return _json({"ok": False, "code": "FINANCIAL_CUTOVER_REQUIRED",
+                              "error": "Связывание аккаунтов изменило право на оплату."}, 409)
             existing_order = await (await db.execute(
                 """SELECT order_id FROM web_payment_orders
                    WHERE account_id=? AND request_key=?""",

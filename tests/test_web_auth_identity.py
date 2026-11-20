@@ -340,3 +340,168 @@ async def test_verified_yandex_linked_to_real_telegram_can_mint_signed_studio_lo
     assert payload["ok"]
     verified = _validate_init_data(payload["init_data"], config.BOT_TOKEN)
     assert int(verified["user"]["id"]) == tg_id
+
+
+@pytest.mark.asyncio
+async def test_linking_telegram_must_not_hide_existing_live_web_credits():
+    login = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "web-funded-before-telegram", _flow(),
+    )
+    request = SimpleNamespace(cookies={
+        "nm_web_session": login.cookies["nm_web_session"].value,
+    })
+    owner = await web_auth._session_account(request)
+    await WalletService("live").apply(owner, "credit", "12.7500", "synthetic-web-funded")
+    linked = await web_auth._complete_identity(
+        request, "telegram", "77665544", _flow(source=owner),
+    )
+    assert linked.location == "/login?error=financial-cutover-required"
+    assert "nm_web_session" not in linked.cookies
+    assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "12.7500"
+    async with db_backend.connect() as db:
+        member = await (await db.execute(
+            "SELECT account_id FROM shared_account_identities WHERE platform='telegram' AND external_id=?",
+            (77665544,),
+        )).fetchone()
+    assert member is None
+
+
+@pytest.mark.asyncio
+async def test_linking_telegram_must_not_hide_unsettled_web_payment_order():
+    from bot.web_commerce import ensure_web_payment_schema
+
+    login = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "web-order-before-telegram", _flow(),
+    )
+    request = SimpleNamespace(cookies={
+        "nm_web_session": login.cookies["nm_web_session"].value,
+    })
+    owner = await web_auth._session_account(request)
+    await ensure_web_payment_schema()
+    async with db_backend.connect() as db:
+        await db.execute(
+            """INSERT INTO web_payment_orders
+               (order_id,account_id,request_key,package_id,amount_minor,credit_amount,
+                status,created_at_epoch,updated_at_epoch)
+               VALUES (?,?,?,?,?,?,'creating',?,?)""",
+            ("web_" + "a"*32, owner, "idempotent-key-order-test", "mini", 25000, "250", 1, 1),
+        )
+        await db.commit()
+    linked = await web_auth._complete_identity(
+        request, "telegram", "77665545", _flow(source=owner),
+    )
+    assert linked.location == "/login?error=financial-cutover-required"
+    assert "nm_web_session" not in linked.cookies
+    async with db_backend.connect() as db:
+        order = await (await db.execute(
+            "SELECT status,account_id FROM web_payment_orders WHERE order_id=?",
+            ("web_" + "a"*32,),
+        )).fetchone()
+    assert order == ("creating", owner)
+
+
+@pytest.mark.asyncio
+async def test_oauth_link_to_telegram_owned_account_cannot_hide_web_funds():
+    telegram = await web_auth._complete_identity(
+        SimpleNamespace(), "telegram", "77551122", _flow(),
+    )
+    telegram_cookie = SimpleNamespace(cookies={
+        "nm_web_session": telegram.cookies["nm_web_session"].value,
+    })
+    telegram_account = await web_auth._session_account(telegram_cookie)
+    await web_auth._complete_identity(
+        telegram_cookie, "yandex", "verified-yandex-on-telegram", _flow(source=telegram_account),
+    )
+    website = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "website-to-be-linked", _flow(),
+    )
+    website_cookie = SimpleNamespace(cookies={
+        "nm_web_session": website.cookies["nm_web_session"].value,
+    })
+    website_account = await web_auth._session_account(website_cookie)
+    await WalletService("live").apply(
+        website_account, "credit", "6.5000", "website-funds-keep-owner",
+    )
+    denied = await web_auth._complete_identity(
+        website_cookie, "yandex", "verified-yandex-on-telegram", _flow(source=website_account),
+    )
+    assert denied.location == "/login?error=financial-cutover-required"
+    assert (await WalletService("live").snapshot(website_account))["balance"]["available"] == "6.5000"
+    async with db_backend.connect() as db:
+        row = await (await db.execute(
+            "SELECT account_id FROM web_auth_identities WHERE provider='google' AND subject=?",
+            ("website-to-be-linked",),
+        )).fetchone()
+        assert row[0] == website_account
+        row = await (await db.execute(
+            "SELECT account_id FROM web_auth_identities WHERE provider='yandex' AND subject=?",
+            ("verified-yandex-on-telegram",),
+        )).fetchone()
+        assert row[0] == telegram_account
+
+
+@pytest.mark.asyncio
+async def test_legacy_link_is_allowed_for_web_account_without_financial_liabilities():
+    login = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "empty-web-account-link", _flow(),
+    )
+    request = SimpleNamespace(cookies={
+        "nm_web_session": login.cookies["nm_web_session"].value,
+    })
+    owner = await web_auth._session_account(request)
+    linked = await web_auth._complete_identity(
+        request, "telegram", "88442255", _flow(source=owner),
+    )
+    assert linked.location == "/login?linked=telegram"
+    assert await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": linked.cookies["nm_web_session"].value,
+    })) == owner
+
+
+@pytest.mark.asyncio
+async def test_web_invoice_cannot_create_after_account_is_linked_during_auth_check(monkeypatch):
+    """TOCTOU: the DB transaction must re-check legacy membership under lock."""
+    from unittest.mock import AsyncMock
+
+    from bot import web_commerce
+    from bot.services.lava_service import lava_service
+
+    login = await web_auth._complete_identity(
+        SimpleNamespace(), "google", "checkout-auth-race-test", _flow(),
+    )
+    session = login.cookies["nm_web_session"].value
+    owner = await web_auth._session_account(SimpleNamespace(cookies={
+        "nm_web_session": session,
+    }))
+    # This is the membership change after the initial session/linked check.
+    async with db_backend.connect() as db:
+        await db.execute(
+            """INSERT INTO shared_account_identities(platform,external_id,account_id)
+               VALUES('telegram',?,?)""",
+            (44997722, owner),
+        )
+        await db.commit()
+    monkeypatch.setattr(
+        "bot.shared_accounts.store.linked_platforms",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(web_commerce, "_package",
+                        lambda _: (10000, "100", "synthetic-offer", "Synthetic"))
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-key")
+    provider = AsyncMock(side_effect=AssertionError("must never create invoice"))
+    monkeypatch.setattr(lava_service, "create_invoice", provider)
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/mini-app/api/web-auth/web-payments/create",
+            headers={"Origin": "https://neuromixbot.com",
+                     "Cookie": "nm_web_session=" + session},
+            json={"request_key": "test-idempotency-abc123",
+                  "package_id": "mini", "email": "buyer@example.test"},
+        )
+        assert response.status == 409
+        assert (await response.json())["code"] == "FINANCIAL_CUTOVER_REQUIRED"
+    provider.assert_not_awaited()
