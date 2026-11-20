@@ -63,7 +63,18 @@ async def calculate_verified_facts(service: str, values: dict) -> dict:
         period = values.get("period")
         parse_period(period)
         zone = await asyncio.to_thread(get_place, _place_id(values.get("place_id")))
-        return await asyncio.to_thread(build_lunar_calendar, period, zone["timezone"])
+        calendar = await asyncio.to_thread(
+            build_lunar_calendar, period, zone["timezone"],
+        )
+        # The report receives a trusted canonical city, not browser free text.
+        calendar["calendar_place"] = {
+            "name": zone["name"],
+            "country_code": zone["country_code"],
+            "place_id": zone["place_id"],
+            "timezone": zone["timezone"],
+            "source": "GeoNames",
+        }
+        return calendar
     if service == "compatibility":
         first_raw, second_raw = values.get("person_a"), values.get("person_b")
         if not isinstance(first_raw, dict) or not isinstance(second_raw, dict):
