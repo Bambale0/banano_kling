@@ -496,7 +496,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // launch snapshot; otherwise an old recipe link can resurrect its form.
     const startParam = historyLocation
       ? startParamFromLocation(historyLocation.search, historyLocation.hash)
-      : getStartParamFallback()
+      // The explicit current URL is this WebView's navigation request.
+      // Telegram's immutable initDataUnsafe.start_param can still describe an
+      // older launch, and must not redirect a new remix link into Photo/Trends.
+      // This preference is for navigation only: backend attribution/auth still
+      // use signed initData and keep their existing trust boundary.
+      : (startParamFromLocation(window.location.search, window.location.hash) || getStartParamFallback())
     const rawStartParam = genjutsuRecipeStartParam(startParam, historyLocation?.search ?? window.location.search) || startParam
     if (!rawStartParam || handledStartParamRef.current === rawStartParam) return
 
@@ -533,6 +538,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return
           }
           if (!item?.id) throw new Error('Публикация недоступна. Обновите ссылку.')
+          // Telegram's "Repeat in Genjutsu" button must launch the saved
+          // server-side recipe. Never convert a private Genjutsu publication
+          // to a generic video repeat: that loses its protected inputs/model.
+          if (startTarget.kind === 'remix' && item.model === 'genjutsu') {
+            const recipeId = String(item.genjutsu_recipe_id || '')
+            if (!/^[a-f0-9]{32}$/.test(recipeId)) {
+              throw new Error('Для этой публикации повтор Genjutsu недоступен.')
+            }
+            openGenjutsu({ recipe_id: recipeId })
+            return
+          }
           if (startTarget.kind === 'remix' && item.model !== 'genjutsu' && !item.genjutsu_recipe_id) {
             await applyFeedRemix(item, isCurrent)
             return
