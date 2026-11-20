@@ -505,8 +505,23 @@ def _enrich_legacy_video_repeat_body(
             )
             or ""
         ).strip().lower()
-        if restored_scenario:
-            normalized["seedance25_scenario"] = restored_scenario
+        if not restored_scenario:
+            # Pre-dedicated Seedance tasks used generic v_type and saved only
+            # v_image_url. Without translating it, public Seedance defaults
+            # to text (drops the first frame) or incorrectly to multimodal.
+            # Infer only from author-owned server metadata, never from
+            # visitor-supplied scenario or unverified files.
+            original_images = _first_list(request_data, _REPEAT_LIST_ALIASES["reference_images"])
+            original_videos = _first_list(request_data, _REPEAT_LIST_ALIASES["v_reference_videos"])
+            original_audio = _first_list(request_data, _REPEAT_LIST_ALIASES["seedance25_reference_audio_urls"])
+            original_first = _first_value(request_data, _REPEAT_SCALAR_ALIASES["v_image_url"])
+            if original_images or original_videos or original_audio:
+                restored_scenario = "multimodal"
+            elif original_first:
+                restored_scenario = "first_frame"
+            else:
+                restored_scenario = "text"
+        normalized["seedance25_scenario"] = restored_scenario
 
         if restored_scenario == "first_frame" and explicit_reference_images:
             normalized["seedance25_first_frame_url"] = explicit_reference_images[0]
