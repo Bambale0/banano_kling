@@ -221,6 +221,11 @@ try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     const walletResponse = await walletRefresh
     assert.equal((await walletResponse.json()).credits, 1, 'Wallet refresh must return the updated balance')
+    // The following scenario starts from a fresh user visit; the checkout
+    // sheet from the previous scenario must not cover its repeat editor.
+    // Navigate only after the real focused-wallet request has finished.
+    await page.waitForLoadState('networkidle')
+    await page.goto(baseUrl, { waitUntil: 'networkidle' })
     await page.locator('nav').getByRole('button', { name: 'Тренды', exact: true }).click()
     await page.getByRole('button', { name: /Повторить · 50/ }).click()
     const repeatDialog = page.getByRole('dialog')
