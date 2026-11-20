@@ -379,6 +379,78 @@ async def web_auth_catalog(request: web.Request) -> web.Response:
 
     return _json({"ok": True, **public_browser_catalog()})
 
+async def web_auth_history(request: web.Request) -> web.Response:
+    """Read-only legacy task history for an account with a verified TG link.
+
+    Browser-only accounts get an empty legacy projection. No account_id or
+    telegram_id from the client can affect the owner selection, and no new
+    task, Telegram user, wallet or financial event is ever created here.
+    """
+    from bot.shared_accounts.errors import AuthenticationError
+    from bot.shared_accounts.unified_actor import resolve_account_actor
+
+    if set(request.query) - {"cursor"}:
+        return _json({"ok": False, "error": "invalid_history_query"}, 400)
+    cursor = request.query.get("cursor")
+    if cursor is not None and (
+        not isinstance(cursor, str)
+        or not cursor.strip()
+        or len(cursor) > 256
+    ):
+        return _json({"ok": False, "error": "invalid_history_cursor"}, 400)
+    try:
+        actor = await resolve_account_actor(request)
+    except (AuthenticationError, ValueError):
+        return _json({"ok": False, "error": "session_required"}, 401)
+    except PermissionError:
+        return _json({"ok": False, "error": "account_unavailable"}, 403)
+
+    if not actor.telegram_linked or actor.telegram_id is None:
+        return _json({
+            "ok": True, "scope": "web_only",
+            "recent_tasks": [], "next_cursor": None, "cursor_reset": False,
+        })
+
+    # This is the EXACT existing native Mini App ownership/read/sanitize path.
+    # Import lazily to avoid a cycle with Mini App's shared auth imports.
+    from bot import miniapp
+    from bot.trend_task_privacy import sanitize_task_api_payload
+
+    try:
+        reset = False
+        try:
+            rows = await miniapp._fetch_recent_tasks(
+                actor.telegram_id, limit=9, before_task_id=cursor,
+            )
+        except miniapp.TaskHistoryCursorError:
+            reset = True
+            rows = await miniapp._fetch_recent_tasks(
+                actor.telegram_id, limit=9, before_task_id=None,
+            )
+        tasks = rows[:8]
+        sanitized = await sanitize_task_api_payload({
+            "ok": True, "scope": "legacy_telegram", "recent_tasks": tasks,
+            "next_cursor": tasks[-1]["task_id"] if len(rows) > 8 else None,
+            "cursor_reset": reset,
+        })
+        # A website logout OR verified Telegram unlink can race with the
+        # legacy DB/media fetch. Re-establish both authenticated owner and
+        # the precise legacy Telegram link before releasing private data.
+        try:
+            current = await resolve_account_actor(request)
+        except (AuthenticationError, ValueError, PermissionError):
+            return _json({"ok": False, "error": "session_required"}, 401)
+        if (current.account_id != actor.account_id
+                or not current.telegram_linked
+                or current.telegram_id != actor.telegram_id):
+            return _json({"ok": False, "error": "account_link_changed"}, 403)
+        return _json(sanitized)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Read-only shared account history failed")
+        return _json({"ok": False, "error": "history_unavailable"}, 503)
+
 
 async def web_auth_actor(request: web.Request) -> web.Response:
     """One verified account identity for both app launch channels (read-only).
@@ -735,6 +807,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_get(root + "/actor", web_auth_actor)
     app.router.add_get(root + "/catalog", web_auth_catalog)
     app.router.add_post(root + "/actor", web_auth_actor)
+    app.router.add_get(root + "/history", web_auth_history)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)
