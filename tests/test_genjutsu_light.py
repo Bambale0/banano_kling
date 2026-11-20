@@ -7,8 +7,13 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 
 from bot.genjutsu.contract import (
-    CATALOG, PipelineError, compile_plan, default_settings, provider_input,
-    quote_plan, validate_settings,
+    CATALOG,
+    PipelineError,
+    compile_plan,
+    default_settings,
+    provider_input,
+    quote_plan,
+    validate_settings,
 )
 from bot.genjutsu.provider import Higgsfield
 
