@@ -1144,6 +1144,13 @@ try {
           safeTop: getComputedStyle(document.documentElement).getPropertyValue('--miniapp-safe-top'),
           tgSafeTop: root.getPropertyValue('--tg-safe-area-inset-top'),
           tgContentSafeTop: root.getPropertyValue('--tg-content-safe-area-inset-top'),
+          dialogInlineStyle: dialog?.getAttribute('style') ?? null,
+          dialogSafeTop: css?.getPropertyValue('--miniapp-safe-top') ?? null,
+          dialogTgSafeTop: css?.getPropertyValue('--tg-safe-area-inset-top') ?? null,
+          dialogTgContentSafeTop: css?.getPropertyValue('--tg-content-safe-area-inset-top') ?? null,
+          bodyTgSafeTop: getComputedStyle(document.body).getPropertyValue('--tg-safe-area-inset-top'),
+          bodyTgContentSafeTop: getComputedStyle(document.body).getPropertyValue('--tg-content-safe-area-inset-top'),
+          paddingPriority: dialog?.style.getPropertyPriority('padding-top') ?? null,
         }
         root.removeProperty('--tg-safe-area-inset-top')
         root.removeProperty('--tg-content-safe-area-inset-top')
