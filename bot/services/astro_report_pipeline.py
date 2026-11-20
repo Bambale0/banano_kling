@@ -478,6 +478,17 @@ async def compose_report(
         generation_id=generation_id,
     )
     available = _fact_catalog(facts)
+    # Solar v2 exposed twelve civil-month intervals solely to drive the old
+    # dynamic chapters. In solar v3 they are not calculated transit events:
+    # do not feed these placeholder intervals to the model as evidence of
+    # meaningful annual stages. Keep full signed facts/checkpoints untouched.
+    if plan.service_id == "solar" and plan.dynamic_period is None:
+        civil_periods = available.get("periods")
+        if (isinstance(civil_periods, list) and civil_periods
+            and all(isinstance(row, dict) and row.get("convention") ==
+                    "twelve_civil_months_anchored_to_exact_solar_return"
+                    for row in civil_periods)):
+            available.pop("periods")
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     )
