@@ -1,0 +1,318 @@
+'use client'
+
+import { useEffect, useRef, useState } from 'react'
+
+type Model = {
+  id: string
+  label: string
+  type: 'image' | 'video'
+  price?: string
+  enabled?: boolean
+  unavailable_reason?: string | null
+  qualities?: string[]
+  quality_costs?: Record<string, string>
+  requires_reference?: boolean
+  prices_by_duration?: Record<string, string>
+  ratios: string[]
+  durations?: number[]
+  max_references?: number
+}
+type Task = {
+  task_id: string
+  type: 'image' | 'video'
+  model: string
+  status: 'pending' | 'completed' | 'failed'
+  result_url: string | null
+  created_at_epoch: number
+}
+
+export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
+  onBalanceChanged: () => void
+  onTaskChanged: () => void
+}) {
+  const [models, setModels] = useState<Model[]>([])
+  const [modelId, setModelId] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [ratio, setRatio] = useState('')
+  const [duration, setDuration] = useState(5)
+  const [quality, setQuality] = useState('')
+  const [quote, setQuote] = useState<{ price: string; key: string } | null>(null)
+  const [quoteError, setQuoteError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [activeTask, setActiveTask] = useState<Task | null>(null)
+  const [references, setReferences] = useState<{ id: string; name: string }[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [error, setError] = useState('')
+  const idempotencyKey = useRef('')
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetch('/mini-app/api/web-auth/web-generation/models', {
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+    }).then(async response => {
+      if (!response.ok) throw new Error('Model catalog failed')
+      return await response.json() as { ok?: boolean; enabled?: boolean; models?: Model[] }
+    }).then(data => {
+      if (!controller.signal.aborted && data.ok && data.enabled && data.models?.length) {
+        setModels(data.models)
+        const first = data.models.find(entry => entry.enabled !== false)
+        if (!first) {
+          setError('Пока ни одна модель не активирована для веб-генерации.')
+          return
+        }
+        setModelId(first.id)
+        setRatio(first.ratios.includes('1:1') ? '1:1' : first.ratios[0])
+        setDuration(first.durations?.includes(5) ? 5 : first.durations?.[0] || 5)
+        setQuality(first.qualities?.includes('2K') ? '2K' : first.qualities?.[0] || '')
+      }
+    }).catch(() => {
+      if (!controller.signal.aborted) setError('Не удалось загрузить модели и их актуальные цены.')
+    })
+    return () => controller.abort()
+  }, [])
+
+  const uploadReference = async (file: File) => {
+    if (uploading || references.length >= (model?.max_references || 0)) return
+    setUploading(true)
+    setError('')
+    try {
+      const body = new FormData()
+      body.append('image', file)
+      const response = await fetch('/mini-app/api/web-auth/web-generation/reference', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store', body,
+      })
+      const data = await response.json() as {
+        ok?: boolean; reference_id?: string; error?: string
+      }
+      if (!response.ok || !data.ok || !data.reference_id) {
+        throw new Error(data.error || 'Не удалось загрузить референс.')
+      }
+      setReferences(previous => previous.some(item => item.id === data.reference_id)
+        ? previous : [...previous, { id: data.reference_id!, name: file.name }])
+      idempotencyKey.current = ''
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Не удалось загрузить референс.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const model = models.find(item => item.id === modelId)
+  const referencesIds = references.map(item => item.id)
+  const quoteKey = JSON.stringify({
+    model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
+    duration, quality, reference_ids: referencesIds,
+  })
+  const quoteReady = Boolean(quote && quote.key === quoteKey)
+  const price = quoteReady
+    ? quote!.price
+    : model?.quality_costs?.[quality]
+      || model?.prices_by_duration?.[String(duration)]
+      || model?.price || ''
+
+  useEffect(() => {
+    if (!model || model.enabled === false || prompt.trim().length < 2
+      || (model.requires_reference && !references.length)) {
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      void fetch('/mini-app/api/web-auth/web-generation/quote', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
+          duration, quality: quality || undefined, reference_ids: referencesIds,
+        }),
+      }).then(async response => {
+        const result = await response.json() as { ok?: boolean; price?: string }
+        if (!response.ok || !result.ok || !result.price) throw new Error('Cannot quote')
+        if (!controller.signal.aborted) {
+          setQuote({ price: result.price, key: quoteKey })
+          setQuoteError('')
+        }
+      }).catch(() => {
+        if (!controller.signal.aborted) setQuoteError('Не удалось рассчитать актуальную стоимость.')
+      })
+    }, 250)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+    // Exact serialized input key contains all required quote dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteKey, model?.enabled, model?.requires_reference])
+
+  const checkTask = async (taskId: string) => {
+    try {
+      const response = await fetch('/mini-app/api/web-auth/task/' + encodeURIComponent(taskId), {
+        credentials: 'same-origin', cache: 'no-store',
+      })
+      if (!response.ok) return
+      const data = await response.json() as { ok?: boolean; task?: Task }
+      if (!data.ok || !data.task) return
+      setActiveTask(data.task)
+      if (data.task.status !== 'pending') {
+        onBalanceChanged()
+        onTaskChanged()
+      }
+    } catch {
+      // A network error never changes a server-side paid task state.
+    }
+  }
+
+  useEffect(() => {
+    if (!activeTask || activeTask.status !== 'pending') return
+    const timer = window.setInterval(() => { void checkTask(activeTask.task_id) }, 8000)
+    return () => window.clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTask?.task_id, activeTask?.status])
+
+  const createTask = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (busy || !model || !quoteReady || prompt.trim().length < 2) return
+    setBusy(true)
+    setError('')
+    if (!idempotencyKey.current) idempotencyKey.current = crypto.randomUUID().replace(/-/g, '')
+    try {
+      const response = await fetch('/mini-app/api/web-auth/web-generation/create', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_key: idempotencyKey.current, model: modelId,
+          prompt: prompt.trim(), aspect_ratio: ratio, duration,
+          reference_ids: referencesIds, quality: quality || undefined,
+          expected_price: quote!.price,
+        }),
+      })
+      const data = await response.json() as {
+        ok?: boolean; task_id?: string; status?: 'pending'; error?: string
+      }
+      if (!response.ok || !data.ok || !data.task_id) {
+        throw new Error(data.error || 'Не удалось создать задачу.')
+      }
+      setActiveTask({
+        task_id: data.task_id, type: model.type, model: model.id,
+        status: 'pending', result_url: null, created_at_epoch: Math.floor(Date.now() / 1000),
+      })
+      idempotencyKey.current = ''
+      onBalanceChanged()
+      onTaskChanged()
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Не удалось создать задачу.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <section className="space-y-4 border border-[#a48350]/40 p-5" aria-label="Веб-генерация">
+    <h2 className="text-xl font-bold">Создать фото или видео</h2>
+    <p className="text-sm text-[#bcb7af]">Цена берётся с сервера.
+      Средства резервируются на время выполнения, при ошибке возвращаются.</p>
+    <form className="space-y-3" onSubmit={event => void createTask(event)}>
+      <label className="block text-sm text-[#d7c0a2]" htmlFor="web-model">Модель</label>
+      <select id="web-model" value={modelId} disabled={busy || !models.length}
+        onChange={event => {
+          const next = models.find(item => item.id === event.target.value)
+          setModelId(event.target.value)
+          setRatio(next?.ratios.includes('1:1') ? '1:1' : next?.ratios[0] || '16:9')
+          setDuration(next?.durations?.includes(5) ? 5 : next?.durations?.[0] || 5)
+          setQuality(next?.qualities?.includes('2K') ? '2K' : next?.qualities?.[0] || '')
+          setReferences(previous => previous.slice(0, next?.max_references || 0))
+          setQuote(null)
+          idempotencyKey.current = ''
+        }} className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+        {models.map(item => <option key={item.id} value={item.id}
+          disabled={item.enabled === false}>
+          {item.label} ({item.type === 'image' ? 'фото' : 'видео'})
+          {item.enabled === false ? ' — пока недоступно' : ''}
+        </option>)}
+      </select>
+      <p className="text-xs text-[#adaba4]">Все модели общего каталога показаны.
+        Веб-запуск доступен только там, где подтверждены контракт, цена и доставка.</p>
+      {model?.qualities?.length ? <div>
+        <label className="block text-sm text-[#d7c0a2]" htmlFor="web-quality">Качество</label>
+        <select id="web-quality" value={quality} disabled={busy}
+          onChange={event => {
+            setQuality(event.target.value)
+            idempotencyKey.current = ''
+          }}
+          className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+          {model.qualities.map(item => <option key={item} value={item}>{item}</option>)}
+        </select>
+      </div> : null}
+      <label className="block text-sm text-[#d7c0a2]" htmlFor="web-prompt">Описание</label>
+      <textarea id="web-prompt" value={prompt} maxLength={2500} rows={4}
+        onChange={event => { setPrompt(event.target.value); idempotencyKey.current = '' }}
+        disabled={busy} required className="w-full border border-[#a48350] bg-[#151b1b] p-3 text-white"
+        placeholder="Опишите изображение или видео…" />
+      <div className="space-y-2">
+        <label htmlFor="web-generation-reference" className="block text-sm text-[#d7c0a2]">
+          Референсы (до {model?.max_references || 0} изображений)
+        </label>
+        <input id="web-generation-reference" type="file"
+          accept="image/png,image/jpeg,image/webp"
+          disabled={busy || uploading || references.length >= (model?.max_references || 0)}
+          onChange={event => {
+            const file = event.target.files?.[0]
+            if (file) void uploadReference(file)
+            event.target.value = ''
+          }} className="block max-w-full text-xs text-[#d9c7ae]" />
+        {uploading ? <p role="status" className="text-sm text-[#d9c7ae]">Сохраняем референс в S3…</p> : null}
+        {references.length > 0 ? <ul className="space-y-1">
+          {references.map(item => <li key={item.id}
+            className="flex flex-wrap items-center justify-between gap-2 text-sm text-[#d9c7ae]">
+            <span className="min-w-0 truncate">{item.name}</span>
+            <button type="button" disabled={busy || uploading}
+              className="min-h-9 border border-[#a48350]/60 px-2 text-[#f1c77a]"
+              onClick={() => {
+                setReferences(previous => previous.filter(ref => ref.id !== item.id))
+                idempotencyKey.current = ''
+              }}>Убрать</button>
+          </li>)}
+        </ul> : null}
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <label className="flex-1 space-y-2 text-sm text-[#d7c0a2]">
+          Формат
+          <select value={ratio} disabled={busy}
+            onChange={event => { setRatio(event.target.value); idempotencyKey.current = '' }}
+            className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+            {(model?.ratios || []).map(item => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        {model?.type === 'video' ? <label className="flex-1 space-y-2 text-sm text-[#d7c0a2]">
+          Длительность
+          <select value={duration} disabled={busy}
+            onChange={event => { setDuration(Number(event.target.value)); idempotencyKey.current = '' }}
+            className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+            {(model.durations || [5]).map(item => <option key={item} value={item}>{item} сек.</option>)}
+          </select>
+        </label> : null}
+      </div>
+      {quoteError ? <p role="alert" className="text-sm text-red-300">{quoteError}</p> : null}
+      <button type="submit" disabled={
+        busy || uploading || !model || !quoteReady || prompt.trim().length < 2
+      } className="min-h-11 w-full border border-[#b89454] bg-[#d5ab63] p-2 font-bold text-[#17120d] disabled:opacity-50">
+        {busy ? 'Создаём задачу…'
+          : quoteReady ? 'Создать за ' + price + ' кредитов'
+            : 'Ожидаем расчёта цены'}
+      </button>
+    </form>
+    {error ? <p role="alert" className="text-sm text-red-300">{error}</p> : null}
+    {activeTask ? <div className="space-y-2 border border-[#a48350]/40 p-3">
+      <p role="status" className="text-sm">Задача: {
+        activeTask.status === 'pending' ? 'генерируется' :
+        activeTask.status === 'completed' ? 'готова' : 'ошибка, резерв возвращён'
+      }</p>
+      {activeTask.result_url ? <a href={activeTask.result_url}
+        target="_blank" rel="noopener noreferrer"
+        className="text-sm text-[#f3cf92] underline">Открыть готовый результат</a> : null}
+      <button type="button" onClick={() => void checkTask(activeTask.task_id)}
+        className="ml-2 min-h-11 border border-[#8c7658] px-4 text-sm text-white">
+        Проверить статус
+      </button>
+    </div> : null}
+  </section>
+}

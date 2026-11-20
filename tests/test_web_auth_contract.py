@@ -68,10 +68,12 @@ def test_provider_urls_use_authorization_code_flow_and_pkce():
     assert 'hmac.compare_digest(request.cookies.get(_STATE_COOKIE, ""), expected)' in src
 
 
-def test_next_login_renders_yandex_only_when_enabled_and_preserves_telegram():
+def test_next_login_renders_only_configured_browser_providers_and_preserves_telegram():
     panel = (ROOT / "frontend/miniapp-v0/components/landing-login-panel.tsx").read_text(encoding="utf-8")
-    assert 'YandexWebLogin' in panel
+    assert 'BrowserProviderLogin' in panel
     assert 'providers?.yandex' in panel
+    assert 'providers?.google' in panel
+    assert 'providers?.email' in panel
     assert '/mini-app/api/web-auth/config' in panel
     assert '/mini-app/api/web-auth/start/yandex' in panel
     assert '/mini-app/api/web-auth/telegram' in panel

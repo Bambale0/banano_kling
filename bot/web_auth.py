@@ -492,6 +492,11 @@ async def web_account(request: web.Request) -> web.Response:
         )).fetchone()
 
     balance = (await WalletService("live").snapshot(account_id))["balance"]
+    from bot.config import config
+    from bot.services.lava_service import lava_service
+    from bot.web_commerce import _enabled as web_payments_enabled
+    from bot.web_generation import _enabled as web_generation_enabled
+
     return _json({
         "ok": True, "account_id": account_id, "studio_mode": "web",
         "connected": sorted(str(row[0]) for row in rows),
@@ -502,9 +507,10 @@ async def web_account(request: web.Request) -> web.Response:
             "email": _email_enabled(),
         },
         "balance": balance,
-        # This is a real account, but the legacy Telegram-dependent generation
-        # pipeline is explicitly inaccessible: no counterfeit identity or funds.
-        "can_generate": False,
+        # Independent web generation uses shared-account wallet reservations;
+        # legacy TG billing/credentials are not consulted.
+        "can_generate": bool(web_generation_enabled() and config.KIE_AI_API_KEY),
+        "can_topup": bool(web_payments_enabled() and lava_service.enabled),
     })
 
 
@@ -787,6 +793,11 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_get(root + "/referral", web_referral_link)
     from bot.web_tasks import setup_web_task_routes
     setup_web_task_routes(app, root)
+    from bot.web_commerce import register_routes as register_web_commerce
+    from bot.web_generation import register_routes as register_web_generation
+
+    register_web_commerce(app, root)
+    register_web_generation(app, root)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
     app.router.add_get(root + "/callback/{provider:google|yandex}", oauth_callback)

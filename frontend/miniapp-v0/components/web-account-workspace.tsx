@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { WebPaymentsPanel } from './web-payments-panel'
+import { WebGenerationPanel } from './web-generation-panel'
 import { ArrowRight, CircleCheck, Link2, LoaderCircle, LogOut, ShieldCheck } from 'lucide-react'
 import { clearBrowserAccountCredentials, revokeBrowserAccountSession } from '@/lib/browser-account-session'
 
@@ -11,6 +13,7 @@ type BrowserAccount = {
   connected: string[]
   telegram_linked: boolean
   can_generate: boolean
+  can_topup?: boolean
   providers?: { yandex?: boolean; google?: boolean; email?: boolean }
   balance: { available: string; reserved: string; revision: number }
 }
@@ -109,6 +112,20 @@ export function WebAccountWorkspace() {
     }
   }
 
+  const refreshAccount = async () => {
+    try {
+      const response = await fetch('/mini-app/api/web-auth/account', {
+        credentials: 'same-origin', cache: 'no-store',
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) return
+      const data = await response.json() as BrowserAccount
+      if (data.ok && /^[a-f0-9]{32}$/.test(data.account_id)) setAccount(data)
+    } catch {
+      // The existing balance stays visible until a successful refresh.
+    }
+  }
+
   const signOut = async () => {
     if (exiting) return
     setExiting(true)
@@ -199,6 +216,13 @@ export function WebAccountWorkspace() {
             </div>
             <p className="text-xs text-[#9d9b96]">Регистраций по ссылке: {referral.registrations}</p>
           </section> : null}
+          {account.can_topup ? <WebPaymentsPanel
+            onBalanceChanged={() => { void refreshAccount() }}
+          /> : <section className="space-y-2 border border-[#a48350]/40 p-5">
+            <h2 className="text-xl font-bold">Пополнение веб-баланса</h2>
+            <p className="text-sm text-[#bcb7af]">Независимые веб-платежи ещё не включены
+              на этом сервере. Списание через Telegram ID запрещено.</p>
+          </section>}
           <section className="space-y-4 border border-[#a48350]/40 p-5" aria-label="История веб-работ">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-bold">Мои веб-работы</h2>
@@ -230,13 +254,16 @@ export function WebAccountWorkspace() {
           </section>
           <section className="space-y-4 border border-[#a48350]/40 p-5">
             <h2 className="text-xl font-bold">Генерации в браузере</h2>
-            {account.telegram_linked ? (
+            {account.can_generate ? (
+              <WebGenerationPanel
+                onBalanceChanged={() => { void refreshAccount() }}
+                onTaskChanged={() => { void loadHistory() }}
+              />
+            ) : account.telegram_linked ? (
               <p role="status" className="text-sm text-[#d5c8aa]">
                 Аккаунт Telegram подключён. Можно пользоваться существующей студией
-                и её балансом; независимый веб-кошелёк остаётся отдельным.
+                и её балансом; независимая веб-генерация пока отключена на сервере.
               </p>
-            ) : account.can_generate ? (
-              <p role="status">Веб-генерации доступны.</p>
             ) : (
               <p role="status" className="text-sm leading-relaxed text-[#c7c0b4]">
                 Для независимых веб-аккаунтов запуск генераций и пополнение пока не активированы:
