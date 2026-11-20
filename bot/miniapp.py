@@ -3673,6 +3673,14 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
         prompt_repeat_stats = await measured(
             "repeat_balance", get_miniapp_prompt_repeat_snapshot(user)
         )
+        from bot.model_catalog_service import native_model_metadata
+
+        catalog = native_model_metadata(
+            tariff=tariff,
+            is_admin=config.is_admin(telegram_id),
+            kling4_public=kling4_public_enabled,
+            kling4_entry=kling4_catalog_entry,
+        )
         data = {
             "ok": True,
             "telegram_id": telegram_id,
@@ -3707,44 +3715,8 @@ async def miniapp_bootstrap(request: web.Request) -> web.Response:
                 _payment_package_payload(package)
                 for package in preset_manager.get_packages()
             ],
-            "image_models": [
-                creator_tariff_display.price_image_model_metadata(
-                    item,
-                    tariff=tariff,
-                )
-                for item in (_runtime_image_model_metadata(model) for model in IMAGE_MODELS)
-            ],
-            "video_models": [
-                creator_tariff_display.price_video_model_metadata({
-                    **item,
-                    "costs": {
-                        str(duration): preset_manager.get_video_cost(
-                            item["id"], duration
-                        )
-                        for duration in item["durations"]
-                    },
-                    "quality_costs": preset_manager.get_video_quality_costs(
-                        item["id"]
-                    ),
-                    **(
-                        {
-                            "omni_audio_cost": preset_manager.get_video_cost(
-                                "gemini_omni_audio", 6
-                            ),
-                            "omni_character_cost": preset_manager.get_video_cost(
-                                "gemini_omni_character", 6
-                            ),
-                        }
-                        if item["id"] == "gemini_omni"
-                        else {}
-                    ),
-                }, tariff=tariff)
-                for item in VIDEO_MODELS
-            ] + (
-                [kling4_catalog_entry()]
-                if config.is_admin(telegram_id) or kling4_public_enabled()
-                else []
-            ),
+            "image_models": catalog["image_models"],
+            "video_models": catalog["video_models"],
             "recent_tasks": recent_tasks,
             "saved_references": [
                 _saved_reference_payload(item)

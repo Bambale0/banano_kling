@@ -367,6 +367,19 @@ async def _complete_identity(request: web.Request, provider: str, subject: str,
     return response
 
 
+async def web_auth_catalog(request: web.Request) -> web.Response:
+    """Existing native model registry for authenticated independent website users.
+
+    Catalogue is strictly read-only. All prices and independent-web purchase
+    actions stay disabled until the shared financial cutover is verified.
+    """
+    if not await _session_account(request):
+        return _json({"ok": False, "error": "session_required"}, 401)
+    from bot.model_catalog_service import public_browser_catalog
+
+    return _json({"ok": True, **public_browser_catalog()})
+
+
 async def web_auth_actor(request: web.Request) -> web.Response:
     """One verified account identity for both app launch channels (read-only).
 
@@ -720,6 +733,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     root = miniapp_root + "/api/web-auth"
     app.router.add_get(root + "/config", web_auth_config)
     app.router.add_get(root + "/actor", web_auth_actor)
+    app.router.add_get(root + "/catalog", web_auth_catalog)
     app.router.add_post(root + "/actor", web_auth_actor)
     app.router.add_post(root + "/studio", web_auth_studio)
     app.router.add_get(root + "/start/{provider:google|yandex}", oauth_start)
