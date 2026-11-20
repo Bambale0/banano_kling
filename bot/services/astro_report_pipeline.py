@@ -406,7 +406,10 @@ def _validate_written_facts(text: str, facts: dict) -> None:
         )
 
 
-def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> str:
+def _parse_section(
+    raw: str, spec: SectionSpec, facts: dict | None = None,
+    *, required_dates: list[str] | None = None,
+) -> str:
     """Require structured section, not hallucinated external citations."""
     try:
         doc = json.loads(raw)
@@ -421,6 +424,7 @@ def _parse_section(raw: str, spec: SectionSpec, facts: dict | None = None) -> st
         raise AstroSectionValidationError("Повреждённый раздел отчёта.", reason="invalid_text")
     if facts is not None:
         _validate_written_facts(text, facts)
+    _validate_lunar_table(text, required_dates)
     return text.strip()
 
 
@@ -466,12 +470,60 @@ def _repair_unsupported_sentences(raw: str, spec: SectionSpec, facts: dict) -> s
     return repaired
 
 
+def _lunar_expected_dates(facts: dict) -> list[str]:
+    """Use the verified civil month, rejecting gaps and duplicate day rows."""
+    period = facts.get("period")
+    if not isinstance(period, str):
+        raise AstroReportError("Нет проверенного периода лунного календаря.")
+    match = re.fullmatch(r"([0-9]{4})-(0[1-9]|1[0-2])", period)
+    if match is None:
+        raise AstroReportError("Некорректный месяц лунного календаря.")
+    year, month = map(int, match.groups())
+    if not 1900 <= year <= 2100:
+        raise AstroReportError("Период вне поддерживаемого диапазона.")
+    expected = [
+        date(year, month, day).isoformat()
+        for day in range(1, calendar.monthrange(year, month)[1] + 1)
+    ]
+    days = facts.get("days")
+    if not isinstance(days, list):
+        raise AstroReportError("Отсутствуют расчётные дни лунного календаря.")
+    actual = [row.get("date") if isinstance(row, dict) else None for row in days]
+    if actual != expected:
+        raise AstroReportError("Календарные дни неполны, дублированы или перепутаны.")
+    return expected
+
+
+def _validate_lunar_table(text: str, dates: list[str] | None) -> None:
+    """Require exactly one ISO-dated Markdown row per verified calendar day."""
+    if dates is None:
+        return
+    actual = re.findall(
+        r"(?m)^\\|\\s*((?:19|20|21)\\d{2}-\\d{2}-\\d{2})\\s*\\|",
+        text,
+    )
+    if actual != dates:
+        raise AstroSectionValidationError(
+            "Таблица лунного месяца содержит не все рассчитанные дни.",
+            reason="incomplete_lunar_table",
+        )
+
+
 def _expand_period_sections(plan: ReportPlan, facts: dict) -> tuple[SectionSpec, ...]:
     """No daily/monthly narrative may silently skip a real calendar day/month.
 
     Reject missing, duplicated, out-of-range and nonchronological facts.
     Never use client-provided date titles or unverified model-generated dates.
     """
+    # V3 uses one checked compact table instead of 28–31 independent paid
+    # LLM sections. A natal subsection exists only for a verified natal chart.
+    if plan.service_id == "lunar" and plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        _lunar_expected_dates(facts)
+        if isinstance(facts.get("natal_chart"), dict) and facts["natal_chart"]:
+            return plan.sections
+        return plan.sections[:-1]
     dynamic = plan.dynamic_period
     if dynamic is None:
         return plan.sections
@@ -553,6 +605,11 @@ async def compose_report(
         generation_id=generation_id,
     )
     available = _verified_report_facts(plan, facts)
+    lunar_dates = None
+    if plan.service_id == "lunar" and plan.version.startswith(
+        "3.0.0-astrology-pro-lunar-"
+    ):
+        lunar_dates = _lunar_expected_dates(available)
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     )
@@ -572,11 +629,15 @@ async def compose_report(
         raise ValueError("Invalid Astro section concurrency configuration")
 
     async def build_section(section: SectionSpec) -> dict[str, str]:
+        required_dates = (
+            lunar_dates if section.id == "section_03" else None
+        )
         prior = await store.read(owner_id=owner_id, fingerprint=fingerprint, section_id=section.id)
         if prior is not None:
             # A resumed section has already passed the same content gates.
             if _word_count(prior) < section.min_words:
                 raise AstroReportError("Сохранённый раздел не прошёл проверку целостности.")
+            _validate_lunar_table(prior, required_dates)
             text = prior
         else:
             request = {
@@ -604,11 +665,18 @@ async def compose_report(
                     json_response=True,
                 )
                 try:
-                    candidate = _parse_section(response, section, available)
+                    candidate = _parse_section(
+                        response, section, available, required_dates=required_dates,
+                    )
                     break
                 except AstroSectionValidationError as exc:
                     if exc.reason == "unsupported_claim":
                         repaired = _repair_unsupported_sentences(response, section, available)
+                        if repaired is not None:
+                            try:
+                                _validate_lunar_table(repaired, required_dates)
+                            except AstroSectionValidationError:
+                                repaired = None
                         if repaired is not None:
                             candidate = repaired
                             logger.info(
@@ -637,6 +705,10 @@ async def compose_report(
                             "но сохраните содержательность и минимальный объём. "
                             "Не додумывайте значения."
                         ) if exc.reason == "unsupported_claim" else (
+                            "Сохраните полную Markdown-таблицу: одна строка на "
+                            "каждый день, начиная с | YYYY-MM-DD |, строго по "
+                            "списку days, от первого до последнего числа."
+                        ) if exc.reason == "incomplete_lunar_table" else (
                             "Перепишите этот раздел по исходным фактам с соблюдением "
                             "структуры JSON и минимальной длины."
                         ),
