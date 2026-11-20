@@ -275,6 +275,24 @@ async def _lava_reconcile_loop(bot: Bot) -> None:
                 )
         except Exception:
             logger.exception("Lava reconcile loop failed")
+        # The independent website ledger uses the same authenticated provider
+        # but separate owner-scoped orders; never infer legacy Telegram credits.
+        # Reconciliation stays active if any prior web order exists, including
+        # after flags are disabled for a release rollback.
+        try:
+            from bot.web_commerce import reconcile_pending as reconcile_web_payments
+
+            # Recovery runs even after a rollback that forbids new invoices.
+            web_results = await reconcile_web_payments(limit=25)
+            if web_results:
+                logger.info(
+                    "Web Lava reconciliation: checked=%s credited=%s unavailable=%s",
+                    len(web_results),
+                    sum(item.get("action") == "credited" for item in web_results),
+                    sum(item.get("action") == "provider_unavailable" for item in web_results),
+                )
+        except Exception:
+            logger.exception("Web Lava reconcile loop failed")
         await asyncio.sleep(LAVA_RECONCILE_INTERVAL_SECONDS)
 
 async def _memory_dump_loop(bot: Bot) -> None:
