@@ -217,3 +217,31 @@ def test_incomplete_llm_table_rejected_and_retried_before_completion():
                 if call["section_id"] == "section_03"]
     assert len(attempts) == 2
     assert attempts[-1]["validation_feedback"]["reason"] == "incomplete_lunar_table"
+
+
+def test_report_input_uses_verified_geonames_city_without_birth_profile(monkeypatch):
+    from bot.astro_report_api import calculate_verified_facts
+    from bot.services import astro_lunar, astro_places
+
+    selected = {"name": "Berlin", "country_code": "DE", "place_id": 2950159,
+                "timezone": "Europe/Berlin"}
+    monkeypatch.setattr(
+        astro_places, "get_place", lambda place_id: selected
+        if place_id == 2950159 else None,
+    )
+    monkeypatch.setattr(
+        astro_lunar, "build_lunar_calendar", lambda period, timezone: {
+            "schema_version": "astro.lunar.v1",
+            "period": period,
+            "timezone": timezone,
+            "days": [],
+        },
+    )
+    facts = asyncio.run(calculate_verified_facts("lunar", {
+        "place_id": 2950159, "period": "2024-02",
+        "city": "UNTRUSTED CLIENT CITY",
+    }))
+    assert facts["calendar_place"]["name"] == "Berlin"
+    assert facts["calendar_place"]["source"] == "GeoNames"
+    assert facts["calendar_place"]["timezone"] == "Europe/Berlin"
+    assert "UNTRUSTED" not in str(facts)
