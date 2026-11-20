@@ -40,6 +40,15 @@ _DDL = (
         revoked_at_epoch BIGINT)""",
     """CREATE INDEX IF NOT EXISTS web_auth_sessions_expiry
        ON web_auth_sessions(expires_at_epoch)""",
+    """CREATE TABLE IF NOT EXISTS web_auth_studio_tokens (
+        token_hash TEXT PRIMARY KEY,
+        session_hash TEXT NOT NULL REFERENCES web_auth_sessions(token_hash),
+        account_id TEXT NOT NULL REFERENCES shared_accounts(id),
+        telegram_id BIGINT NOT NULL,
+        created_at_epoch BIGINT NOT NULL,
+        expires_at_epoch BIGINT NOT NULL)""",
+    """CREATE INDEX IF NOT EXISTS web_auth_studio_tokens_expiry
+       ON web_auth_studio_tokens(expires_at_epoch)""",
     """CREATE TABLE IF NOT EXISTS web_auth_flows (
         token_hash TEXT PRIMARY KEY,
         provider TEXT NOT NULL,
@@ -532,6 +541,77 @@ async def oauth_callback(request: web.Request) -> web.StreamResponse:
     return result
 
 
+async def _mint_session_bound_studio_init_data(user: dict, raw_session: str) -> str:
+    """Only verified browser sessions may mint revocable legacy studio access."""
+    from urllib.parse import parse_qsl
+
+    from bot.browser_auth import _build_browser_init_data
+    from bot.config import config
+
+    session_hash = _digest(raw_session)
+    telegram_id = int(user["id"])
+    signed = _build_browser_init_data(
+        user, config.BOT_TOKEN, query_id_prefix="webstudio",
+    )
+    query_id = dict(parse_qsl(signed)).get("query_id", "")
+    if not query_id.startswith("webstudio_"):
+        raise ValueError("Invalid studio credential")
+    now = int(time.time())
+    await _ensure_tables()
+    async with db_backend.connect() as db:
+        row = await (await db.execute(
+            """SELECT s.account_id,s.expires_at_epoch
+               FROM web_auth_sessions s
+               JOIN shared_accounts a ON a.id=s.account_id
+               JOIN shared_account_identities i ON i.account_id=s.account_id
+                 AND i.platform='telegram' AND i.external_id=?
+               WHERE s.token_hash=? AND s.revoked_at_epoch IS NULL
+                 AND s.expires_at_epoch>? AND a.status='active'""",
+            (telegram_id, session_hash, now),
+        )).fetchone()
+        if not row:
+            raise PermissionError("Verified Telegram link and active web session required")
+        await db.execute(
+            "DELETE FROM web_auth_studio_tokens WHERE expires_at_epoch <= ?", (now,),
+        )
+        await db.execute(
+            """INSERT INTO web_auth_studio_tokens
+               (token_hash,session_hash,account_id,telegram_id,created_at_epoch,expires_at_epoch)
+               VALUES(?,?,?,?,?,?)""",
+            (hashlib.sha256(query_id.encode()).hexdigest(), session_hash,
+             str(row[0]), telegram_id, now, min(int(row[1]), now + 86400)),
+        )
+        await db.commit()
+    return signed
+
+
+async def verify_studio_bridge(query_id: str, telegram_id: int) -> str:
+    """A signed webstudio_* initData remains valid only until web logout."""
+    if (not isinstance(query_id, str)
+            or not re.fullmatch(r"webstudio_[A-Za-z0-9_-]{16,40}", query_id)
+            or type(telegram_id) is not int or telegram_id <= 0):
+        raise PermissionError("Invalid browser studio credential")
+    now = int(time.time())
+    await _ensure_tables()
+    async with db_backend.connect() as db:
+        row = await (await db.execute(
+            """SELECT t.account_id FROM web_auth_studio_tokens t
+               JOIN web_auth_sessions s ON s.token_hash=t.session_hash
+                 AND s.account_id=t.account_id
+               JOIN shared_accounts a ON a.id=t.account_id
+               JOIN shared_account_identities i ON i.account_id=t.account_id
+                 AND i.platform='telegram' AND i.external_id=t.telegram_id
+               WHERE t.token_hash=? AND t.telegram_id=?
+                 AND t.expires_at_epoch>? AND s.expires_at_epoch>?
+                 AND s.revoked_at_epoch IS NULL AND a.status='active'""",
+            (hashlib.sha256(query_id.encode()).hexdigest(),
+             telegram_id, now, now),
+        )).fetchone()
+    if not row:
+        raise PermissionError("Web studio session expired or logged out")
+    return str(row[0])
+
+
 async def web_auth_studio(request: web.Request) -> web.Response:
     """Enter legacy Mini App only if the browser account owns a real Telegram link.
 
@@ -554,15 +634,18 @@ async def web_auth_studio(request: web.Request) -> web.Response:
         )).fetchone()
     if owner is None:
         return _json({"ok": False, "error": "missing_telegram_owner"}, 409)
-    from bot.browser_auth import _build_browser_init_data
-    from bot.config import config
     payload = {
         "id": telegram_id, "username": str(owner[0] or ""),
         "first_name": str(owner[1] or ""), "last_name": str(owner[2] or ""),
         "photo_url": str(owner[3] or ""), "language_code": "ru",
     }
-    return _json({"ok": True,
-                  "init_data": _build_browser_init_data(payload, config.BOT_TOKEN)})
+    try:
+        signed = await _mint_session_bound_studio_init_data(
+            payload, request.cookies.get(_SESSION_COOKIE, ""),
+        )
+    except PermissionError:
+        return _json({"ok": False, "error": "session_required"}, 401)
+    return _json({"ok": True, "init_data": signed})
 
 
 async def email_start(request: web.Request) -> web.Response:
@@ -583,7 +666,7 @@ async def telegram_login(request: web.Request) -> web.StreamResponse:
     if request.content_length and request.content_length > 8192:
         return _json({"ok": False, "error": "Invalid request"}, 413)
     try:
-        from bot.browser_auth import _build_browser_init_data, _verify_telegram_login
+        from bot.browser_auth import _verify_telegram_login
         from bot.config import config
 
         payload = await request.json()
@@ -598,9 +681,12 @@ async def telegram_login(request: web.Request) -> web.StreamResponse:
         if _SESSION_COOKIE not in result.cookies:
             return _json({"ok": False, "error": "Already linked to another account"}, 409)
         redirect = result.location
+        studio_data = await _mint_session_bound_studio_init_data(
+            verified, result.cookies[_SESSION_COOKIE].value,
+        )
         if mode == "login" and redirect.startswith("/mini-app/"):
             from urllib.parse import quote
-            fragment = "tgWebAppData=" + quote(_build_browser_init_data(verified, config.BOT_TOKEN), safe="")
+            fragment = "tgWebAppData=" + quote(studio_data, safe="")
             redirect += ("&" if "#" in redirect else "#") + fragment
         response = _json({"ok": True, "redirect": redirect})
         _set_session_cookie(response, result.cookies[_SESSION_COOKIE].value)
