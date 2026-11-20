@@ -66,7 +66,7 @@ test.each(['feed', 'profile'])('query-only legacy link respects %s publication s
   expect(openGenjutsu).not.toHaveBeenCalled()
 })
 
-test.each(['feed_777_ref_AUTHOR', 'remix_777_ref_AUTHOR', 'remix_297231_ref_QM7QQ6XD', 'feed_297127_ref_XOCATI0Q'])('%s previews Genjutsu without a generic model fallback', async (value) => {
+test.each(['feed_777_ref_AUTHOR', 'feed_297127_ref_XOCATI0Q'])('%s only previews a shared Genjutsu post', async (value) => {
   start.mockReturnValue(value)
   const publicationId = Number(value.split('_')[1])
   ;(fetchFeedItem as jest.Mock).mockResolvedValue({ ...card, id: publicationId })
@@ -75,6 +75,28 @@ test.each(['feed_777_ref_AUTHOR', 'remix_777_ref_AUTHOR', 'remix_297231_ref_QM7Q
   expect(fetchFeedItem).toHaveBeenCalledWith(publicationId)
   expect(screen.getByTestId('generic')).toBeEmptyDOMElement()
   expect(openGenjutsu).not.toHaveBeenCalled()
+})
+
+test.each(['remix_777_ref_AUTHOR', 'remix_297231_ref_QM7QQ6XD'])('%s opens the private Genjutsu repeat editor directly, not Photo or Feed', async (value) => {
+  start.mockReturnValue(value)
+  const publicationId = Number(value.split('_')[1])
+  ;(fetchFeedItem as jest.Mock).mockResolvedValue({ ...card, id: publicationId })
+  mount()
+  await waitFor(() => expect(openGenjutsu).toHaveBeenCalledWith({ recipe_id: recipeId }))
+  expect(fetchFeedItem).toHaveBeenCalledWith(publicationId)
+  expect(screen.queryByRole('region', { name: 'Video preview' })).not.toBeInTheDocument()
+  expect(screen.getByTestId('generic')).toBeEmptyDOMElement()
+  expect(screen.getByTestId('error')).toBeEmptyDOMElement()
+})
+
+test('a direct Repeat refuses missing recipe instead of selecting an unrelated photo model', async () => {
+  start.mockReturnValue('remix_777_ref_AUTHOR')
+  ;(fetchFeedItem as jest.Mock).mockResolvedValue({ ...card, genjutsu_recipe_id: null })
+  mount()
+  expect(await screen.findByText('Для этой публикации повтор Genjutsu недоступен.')).toBeInTheDocument()
+  expect(openGenjutsu).not.toHaveBeenCalled()
+  expect(screen.getByTestId('generic')).toBeEmptyDOMElement()
+  expect(screen.queryByRole('region', { name: 'Video preview' })).not.toBeInTheDocument()
 })
 
 test('active curated recipe without a publication retains its studio entry', async () => {
