@@ -1,12 +1,17 @@
 """NEUROMIX ASTROLOGY PRO karma instruction and historical HMAC job regression."""
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from bot.services.astro_report_pipeline import load_report_plan, report_fingerprint
+from bot.services.astro_report_pipeline import (
+    compose_report,
+    load_report_plan,
+    report_fingerprint,
+)
 from bot.services.astro_report_worker import resolve_astro_job_plan
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -87,10 +92,6 @@ def test_new_karma_hmac_authentic_and_tampering_fails_closed():
 
 
 def test_karma_generator_receives_new_full_instruction_and_17_sections():
-    import asyncio
-
-    from bot.services.astro_report_pipeline import compose_report
-
     class Store:
         def __init__(self):
             self.saved = {}
