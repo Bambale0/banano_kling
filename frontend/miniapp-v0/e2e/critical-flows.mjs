@@ -1122,6 +1122,14 @@ try {
       await (recipeMode
         ? page.getByText('Референсы тренда', { exact: true })
         : page.getByTestId('genjutsu-operation-grid')).waitFor()
+      // Wait for the open animation to finish before measuring the viewport.
+      await page.waitForFunction(() => {
+        const dialog = document.querySelector('[role="dialog"]')
+        if (!dialog) return false
+        const rect = dialog.getBoundingClientRect()
+        return Math.abs(rect.x) < 0.1 && Math.abs(rect.width - innerWidth) < 0.1
+          && getComputedStyle(dialog).opacity === '1'
+      })
       // The actual studio close button must stay below Telegram's native Back/X.
       const studioHeaderTop = await region.evaluate((element) => {
         const root = document.documentElement.style
@@ -1134,14 +1142,6 @@ try {
       })
       assert.ok(studioHeaderTop >= 79,
         `Genjutsu close overlaps Telegram native controls at ${width}px (${studioHeaderTop})`)
-      // Wait for the open animation to finish before measuring the viewport.
-      await page.waitForFunction(() => {
-        const dialog = document.querySelector('[role="dialog"]')
-        if (!dialog) return false
-        const rect = dialog.getBoundingClientRect()
-        return Math.abs(rect.x) < 0.1 && Math.abs(rect.width - innerWidth) < 0.1
-          && getComputedStyle(dialog).opacity === '1'
-      })
       assert.equal(await region.evaluate(el => el.scrollWidth <= el.clientWidth), true,
         `Genjutsu ${recipeMode ? 'recipe' : 'editor'} must fit ${width}px`)
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
