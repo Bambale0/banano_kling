@@ -36,13 +36,13 @@ try {
     const forbidden = [], errors = []
     const started = false
     page.on('pageerror', error => errors.push(error.message))
-    await page.addInitScript(() => {
+    await page.addInitScript((staleStart) => {
       window.__opened = []
-      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-offer-e2e', initDataUnsafe: {}, ready() {}, expand() {},
+      window.Telegram = { WebApp: { initData: 'query_id=genjutsu-offer-e2e', initDataUnsafe: staleStart ? { start_param: staleStart } : {}, ready() {}, expand() {},
         openTelegramLink(url) { window.__opened.push(url) }, isVersionAtLeast() { return false }, requestWriteAccess() { throw Error('native permission called') },
         onEvent(name, handler) { window.addEventListener('fixture:' + name, handler) },
         offEvent(name, handler) { window.removeEventListener('fixture:' + name, handler) } } }
-    })
+    }, query.includes('remix_77') ? 'ref_OLD_LAUNCH' : '')
     // Mock Telegram destination: verify a real click-generated chat URL
     // without making any outbound request to Telegram.
     await context.route('https://t.me/**', route => route.fulfill({
