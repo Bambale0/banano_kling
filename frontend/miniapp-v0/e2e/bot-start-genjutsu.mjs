@@ -76,6 +76,32 @@ try {
     const gate = page.locator('[role="dialog"][aria-labelledby="bot-write-access-title"]')
     assert.equal(await gate.count(), 0, 'Genjutsu must not be covered by optional delivery modal: ' + query)
     if (query === '?genjutsu=1') {
+      // Telegram WebView scrolls the dialog, not the page. The model/close
+      // header must remain before its tabs instead of floating over them.
+      // Exercise the small mobile viewport with the Telegram native top inset.
+      const dialog = page.locator('[role="dialog"]').filter({ has: region })
+      const header = region.locator('header').first()
+      const tabs = region.getByRole('navigation', { name: 'Разделы Genjutsu' })
+      await page.evaluate(() => document.documentElement.style.setProperty('--tg-content-safe-area-inset-top', '48px'))
+      for (const width of [320, 390]) {
+        await page.setViewportSize({ width, height: 900 })
+        await dialog.evaluate(el => { el.scrollTop = 0 })
+        const before = await header.boundingBox()
+        const tabsBefore = await tabs.boundingBox()
+        assert.ok(before && tabsBefore && before.y + before.height <= tabsBefore.y + 2,
+          'Genjutsu header must precede tabs at ' + width + 'px')
+        const scrolled = await dialog.evaluate(el => { el.scrollTop = 280; return el.scrollTop })
+        assert.ok(scrolled >= 180, 'Genjutsu dialog must be independently scrollable at ' + width + 'px')
+        const after = await header.boundingBox()
+        const tabsAfter = await tabs.boundingBox()
+        assert.ok(after && tabsAfter && after.y <= before.y - 170,
+          'Genjutsu header must scroll away with dialog content, not hover over Telegram at ' + width + 'px')
+        assert.ok(after.y + after.height <= tabsAfter.y + 2,
+          'Genjutsu header overlaps its tabs after scrolling at ' + width + 'px')
+      }
+      await dialog.evaluate(el => { el.scrollTop = 0 })
+      await page.setViewportSize({ width: 390, height: 900 })
+      await page.evaluate(() => document.documentElement.style.removeProperty('--tg-content-safe-area-inset-top'))
       mkdirSync('test-results', { recursive: true })
       await page.screenshot({ path: 'test-results/bot-start-genjutsu-390.png' })
     }
