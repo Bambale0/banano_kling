@@ -7,7 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from bot.services.astro_report_pipeline import compose_report, load_report_plan, report_fingerprint
+from bot.services.astro_report_pipeline import (
+    compose_report,
+    load_report_plan,
+    report_fingerprint,
+)
 from bot.services.astro_report_worker import resolve_astro_job_plan
 
 ROOT = Path(__file__).resolve().parents[1]
