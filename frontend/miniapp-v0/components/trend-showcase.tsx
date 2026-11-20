@@ -341,11 +341,13 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
       )}
 
       <Dialog open={Boolean(selected)} onOpenChange={(open) => { if (!open) setSelected(null) }}>
-        <DialogContent className="max-h-[92dvh] max-w-md overflow-y-auto border-border/60 bg-background p-4">
-          <DialogTitle className="pr-8 font-serif text-lg">{selected?.title || 'Тренд'}</DialogTitle>
-          <DialogDescription className="text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
+        <DialogContent className="miniapp-trend-preview-dialog flex max-w-md flex-col gap-0 overflow-hidden border-border/60 bg-background p-0">
+          <div data-testid="trend-preview-header" className="shrink-0 border-b border-border/50 px-4 pb-3 pt-4">
+            <DialogTitle className="break-words pr-10 font-serif text-lg leading-snug">{selected?.title || 'Тренд'}</DialogTitle>
+            <DialogDescription className="mt-2 break-words text-xs">{selected?.description || 'Посмотрите пример и повторите со своими данными'}</DialogDescription>
+          </div>
           {selected ? (
-            <div className="space-y-3">
+            <div data-testid="trend-preview-scroll-region" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 pb-4 pt-3">
               {isAdmin === true && typeof selected.successful_runs_count === 'number' && Number.isSafeInteger(selected.successful_runs_count) && selected.successful_runs_count >= 0 ? (
                 <p className="text-xs font-semibold text-foreground" aria-label={'Успешных повторов: ' + selected.successful_runs_count}>
                   ✅ Успешных повторов: {selected.successful_runs_count.toLocaleString('ru-RU')}
@@ -361,7 +363,7 @@ export function TrendShowcase({ categories, onRepeat, onShare, onEdit, onRemove,
                   src={videoPreviewFrameUrl(normalizeMiniAppMediaUrl(selected.preview_url))}
                   preload="metadata"
                   data-audio-enabled="true"
-                  className="max-h-[60dvh] w-full rounded-xl bg-black object-contain"
+                  className="max-h-[52dvh] w-full rounded-xl bg-black object-contain"
                 />
               ) : (
                 <img src={normalizeMiniAppMediaUrl(selected.preview_url)} alt={selected.title} className="max-h-[60dvh] w-full rounded-xl object-contain" />
