@@ -208,6 +208,11 @@ try {
     // DOM visibility alone misses a sheet painted behind the repeat editor.
     creditedBalance = 1
     showTrend = true
+    // The focus-triggered wallet refresh can still have a bootstrap request in
+    // flight. Await the request before navigating: WebKit otherwise reports an
+    // aborted same-origin fetch as a CORS page error during the next scenario.
+    // Keep the strict pageerror assertion below; do not hide actual failures.
+    await page.waitForLoadState('networkidle')
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
     await page.locator('nav').getByRole('button', { name: 'Тренды', exact: true }).click()
     await page.getByRole('button', { name: /Повторить · 50/ }).click()
