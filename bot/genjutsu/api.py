@@ -309,9 +309,15 @@ class API:
                 if any((op,resolution) not in proven for resolution in CATALOG[op]['resolutions']):
                     raise PipelineError('live_verification_required', status=409)
             if settings['public_enabled']:
-                if not pipeline.configured or set(settings['verified_operations']) != set(CATALOG):
+                # An unverified future operation must never block an already
+                # verified and active public Genjutsu catalog.
+                if not pipeline.configured or not settings['verified_operations']:
                     raise PipelineError('release_gate_not_passed', status=409)
-                if any(rate is None for rates in settings['prices'].values() for rate in rates.values()):
+                if any(
+                    rate is None
+                    for op in settings['verified_operations']
+                    for rate in settings['prices'][op].values()
+                ):
                     raise PipelineError('price_not_configured', status=409)
             version = await repo.update_settings(owner, integer(body.get('expected_version'),0,1000000,'invalid_version'), settings)
             return {'version':version}
