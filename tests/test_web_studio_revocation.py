@@ -50,8 +50,8 @@ async def test_web_studio_credentials_revoke_with_cookie_and_prevent_wrong_teleg
     )
     assert signed_actor.account_id == account_id
     assert signed_actor.auth_channel == "web"
-    assert signed_actor.wallet_authority == "web_live"
-    assert signed_actor.can_access_legacy_telegram_wallet is False
+    assert signed_actor.wallet_authority == "telegram_legacy"
+    assert signed_actor.can_access_legacy_telegram_wallet is True
     with pytest.raises(PermissionError):
         await web_auth.verify_studio_bridge(token_id, tg_id + 1)
 
