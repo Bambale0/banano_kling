@@ -137,9 +137,43 @@ try {
   assert.equal(await live.locator('video').count(),0)
   const noExtension=page.getByRole('button',{name:'Открыть тренд Видео без расширения'}).first()
   assert.equal(await noExtension.locator('video').count(),0)
+  const initialViewport = page.viewportSize()
+  await page.setViewportSize({ width: 375, height: 640 })
+  // Simulate an Android Telegram fullscreen header and device navigation area.
+  await page.evaluate(() => {
+    document.documentElement.style.setProperty('--tg-content-safe-area-inset-top', '80px')
+    document.documentElement.style.setProperty('--tg-safe-area-inset-bottom', '28px')
+  })
   await live.click()
-  assert.match(await page.getByRole('dialog').locator('video').getAttribute('src'),/motion\.mp4/)
-  await page.getByRole('dialog').getByRole('button',{name:'Close'}).click()
+  const portraitDialog = page.getByRole('dialog')
+  assert.match(await portraitDialog.locator('video').getAttribute('src'),/motion\.mp4/)
+  await portraitDialog.locator('video').evaluate((video) => { video.style.aspectRatio = '9 / 16' })
+  const layout = await portraitDialog.evaluate((dialog) => {
+    const header = dialog.querySelector('[data-testid="trend-preview-header"]')
+    const scroller = dialog.querySelector('[data-testid="trend-preview-scroll-region"]')
+    const close = dialog.querySelector('[data-slot="dialog-close"]')
+    if (!header || !scroller || !close) throw new Error('Trend preview requires a fixed header, scroll region and close button')
+    return {
+      top: dialog.getBoundingClientRect().top,
+      bottom: dialog.getBoundingClientRect().bottom,
+      headerBottom: header.getBoundingClientRect().bottom,
+      scrollTop: scroller.getBoundingClientRect().top,
+      closeTop: close.getBoundingClientRect().top,
+      viewportHeight: window.innerHeight,
+    }
+  })
+  assert.ok(layout.top >= 79, '9:16 preview must start below Telegram native header: ' + JSON.stringify(layout))
+  assert.ok(layout.bottom <= layout.viewportHeight - 27, '9:16 preview must end above bottom inset: ' + JSON.stringify(layout))
+  assert.ok(layout.closeTop >= 79, 'dialog close must remain below Telegram native header')
+  assert.ok(layout.headerBottom <= layout.scrollTop + 2, 'title must be outside scrolling video region')
+  await portraitDialog.getByRole('button', { name: 'Поделиться трендом' }).scrollIntoViewIfNeeded()
+  assert.equal(await portraitDialog.getByRole('button', { name: 'Поделиться трендом' }).isVisible(), true)
+  await portraitDialog.getByRole('button',{name:'Close'}).click()
+  await page.evaluate(() => {
+    document.documentElement.style.removeProperty('--tg-content-safe-area-inset-top')
+    document.documentElement.style.removeProperty('--tg-safe-area-inset-bottom')
+  })
+  if (initialViewport) await page.setViewportSize(initialViewport)
   await page.getByRole('button',{name:'Все тренды категории День рождения'}).click()
   await page.getByRole('button',{name:'Показать ещё'}).click()
   await page.getByRole('button',{name:'Открыть тренд Другой праздник'}).waitFor()
