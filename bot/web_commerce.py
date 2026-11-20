@@ -484,7 +484,34 @@ async def reconcile_pending(limit: int = 25) -> list[dict]:
     return outcomes
 
 
+async def wallet_balance(request: web.Request) -> web.Response:
+    """Read-only browser-owned wallet projection; no legacy balance mixing.
+
+    Reads existing live funds even after new payment/generation flags are
+    switched off, so an incident rollback never hides customer liabilities.
+    No raw journal entries or cross-account identity metadata are returned.
+    """
+    from bot.shared_accounts.store import linked_platforms
+    from bot.web_auth import _json, _session_account
+
+    account = await _session_account(request)
+    if not account:
+        return _json({"ok": False, "error": "session_required"}, 401)
+    if await linked_platforms(account):
+        return _json({
+            "ok": False, "code": "FINANCIAL_CUTOVER_REQUIRED",
+            "error": "Баланс Telegram доступен только в привязанной студии.",
+        }, 409)
+    try:
+        snapshot = await WalletService("live").snapshot(account)
+    except Exception:
+        logger.exception("web_wallet_balance_read_failed")
+        return _json({"ok": False, "error": "wallet_unavailable"}, 503)
+    return _json({"ok": True, "scope": "web_live", "balance": snapshot["balance"]})
+
+
 def register_routes(app: web.Application, prefix: str) -> None:
+    app.router.add_get(prefix + "/web-payments/balance", wallet_balance)
     app.router.add_get(prefix + "/web-payments/packages", list_packages)
     app.router.add_post(prefix + "/web-payments/create", create_payment)
     app.router.add_get(prefix + "/web-payments/status", payment_status)

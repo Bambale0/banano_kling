@@ -2529,7 +2529,7 @@ async def _build_feed_keyboard(
         rows.append([types.InlineKeyboardButton(
             text="🔁 Повторить в Genjutsu",
             web_app=WebAppInfo(url=_mini_app_url_with_start_param(
-                build_feed_start_param(gen_id, author_referral_code)
+                build_remix_start_param(gen_id, author_referral_code)
             )),
         )])
     if task_id and gen_type == "image":

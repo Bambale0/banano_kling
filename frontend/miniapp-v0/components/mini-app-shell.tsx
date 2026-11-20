@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { ThemeProvider } from '@/components/theme-provider'
 import { AppProvider, useApp } from '@/lib/app-context'
 import { getStartParamFallback } from '@/lib/api'
-import { genjutsuRecipeStartParam, parseMiniAppStartParam } from '@/lib/start-params'
+import { genjutsuRecipeStartParam, parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 import { HeroHeader } from './hero-header'
 import { TabNav } from './tab-nav'
 import { Toaster } from '@/components/ui/sonner'
@@ -43,7 +43,7 @@ function MiniAppBody({ children }: MiniAppShellProps) {
     if (typeof window === 'undefined' || state.mode !== 'live') return
 
     const openDefaultTrends = () => {
-      const start = getStartParamFallback()
+      const start = startParamFromLocation(window.location.search, window.location.hash) || getStartParamFallback()
       const rawStartParam = genjutsuRecipeStartParam(start, window.location.search) || start
       const target = rawStartParam ? parseMiniAppStartParam(rawStartParam) : null
       if (target) return

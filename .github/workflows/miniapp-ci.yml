@@ -37,6 +37,11 @@ jobs:
   test-and-build:
     name: GitHub runner — Mini App tests and static build
     runs-on: ubuntu-24.04
+    # Match the locked Playwright 1.61.1 browser image used by the main and
+    # dedicated browser CI; it contains Chromium and system dependencies.
+    # Avoid flaky Ubuntu apt mirrors in the VK root smoke step.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
     timeout-minutes: 30
 
     defaults:
@@ -76,6 +81,7 @@ jobs:
           components/tabs/astro-tab.test.tsx
           components/tabs/astro-report-panel.test.tsx
           components/__tests__/shared-account-link-preview.test.tsx
+          components/__tests__/bot-write-access-gate.test.tsx
           components/__tests__/shared-account-preview.test.tsx
           components/__tests__/vk-chat-delivery.test.tsx
           lib/__tests__/vk-chat-delivery-api.test.ts
@@ -107,14 +113,9 @@ jobs:
       - name: Build VK Mini App at domain root
         run: npm run build:vk
 
-      - name: Prepare signed Ubuntu apt mirror
-        run: |
-          bash ../../scripts/ci/test-prepare-ubuntu-apt.sh
-          bash ../../scripts/ci/prepare-ubuntu-apt.sh
-
-      - name: Install Chromium for VK root smoke
-        timeout-minutes: 10
-        run: npx playwright install --with-deps chromium
+      - name: Verify Chromium for VK root smoke
+        timeout-minutes: 5
+        run: npx playwright install chromium
 
       - name: Check VK root entry and administrator surface
         run: node --test scripts/check-vk-root-browser.mjs
