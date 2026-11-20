@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ExternalLink, LoaderCircle, MessageCircle } from 'lucide-react'
 
 import { confirmTelegramWriteAccess, getStartParamFallback } from '@/lib/api'
-import { parseMiniAppStartParam } from '@/lib/start-params'
+import { parseMiniAppStartParam, startParamFromLocation } from '@/lib/start-params'
 
 interface BotWriteAccessGateProps {
   required: boolean
@@ -22,7 +22,7 @@ function botStartUrl(botUsername?: string) {
   if (!/^[a-zA-Z0-9_]{5,32}$/.test(username)) return ''
   // Retain a direct referral; never replay payment/generation actions in /start.
   // The original Mini App launch context and form stay mounted in this WebView.
-  const launch = getStartParamFallback().trim().replace(/^start=/, '').replace(/^startapp=/, '')
+  const launch = (startParamFromLocation(window.location.search, window.location.hash) || getStartParamFallback()).trim().replace(/^start=/, '').replace(/^startapp=/, '')
   const target = parseMiniAppStartParam(launch)
   const referral = launch.startsWith('ref_')
     ? launch.slice(4).trim().toUpperCase()
