@@ -29,16 +29,19 @@ def test_real_local_solar_year_covers_12_intervals_across_dst_and_leap_day():
     assert all(datetime.fromisoformat(p["start_at_local"]).tzinfo for p in periods)
     plan = load_report_plan("solar")
     sections = _expand_period_sections(plan, facts)
-    assert len(sections) == len(plan.sections) + 12
-    assert "2028-02-29" in sections[len(plan.sections)].title
-    assert "2029-01-29" in sections[-1].title
+    assert plan.dynamic_period is None
+    assert len(sections) == len(plan.sections) == 17
+    assert not any(section.id.startswith("solar_month") for section in sections)
 
 
 def test_forged_calendar_year_months_are_not_accepted_as_solar_intervals():
     facts = build_solar_report_periods(solar())
     facts["periods"] = [{"date": f"2028-{month:02d}-01"} for month in range(1, 13)]
+    from pathlib import Path
+
+    archive = Path(__file__).resolve().parents[1] / "bot/astro_report_plans_solar_v2_legacy.json"
     with pytest.raises(AstroReportError):
-        _expand_period_sections(load_report_plan("solar"), facts)
+        _expand_period_sections(load_report_plan("solar", path=archive), facts)
 
 
 def test_missing_return_time_cannot_create_fake_solar_intervals():

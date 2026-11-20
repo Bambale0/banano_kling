@@ -60,7 +60,7 @@ def test_existing_signed_karma_v2_jobs_keep_original_template(per_generation):
         "schema_version": "astro.karma.facts.v1",
         "chart": {"bodies": {"Sun": {"lon": 32.5}}},
     }
-    owner, job_id, secret = 423, "k" * 32, "karma-v2-only-hmac-test-key"
+    owner, job_id, secret = 423, "c" * 32, "karma-v2-only-hmac-test-key"
     signature = report_fingerprint(
         owner_id=owner, plan=legacy, facts=facts, secret=secret,
         generation_id=job_id if per_generation else None,
@@ -77,7 +77,7 @@ def test_existing_signed_karma_v2_jobs_keep_original_template(per_generation):
 def test_new_karma_hmac_authentic_and_tampering_fails_closed():
     plan = load_report_plan("karma")
     facts = {"schema_version": "astro.karma.facts.v1", "chart": {}}
-    owner, job_id, secret = 423, "z" * 32, "karma-v3-only-hmac-test-key"
+    owner, job_id, secret = 423, "d" * 32, "karma-v3-only-hmac-test-key"
     signature = report_fingerprint(
         owner_id=owner, plan=plan, facts=facts, secret=secret, generation_id=job_id,
     )
