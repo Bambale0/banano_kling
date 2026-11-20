@@ -228,3 +228,19 @@
   top: max(16px, var(--miniapp-safe-top));
   right: max(16px, var(--miniapp-safe-right));
 }
+
+/* Portrait previews can be taller than a Telegram fullscreen viewport.
+   Center dialogs only in the usable region, never beneath native controls.
+   The mobile fallback protects older Telegram WebViews that report zero insets. */
+.miniapp-trend-preview-dialog {
+  --trend-preview-top: max(76px, var(--miniapp-safe-top));
+  --trend-preview-bottom: max(16px, var(--miniapp-safe-bottom));
+  top: calc((100dvh + var(--trend-preview-top) - var(--trend-preview-bottom)) / 2);
+  max-height: calc(100dvh - var(--trend-preview-top) - var(--trend-preview-bottom));
+}
+
+@media (min-width: 640px) {
+  .miniapp-trend-preview-dialog {
+    --trend-preview-top: max(16px, var(--miniapp-safe-top));
+  }
+}
