@@ -34,19 +34,24 @@ _ARCHIVED_NATAL_PLAN_PATHS = (
     Path(__file__).resolve().parents[1] / "astro_report_plans_natal_v2_legacy.json",
 )
 
+_ARCHIVED_KARMA_PLAN_PATHS = (
+    Path(__file__).resolve().parents[1] / "astro_report_plans_karma_v2_legacy.json",
+)
+
 
 def resolve_astro_job_plan(job: ClaimedAstroJob, secret: str) -> tuple[ReportPlan, str | None]:
     """Match an encrypted job's exact immutable prompt and section contract.
 
-    On a natal prompt update, existing failed/manual-retry jobs must keep their
-    original verified template and encrypted checkpoints. The current v4
-    release also supports signed v3 and v2 natal jobs. Unauthenticated/tampered fingerprints fail
-    closed; we never silently swap templates or reuse someone else's content.
+    Across prompt upgrades, existing failed/manual-retry jobs keep their
+    original signed templates and encrypted checkpoints. Supports archived
+    natal v3/v2 and karma v2; tampered fingerprints always fail closed.
     """
     latest = load_report_plan(job.service_id)
     candidates = [latest]
     if job.service_id == "natal":
         candidates.extend(load_report_plan("natal", path=p) for p in _ARCHIVED_NATAL_PLAN_PATHS)
+    elif job.service_id == "karma":
+        candidates.extend(load_report_plan("karma", path=p) for p in _ARCHIVED_KARMA_PLAN_PATHS)
     for plan in candidates:
         fingerprint = report_fingerprint(
             owner_id=job.owner_id, plan=plan, facts=job.facts,
