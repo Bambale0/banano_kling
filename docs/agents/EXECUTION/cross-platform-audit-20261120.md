@@ -96,3 +96,17 @@ Add structured correlation fields: actor_id or privacy-safe account pseudonym, t
 6. Full CI, Postgres concurrency, browser E2E at 320/390/768/1440, production-staging real KIE/Lava/S3 scenarios, rollback drill, deployed SHA, health and visible user result.
 
 Verdict: single-app cross-platform production release is BLOCKED by P0 financial authority and P1 missing shared actor/task/lifecycle contracts. Do not merge Draft PR #646 as if it solves 100% parity. Preserve existing provider integrations; refactor shared seams, not per-model adapters.
+
+## 2026-11-20 fresh production read-only financial census (no per-user data)
+
+Script scripts/audit_shared_account_migration.py against the running production PostgreSQL, READ ONLY REPEATABLE READ:
+- Telegram users: 94,490; generation_tasks: 392,126; transactions: 35,997.
+- Legacy users.credits remains double precision; 93,636 exact 4dp balances, 854 precision_review, 0 invalid.
+- Separate read-only calculation compared Decimal(str(float)) to ROUND_HALF_UP 4dp WITHOUT applying it. All 854 nonzero residuals are <= 2.119e-11, none > 1e-9. This is quantitative evidence of float noise, NOT automatic approval for a rounding policy.
+- Current generation_tasks status aggregates: 356,801 completed; 35,341 failed; 3 pending; 4 processing. Seven tasks potentially in-flight require state/charge/refund reconciliation before snapshot.
+- Current transactions status aggregates: 18,338 completed; 5,525 failed; 12,134 pending. Pending does not imply funds payable; reconcile provider IDs, source events and age first.
+- Shared wallet preview: 40 sandbox wallets and 40 live wallets, each group with 0 aggregate available and reserved units. There are 0 opening claims; no production financial cutover has run. 883 shared_accounts, 877 shared_account_identities, 6 web_auth_sessions, 4 web_auth_identities at read-only inspection. These are not proof of a stable snapshot and must not be used as a new money authority.
+
+## Incremental verified identity seam
+
+PR #647 is a separate small non-draft PR targeting tanyapi with read-only AccountActor and source-scoped wallet_authority. This code is also included in Draft PR #646 to avoid future divergence. A backend-issued browser_* Telegram-shaped token is not native Telegram WebView authentication and now needs an active same-account website cookie; after logout it cannot claim the native legacy wallet through the new actor endpoint. Existing legacy provider handlers are untouched. PR #647 CI must pass before normal branch auto-merge/deploy. This identity seam by itself does NOT complete one Mini App or transfer historical funds.
