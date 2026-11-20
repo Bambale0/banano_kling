@@ -25,6 +25,9 @@ type WebTask = {
   status: 'pending' | 'completed' | 'failed'
   result_url: string | null
   created_at_epoch: number
+  bundle_url?: string | null
+  output_count?: number | null
+  cost?: string | null
 }
 
 const methodNames: Record<string, string> = {
@@ -244,8 +247,16 @@ export function WebAccountWorkspace() {
                 <p className="text-xs text-[#b8b7b1]">
                   {task.status === 'completed' ? 'Готово' : task.status === 'pending' ? 'В обработке' : 'Не удалось завершить'}
                 </p>
-                {task.result_url ? <a href={task.result_url} target="_blank" rel="noreferrer"
-                  className="text-sm text-[#f1ca8a] underline">Открыть результат</a> : null}
+                {task.output_count ? <p className="text-xs text-[#d8c8a6]">
+                  Изображений и слоёв: {task.output_count}.
+                  {task.cost ? ' Списано: ' + task.cost + ' кредитов.' : ''}
+                </p> : null}
+                <div className="flex flex-wrap gap-4">
+                  {task.result_url ? <a href={task.result_url} target="_blank" rel="noopener noreferrer"
+                    className="text-sm text-[#f1ca8a] underline">Открыть результат</a> : null}
+                  {task.bundle_url ? <a href={task.bundle_url} target="_blank" rel="noopener noreferrer"
+                    className="text-sm text-[#f1ca8a] underline">Скачать слои ZIP</a> : null}
+                </div>
               </article>)}
               {nextCursor ? <button type="button" disabled={historyBusy}
                 className="min-h-10 border border-[#c7a061]/70 px-3 text-sm text-[#f3cf92]"

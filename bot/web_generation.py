@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -31,6 +32,7 @@ from bot.shared_accounts.wallet import (
     WalletConflict,
     WalletService,
     amount_units,
+    format_units,
 )
 from bot.web_tasks import ensure_web_tasks_schema
 
@@ -47,6 +49,7 @@ _IMAGE_MODELS = {
     "banana_2",
     "seedream_5_pro",
     "seedream_55",
+    "seedream_55_layers",
     "seedream_edit",
     "wan_27",
     "grok_imagine_i2i",
@@ -55,7 +58,8 @@ _VIDEO_MODELS = {
     "v3_std", "v3_pro", "v26_pro",
     "grok_imagine", "grok_imagine_v15", "seedance_2", "veo3_fast",
     "motion_control_v26", "motion_control_v30",
-    "avatar_std", "avatar_pro",
+    "avatar_std", "avatar_pro", "gemini_omni",
+    "wan_3", "wan_3_prime",
 }
 _POLL_INTERVAL_SECONDS = 8
 _SUBMIT_TIMEOUT_SECONDS = 240
@@ -90,6 +94,11 @@ def _model_meta(model: str) -> tuple[str, dict]:
 
 def _web_durations(model: str, meta: dict) -> list[int]:
     original = list(meta.get("durations") or [5])
+    if model in {"wan_3", "wan_3_prime"}:
+        # Auto mode bills an output duration selected by the provider. The
+        # standalone web wallet cannot safely settle this without validating
+        # the produced video's duration; disable it until implemented.
+        original = [value for value in original if value != -1]
     if model == "veo3_fast":
         from bot.services.veo_service import VEO_SUPPORTED_DURATIONS
 
@@ -104,7 +113,7 @@ def _web_max_image_refs(model: str, meta: dict) -> int:
 
     original = int(meta.get("max_references", meta.get("max_image_references", 0)))
     if model in ("motion_control_v26", "motion_control_v30",
-                 "avatar_std", "avatar_pro", "grok_imagine_v15", "v26_pro"):
+                    "avatar_std", "avatar_pro", "grok_imagine_v15", "v26_pro"):
         original = min(1, original if original else 1)
     elif model == "seedream_edit":
         from bot.services.seedream_service import seedream_service
@@ -117,14 +126,21 @@ def _web_max_image_refs(model: str, meta: dict) -> int:
 
 
 def _quality_value(model: str, meta: dict, quality: str | None) -> str:
-    choices = meta.get("qualities") or meta.get("motion_modes") or []
+    choices = list(meta.get("qualities") or []) + (
+        ["auto"] if model == "seedream_55_layers" else []
+    ) or meta.get("motion_modes") or (
+        meta.get("omni_resolutions") if model == "gemini_omni" else
+        meta.get("wan_resolutions") if model in ("wan_3", "wan_3_prime")
+        else []
+    ) or []
     if not choices:
         if quality:
             raise ValueError("Quality option is not supported for this model")
         return ""
     selected = quality or (
         "2K" if "2K" in choices else
-        "720p" if "720p" in choices else choices[0]
+        "720p" if "720p" in choices else
+        "720P" if "720P" in choices else choices[0]
     )
     if selected not in choices:
         raise ValueError("Unsupported quality for this model")
@@ -132,7 +148,8 @@ def _quality_value(model: str, meta: dict, quality: str | None) -> str:
 
 
 def _price(media_type: str, model: str, duration: int,
-           quality: str | None = None, reference_count: int = 0) -> str:
+           quality: str | None = None, reference_count: int = 0,
+           max_images: int = 30) -> str:
     actual_type, meta = _model_meta(model)
     if media_type != actual_type:
         raise ValueError("Model/media type mismatch")
@@ -142,15 +159,49 @@ def _price(media_type: str, model: str, duration: int,
         from bot.miniapp import _resolve_image_unit_cost
 
         selected = _quality_value(model, meta, quality)
-        raw = _resolve_image_unit_cost(
-            model, selected, reference_count=reference_count,
-        )
+        if model == "seedream_55_layers":
+            from bot.services.seedream55_pricing import image_generation_cost
+
+            raw = image_generation_cost(
+                model, selected, reference_count=reference_count,
+                max_images=max_images,
+            )
+        else:
+            raw = _resolve_image_unit_cost(
+                model, selected, reference_count=reference_count,
+            )
     else:
         if model not in _VIDEO_MODELS:
             raise ValueError("Model is not enabled for independent browser generation")
         if duration not in meta.get("durations", ()):
             raise ValueError("Unsupported duration")
-        if model in ("motion_control_v26", "motion_control_v30"):
+        if model in ("wan_3", "wan_3_prime"):
+            if duration <= 0:
+                raise ValueError("Wan 3.0 auto duration requires duration reconciliation")
+            selected_quality = _quality_value(model, meta, quality)
+            raw_rates = preset_manager.get_video_quality_costs(model)
+            rates = {str(key).lower(): value for key, value in raw_rates.items()}
+            rate = rates.get(selected_quality.lower())
+            if (type(rate) not in (float, int) or not math.isfinite(rate)
+                    or rate <= 0):
+                raise ValueError("Wan 3.0 quality rate not configured")
+            from bot.services.wan3_prime_lifecycle import _round_half_credit
+
+            raw = _round_half_credit(float(rate) * duration)
+            if raw <= 0:
+                raise ValueError("Wan 3.0 rate too small")
+        elif model == "gemini_omni":
+            selected_quality = _quality_value(model, meta, quality)
+            rates = {
+                str(k).lower(): v
+                for k, v in preset_manager.get_video_quality_costs(model).items()
+            }
+            if selected_quality.lower() not in rates:
+                raise ValueError("No verified Gemini Omni quality rate")
+            raw = preset_manager.get_video_cost_with_quality(
+                model, duration, selected_quality,
+            )
+        elif model in ("motion_control_v26", "motion_control_v30"):
             selected_quality = _quality_value(model, meta, quality)
             raw = preset_manager.get_video_cost_with_quality(
                 model, duration, selected_quality,
@@ -162,6 +213,18 @@ def _price(media_type: str, model: str, duration: int,
         raise ValueError("Invalid or missing live tariff")
     amount_units(amount)
     return str(amount)
+
+
+def _price_for_request(normalized: dict) -> str:
+    args = (
+        normalized["media_type"], normalized["model"],
+        normalized["duration"], normalized["quality"],
+        len(normalized["reference_ids"]),
+    )
+    if normalized["model"] == "seedream_55_layers":
+        return _price(*args, normalized["max_images"])
+    # Preserve the existing five-argument contract for all other models.
+    return _price(*args)
 
 
 def _models() -> list[dict]:
@@ -180,8 +243,14 @@ def _models() -> list[dict]:
                 "description": canonical.get("description", ""),
                 "ratios": list(canonical.get("ratios", [])),
                 "max_references": _web_max_image_refs(model, canonical),
-                "max_video_references": min(1, int(canonical.get("max_video_references", 0))),
-                "max_audio_references": min(1, int(canonical.get("max_audio_references", 0))),
+                "max_video_references": (
+                    0 if model in ("gemini_omni", "wan_3", "wan_3_prime")
+                    else min(1, int(canonical.get("max_video_references", 0)))
+                ),
+                "max_audio_references": (
+                    0 if model in ("wan_3", "wan_3_prime")
+                    else min(1, int(canonical.get("max_audio_references", 0)))
+                ),
                 "enabled": bool(supported),
                 "unavailable_reason": None if supported else (
                     "Для этой модели ещё не подключены безопасные веб-тарификация, "
@@ -200,14 +269,22 @@ def _models() -> list[dict]:
                     entry[option] = canonical[option]
             if media_type == "image":
                 qualities = list(canonical.get("qualities") or [])
+                if model == "seedream_55_layers":
+                    qualities.append("auto")
+                    entry["supports_layers"] = True
+                    entry["layers_max_images"] = {"min": 2, "max": 100, "default": 30}
+                    entry["layers_formats"] = ["png", "jpeg"]
                 entry["qualities"] = qualities
                 if supported:
                     default_quality = _quality_value(model, canonical, None)
                     try:
+                        default_refs = 1 if model == "seedream_55_layers" else 0
                         entry["price"] = _price(media_type, model, 5,
-                                                quality=default_quality)
+                                                quality=default_quality,
+                                                reference_count=default_refs)
                         entry["quality_costs"] = {
-                            q: _price(media_type, model, 5, quality=q)
+                            q: _price(media_type, model, 5, quality=q,
+                                      reference_count=default_refs)
                             for q in qualities
                         }
                     except (ValueError, TypeError, KeyError):
@@ -215,7 +292,21 @@ def _models() -> list[dict]:
                         entry["unavailable_reason"] = "Нет корректного тарифа для этой модели."
             else:
                 entry["durations"] = _web_durations(model, canonical)
-                entry["qualities"] = list(canonical.get("motion_modes") or [])
+                entry["qualities"] = list(
+                    canonical.get("omni_resolutions") if model == "gemini_omni"
+                    else canonical.get("wan_resolutions") if model in ("wan_3", "wan_3_prime")
+                    else canonical.get("motion_modes") or []
+                )
+                if model in ("wan_3", "wan_3_prime"):
+                    # Video/audio/file/link modes need measured input duration
+                    # and first-party asset probes, so expose only image modes.
+                    entry["supported_modes"] = [
+                        "text", "first_frame", "first_last", "reference",
+                    ]
+                if model == "gemini_omni":
+                    # Audio ID and Character ID need separate account-owned
+                    # asset lifecycles; do not make them look purchasable.
+                    entry["supported_modes"] = ["video_text", "video_images"]
                 if supported:
                     try:
                         by_duration = {
@@ -242,7 +333,8 @@ def _normalize_request(body: dict) -> dict:
     allowed = {
         "model", "prompt", "request_key", "aspect_ratio", "duration",
         "reference_ids", "video_reference_ids", "audio_reference_ids",
-        "quality", "expected_price",
+        "quality", "expected_price", "max_images", "text_recognition",
+        "output_format", "wan_scenario",
     }
     if set(body) - allowed:
         raise ValueError("Unexpected web generation fields")
@@ -280,6 +372,21 @@ def _normalize_request(body: dict) -> dict:
         raise ValueError("This video mode requires a starting image")
     if model == "v26_pro" and len(references) > 1:
         raise ValueError("Too many references for this video recipe")
+    if model in ("wan_3", "wan_3_prime"):
+        wan_scenario = body.get("wan_scenario", "text")
+        if wan_scenario not in ("text", "first_frame", "first_last", "reference"):
+            raise ValueError("Unsupported independent web Wan 3.0 scenario")
+        if (duration == -1
+                or (wan_scenario == "text" and references)
+                or (wan_scenario == "first_frame" and len(references) != 1)
+                or (wan_scenario == "first_last" and len(references) != 2)
+                or (wan_scenario == "reference" and not references)):
+            raise ValueError("Wan 3.0 reference count does not match selected scenario")
+    else:
+        if "wan_scenario" in body:
+            raise ValueError("Wan scenario is not available for this model")
+        wan_scenario = ""
+
     video_refs = body.get("video_reference_ids", [])
     audio_refs = body.get("audio_reference_ids", [])
     for refs in (video_refs, audio_refs):
@@ -300,6 +407,27 @@ def _normalize_request(body: dict) -> dict:
     if quality_raw is not None and not isinstance(quality_raw, str):
         raise ValueError("Invalid quality")
     quality = _quality_value(model, meta, quality_raw)
+    if model == "seedream_55_layers":
+        if (len(references) != 1 or len(prompt) > 2000
+                or video_refs or audio_refs):
+            raise ValueError("Layers need exactly one image reference and a short prompt")
+        max_images = body.get("max_images", 30)
+        if type(max_images) is not int or not 2 <= max_images <= 100:
+            raise ValueError("Layers output count must be between 2 and 100")
+        text_recognition = body.get("text_recognition", False)
+        if type(text_recognition) is not bool:
+            raise ValueError("Layers text recognition must be a boolean")
+        output_format = body.get("output_format", "png")
+        if output_format not in ("png", "jpeg"):
+            raise ValueError("Unsupported layers output format")
+    else:
+        if any(name in body for name in ("max_images", "text_recognition", "output_format")):
+            raise ValueError("Layers options are not supported by this model")
+        max_images, text_recognition, output_format = 30, False, "png"
+    if model in ("wan_3", "wan_3_prime", "gemini_omni"):
+        # A missing quality-specific admin tariff is NOT a purchasable model.
+        # Guard both catalog and create/quote; display flags aren't security.
+        _price(media_type, model, duration, quality, len(references))
     expected_price = body.get("expected_price")
     if expected_price is not None:
         if not isinstance(expected_price, str):
@@ -317,6 +445,8 @@ def _normalize_request(body: dict) -> dict:
         "quality": quality, "reference_ids": references,
         "video_reference_ids": video_refs, "audio_reference_ids": audio_refs,
         "expected_price": expected_price,
+        "max_images": max_images, "text_recognition": text_recognition,
+        "output_format": output_format, "wan_scenario": wan_scenario,
     }
 
 
@@ -325,6 +455,7 @@ def _hash_request(payload: dict) -> str:
         {key: payload[key] for key in (
             "model", "media_type", "prompt", "aspect_ratio", "duration",
             "reference_ids", "video_reference_ids", "audio_reference_ids", "quality",
+            "max_images", "text_recognition", "output_format", "wan_scenario",
         )},
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     ).encode()).hexdigest()
@@ -369,11 +500,7 @@ async def quote_generation(request: web.Request) -> web.Response:
         await owned_reference_urls(account, normalized["reference_ids"], kind="image")
         await owned_reference_urls(account, normalized["video_reference_ids"], kind="video")
         await owned_reference_urls(account, normalized["audio_reference_ids"], kind="audio")
-        amount = _price(
-            normalized["media_type"], normalized["model"],
-            normalized["duration"], normalized["quality"],
-            len(normalized["reference_ids"]),
-        )
+        amount = _price_for_request(normalized)
         return _json({
             "ok": True, "model": normalized["model"],
             "price": amount,
@@ -405,10 +532,7 @@ async def create_generation(request: web.Request) -> web.Response:
         if not isinstance(body, dict):
             raise TypeError("Invalid JSON object")
         normalized = _normalize_request(body)
-        cost = _price(
-            normalized["media_type"], normalized["model"], normalized["duration"],
-            normalized["quality"], len(normalized["reference_ids"]),
-        )
+        cost = _price_for_request(normalized)
         units = amount_units(cost)
     except (ValueError, TypeError, KeyError):
         return _json({"ok": False, "error": "Проверьте модель, длительность и промпт."}, 400)
@@ -435,6 +559,21 @@ async def create_generation(request: web.Request) -> web.Response:
             "ok": False, "error": "Стоимость изменилась. Обновите расчёт.",
             "code": "price_changed", "current_price": cost,
         }, 409)
+    if normalized["model"] == "seedream_55_layers":
+        from bot.services.seedream55_pricing import QUALITY_PRICE_KEYS, price_cells
+
+        cells = price_cells()
+        chosen = normalized["quality"]
+        output_unit = Decimal(str(cells[QUALITY_PRICE_KEYS.get(
+            chosen, QUALITY_PRICE_KEYS["2K"],
+        )]))
+        input_unit = Decimal(str(cells["seedream_55_ref"]))
+        if amount_units(input_unit + output_unit * normalized["max_images"]) != units:
+            return _json({"ok": False, "error": "Стоимость изменилась. Обновите расчёт.",
+                          "code": "price_changed"}, 409)
+        normalized["layer_rate_snapshot"] = {
+            "input_unit": str(input_unit), "output_unit": str(output_unit),
+        }
     await ensure_web_tasks_schema()
     wallet = WalletService("live")
     request_hash = _hash_request(normalized)
@@ -625,6 +764,17 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
                 prompt, image_input=reference_urls, aspect_ratio=ratio,
                 resolution=quality or "2K", callback_url=callback or None,
             ))
+        if model == "seedream_55_layers":
+            from bot.services.seedream55_service import seedream55_service
+
+            return identifier_from(await seedream55_service.generate_layers(
+                reference_urls[0], prompt=prompt,
+                size=quality or "2K",
+                output_format=str(payload.get("output_format") or "png"),
+                max_images=int(payload["max_images"]),
+                text_recognition=bool(payload["text_recognition"]),
+                callBackUrl=callback or None,
+            ))
         if model == "seedream_55":
             from bot.services.seedream55_service import seedream55_service
 
@@ -708,6 +858,36 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
                 if reference_urls else "TEXT_2_VIDEO",
                 resolution="720p", callBackUrl=callback or None,
             ))
+        if model in ("wan_3", "wan_3_prime"):
+            from bot.services.wan3_models import wan3_service_for_model
+
+            service = wan3_service_for_model(model)
+            scenario = str(payload.get("wan_scenario") or "text")
+            arguments = {
+                "prompt": prompt, "scenario": scenario,
+                "duration": duration, "aspect_ratio": ratio,
+                "resolution": quality or "720P",
+                "audio": True, "nsfw_checker": False,
+            }
+            if scenario == "first_frame":
+                arguments["first_frame_url"] = reference_urls[0]
+            elif scenario == "first_last":
+                arguments["first_frame_url"] = reference_urls[0]
+                arguments["last_frame_url"] = reference_urls[1]
+            elif scenario == "reference":
+                arguments["reference_image_urls"] = reference_urls
+            prepared = await service.prepare_request(**arguments)
+            return identifier_from(await service.submit_prepared(
+                prepared, callback_url=callback or None,
+            ))
+        if model == "gemini_omni":
+            from bot.services.gemini_omni_service import gemini_omni_service
+
+            return identifier_from(await gemini_omni_service.generate_video(
+                prompt=prompt, duration=duration, aspect_ratio=ratio,
+                resolution=quality or "720p",
+                image_urls=reference_urls or None, callBackUrl=callback or None,
+            ))
         if model in ("motion_control_v26", "motion_control_v30"):
             provider = KlingService(kie_key=config.KIE_AI_API_KEY)
             return identifier_from(await provider.generate_motion_control(
@@ -774,7 +954,25 @@ async def _submit_to_provider(task_id: str, payload: dict) -> tuple[str | None, 
         return None, False
 
 
-async def _provider_check(task_id: str, provider_task_id: str, model: str) -> tuple[str, str | None]:
+async def _provider_check(task_id: str, provider_task_id: str, model: str) -> tuple[str, str | list[str] | None]:
+    if model == "seedream_55_layers":
+        from bot.services.seedream55_results import extract_layers
+
+        data = await kie_market_service.get_task_status(provider_task_id)
+        if not isinstance(data, dict):
+            return "pending", None
+        observed = str(data.get("taskId") or data.get("task_id") or "")
+        if observed and observed != provider_task_id:
+            logger.error("web_layer_poll_task_binding_mismatch task=%s", task_id)
+            return "pending", None
+        state = str(data.get("state") or data.get("status") or "pending").lower()
+        if state in ("success", "completed", "succeeded"):
+            result_json = data.get("resultJson")
+            if isinstance(result_json, str):
+                result_json = json.loads(result_json)
+            urls, _details = extract_layers(result_json)
+            return state, urls
+        return state, None
     if model == "veo3_fast":
         from bot.services.veo_service import veo_service
 
@@ -815,7 +1013,8 @@ async def _task_row(task_id: str):
         return await (await db.execute(
             """SELECT task_id,account_id,media_type,model,status,phase,
                       provider_task_id,request_json,cost,reservation_key,deadline_epoch,
-                      lease_until_epoch,asset_key,result_url,attempt_count,error_code
+                      lease_until_epoch,asset_key,result_url,attempt_count,error_code,
+                      outputs_json,bundle_url,output_count,settled_cost
                FROM web_generation_tasks WHERE task_id=?""",
             (task_id,),
         )).fetchone()
@@ -864,12 +1063,28 @@ async def _capture_completed(row) -> None:
     task_id, account_id = str(row[0]), str(row[1])
     if not row[13]:
         raise ValueError("Cannot capture without a durable result")
-    # Web task captures only its own locked reservation. The same operation
-    # key can be safely retried after a process crash.
-    await WalletService("live").apply(
-        account_id, "capture", str(row[8]), "web:capture:" + task_id,
-        reference_key=str(row[9]),
+    reserve_units = amount_units(str(row[8]))
+    cost = str(row[19]) if len(row) > 19 and row[19] else str(row[8])
+    captured_units = amount_units(cost)
+    if captured_units <= 0 or captured_units > reserve_units:
+        raise ValueError("Settled cost exceeds the original locked wallet reserve")
+    if str(row[3]) == "seedream_55_layers" and (
+        len(row) <= 19 or not row[19] or not row[17] or not row[18]
+    ):
+        raise ValueError("Layer bundle must be fully archived before capture")
+    # The capture is idempotent even if the process crashes before the
+    # unused reserve is released. On replay both operations keep their keys.
+    wallet = WalletService("live")
+    await wallet.apply(
+        account_id, "capture", format_units(captured_units),
+        "web:capture:" + task_id, reference_key=str(row[9]),
     )
+    unused_units = reserve_units - captured_units
+    if unused_units:
+        await wallet.apply(
+            account_id, "release", format_units(unused_units),
+            "web:release:" + task_id, reference_key=str(row[9]),
+        )
     async with db_backend.connect() as db:
         await db.execute(
             """UPDATE web_generation_tasks SET status='completed',phase='finished',
@@ -878,7 +1093,54 @@ async def _capture_completed(row) -> None:
             (int(time.time()), task_id),
         )
         await db.commit()
-    logger.info("web_task_completed task=%s", task_id)
+    logger.info("web_task_completed task=%s settled_cost=%s", task_id, cost)
+
+
+async def _archive_and_settle_layers(row, sources: list[str]) -> None:
+    """Durable bundle and exact charged count, based on the frozen quote.
+
+    No result writes to the legacy Telegram task database. Every retry uses
+    the original web task asset key and CAS lease. All media is S3-backed
+    before *any* wallet capture is attempted.
+    """
+    task_id, reserved = str(row[0]), Decimal(str(row[8]))
+    payload = json.loads(row[7])
+    max_images = payload["max_images"]
+    if (not isinstance(sources, list) or not 2 <= len(sources) <= max_images
+            or len(set(sources)) != len(sources)):
+        await _release_failed(row, "invalid_layers_result_count")
+        return
+    snapshot = payload.get("layer_rate_snapshot") or {}
+    if set(snapshot) != {"input_unit", "output_unit"}:
+        raise ValueError("Missing frozen layer price snapshot")
+    input_unit = Decimal(str(snapshot["input_unit"]))
+    output_unit = Decimal(str(snapshot["output_unit"]))
+    actual = input_unit + output_unit * len(sources)
+    if (not actual.is_finite() or actual <= 0 or actual > reserved
+            or amount_units(actual) > amount_units(reserved)):
+        raise ValueError("Invalid layer settlement would exceed locked funds")
+    from bot.web_layers import archive_web_layers
+
+    durable_urls, bundle_url = await archive_web_layers(
+        task_id, str(row[12]), sources,
+    )
+    if (len(durable_urls) != len(sources) or not bundle_url
+            or any(not isinstance(url, str) or not url.startswith("https://")
+                   for url in durable_urls)):
+        raise OSError("Layer bundle did not persist all outputs")
+    async with db_backend.connect() as db:
+        await db.execute(
+            """UPDATE web_generation_tasks SET result_url=?,outputs_json=?,
+               bundle_url=?,output_count=?,settled_cost=?,phase='settling',
+               lease_until_epoch=0,updated_at_epoch=?
+               WHERE task_id=? AND status='pending' AND phase IN ('checking','provider')""",
+            (durable_urls[0],
+             json.dumps(durable_urls, separators=(",", ":")),
+             bundle_url, len(durable_urls), format_units(amount_units(actual)),
+             int(time.time()), task_id),
+        )
+        await db.commit()
+    await _capture_completed(await _task_row(task_id))
 
 
 async def _process_task(row, *, claimed_from: str) -> None:
@@ -933,6 +1195,15 @@ async def _process_task(row, *, claimed_from: str) -> None:
         await _release_failed(row, "provider_failed")
         return
     if status in ("success", "completed", "succeeded") and result_url:
+        if str(row[3]) == "seedream_55_layers":
+            try:
+                await _archive_and_settle_layers(row, result_url)
+            except Exception:
+                logger.exception("web_layer_persistence_retry task=%s", task_id)
+                await _task_update(task_id, "provider", until=now + _seconds(
+                    "WEB_GENERATION_RETRY_SECONDS", 30, 5, 3600,
+                ))
+            return
         from bot.web_media_delivery import archive_web_result
 
         try:

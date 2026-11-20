@@ -6,6 +6,7 @@ shape only after independent billing and queue lifecycle are verified.
 """
 from __future__ import annotations
 
+import json
 import re
 from urllib.parse import urlsplit
 
@@ -37,7 +38,11 @@ _SCHEMA = (
         deadline_epoch BIGINT NOT NULL DEFAULT 0,
         asset_key TEXT,
         error_code TEXT,
-        attempt_count BIGINT NOT NULL DEFAULT 0)""",
+        attempt_count BIGINT NOT NULL DEFAULT 0,
+        settled_cost TEXT,
+        output_count BIGINT,
+        outputs_json TEXT,
+        bundle_url TEXT)""",
     """CREATE INDEX IF NOT EXISTS web_generation_tasks_account_created
        ON web_generation_tasks(account_id,created_at_epoch DESC,task_id DESC)""",
     """CREATE INDEX IF NOT EXISTS web_generation_tasks_queue
@@ -65,6 +70,10 @@ _ADDITIVE_FIELDS = {
     "asset_key": "TEXT",
     "error_code": "TEXT",
     "attempt_count": "BIGINT NOT NULL DEFAULT 0",
+    "settled_cost": "TEXT",
+    "output_count": "BIGINT",
+    "outputs_json": "TEXT",
+    "bundle_url": "TEXT",
 }
 
 
@@ -98,24 +107,40 @@ async def ensure_web_tasks_schema() -> None:
             raise
 
 
+def _safe_asset_url(url: str) -> str | None:
+    parsed = urlsplit(str(url or ""))
+    if (parsed.scheme != "https" or not parsed.hostname
+            or parsed.username or parsed.password or len(url) > 4096):
+        return None
+    return url
+
+
 def _public_task(row) -> dict:
-    media = str(row[4] or "")
-    if media:
-        parsed = urlsplit(media)
-        if (parsed.scheme != "https" or not parsed.hostname
-                or parsed.username or parsed.password or len(media) > 4096):
-            media = ""
+    outputs = []
+    if len(row) > 10 and row[10]:
+        try:
+            parsed = json.loads(row[10])
+            if isinstance(parsed, list) and 0 < len(parsed) <= 100:
+                outputs = [
+                    url for url in parsed
+                    if isinstance(url, str) and _safe_asset_url(url)
+                ]
+        except (TypeError, ValueError):
+            outputs = []
     return {
         "task_id": str(row[0]),
         "type": str(row[1]),
         "model": str(row[2]),
         "status": str(row[3]),
-        "result_url": media or None,
+        "result_url": _safe_asset_url(str(row[4] or "")),
         "created_at_epoch": int(row[5]),
         "updated_at_epoch": int(row[6]),
         "phase": str(row[7]) if len(row) > 7 else "",
         "cost": str(row[8]) if len(row) > 8 and row[8] else None,
         "error_code": str(row[9]) if len(row) > 9 and row[9] else None,
+        "outputs": outputs,
+        "bundle_url": _safe_asset_url(str(row[11] or "")) if len(row) > 11 else None,
+        "output_count": int(row[12]) if len(row) > 12 and row[12] is not None else None,
     }
 
 
@@ -131,7 +156,7 @@ async def task_history(request: web.Request) -> web.Response:
         return _json({"ok": False, "error": "Invalid cursor"}, 400)
     await ensure_web_tasks_schema()
     sql = """SELECT task_id,media_type,model,status,result_url,created_at_epoch,updated_at_epoch,
-                    phase,cost,error_code
+                    phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count
              FROM web_generation_tasks WHERE account_id IN (
                  WITH RECURSIVE owned(id) AS (
                      SELECT ? UNION ALL SELECT a.id FROM shared_accounts a
@@ -166,7 +191,7 @@ async def task_detail(request: web.Request) -> web.Response:
     async with db_backend.connect() as db:
         row = await (await db.execute(
             """SELECT task_id,media_type,model,status,result_url,created_at_epoch,updated_at_epoch,
-                      phase,cost,error_code
+                      phase,COALESCE(settled_cost,cost),error_code,outputs_json,bundle_url,output_count
                FROM web_generation_tasks WHERE task_id=? AND account_id IN (
                     WITH RECURSIVE owned(id) AS (
                         SELECT ? UNION ALL SELECT a.id FROM shared_accounts a

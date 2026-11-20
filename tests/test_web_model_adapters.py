@@ -121,10 +121,16 @@ def test_web_model_catalog_derived_from_public_tg_catalog_without_misleading_ena
     catalog = web_generation._models()
     enabled = {item["id"] for item in catalog if item["enabled"]}
     assert source == {item["id"] for item in catalog}
-    assert len(enabled) == 20  # Four typed-reference adapters validated below.
-    assert enabled == (
-        web_generation._IMAGE_MODELS | web_generation._VIDEO_MODELS
-    )
+    implemented = web_generation._IMAGE_MODELS | web_generation._VIDEO_MODELS
+    assert enabled.issubset(implemented)
+    for row in catalog:
+        if row["id"] in implemented and not row["enabled"]:
+            assert row["unavailable_reason"]
+            assert row["id"] in {"wan_3", "wan_3_prime"}
+            # Configured admin Wan3 resolution rates are a strict
+            # prerequisite; never enable the placeholder generic price.
+            assert not web_generation.preset_manager.get_video_quality_costs(row["id"])
+    assert "seedream_55_layers" in enabled  # Bounded ZIP + frozen-rate settlement.
 
 
 @pytest.mark.asyncio

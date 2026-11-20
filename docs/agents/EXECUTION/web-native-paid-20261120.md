@@ -120,3 +120,42 @@ The automated isolated database and browser tests cover checkout idempotency, re
   login guard assertion in test_public_landing. Login now checks BOTH HTTP
   success and verified payload after the legacy fallback, and targeted
   public landing regressions pass. Rerun the full CI on the new commit.
+
+
+## Continuation checkpoint: native web model contracts
+
+This is an unreleased draft. Original 24-model Mini App catalog is projected
+into the independent browser studio. With the checked-in admin price file,
+22/24 have enabled independent adapters; Wan 3.0 and Wan 3.0 Prime remain
+disabled because no per-resolution quality rates are configured. We NEVER
+fallback to unrelated generic video prices.
+
+Gemini Omni Video: text/image to video via existing KIE adapter, 720p/1080p/4k
+resolution-specific pricing. Account-owned video/audio/character asset IDs
+and their creation flows are NOT implemented; arbitrary IDs are forbidden.
+
+Wan 3.0 Standard and Prime: prepared native adapter supports text, first frame,
+first+last and image-reference scenarios, bounded and owned input image IDs,
+fixed 2-30 second duration, 480P/720P/1080P admin rate snapshots. Auto -1,
+edit, video/audio/file/link recipes are intentionally unavailable until media
+duration probing and exact supplier-seconds settlement are implemented.
+
+Seedream 5.5 Layers: maximum 2-100 output images quoted by the original
+admin-managed image/reference rates; the maximum price is reserved in the
+account-native wallet. The input and output unit prices are SNAPSHOTTED at
+reservation. The provider result is polled through our KIE API key; every
+output is fetched with allowlisted public-only HTTPS, byte cap and image
+signature check, then stored in Selectel S3. All ordered images and manifest
+are bundled into an S3 ZIP. Final wallet capture is based on actual image
+count, unused reserve is idempotently released, and web history exposes
+the ZIP and the final price. Empty/invalid media cannot settle a task.
+
+Verification: 233 backend regression tests, 22 frontend Jest tests,
+optimized Next.js build, browser E2E on 390px/1440px, Ruff focused checks.
+Live paid KIE/Lava and Selectel S3 readback for this branch NOT performed.
+
+PRODUCTION GATES: configure real Wan3 quality rates through existing admin
+price settings; add provider media probing/auto-duration and edit/file/link,
+Gemini Audio/Character asset flows, test live paid tasks for all 24 models
+and verify S3 GET plus full CI. Keep WEB_NATIVE_GENERATION_ENABLED and
+WEB_NATIVE_PAYMENTS_ENABLED disabled in production until then.

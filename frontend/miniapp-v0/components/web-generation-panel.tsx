@@ -20,6 +20,10 @@ type Model = {
   max_audio_references?: number
   requires_image?: boolean
   requires_audio?: boolean
+  supports_layers?: boolean
+  layers_max_images?: { min: number; max: number; default: number }
+  layers_formats?: string[]
+  supported_modes?: string[]
 }
 type Task = {
   task_id: string
@@ -28,6 +32,10 @@ type Task = {
   status: 'pending' | 'completed' | 'failed'
   result_url: string | null
   created_at_epoch: number
+  bundle_url?: string | null
+  output_count?: number | null
+  outputs?: string[]
+  cost?: string
 }
 
 export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
@@ -40,6 +48,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   const [ratio, setRatio] = useState('')
   const [duration, setDuration] = useState(5)
   const [quality, setQuality] = useState('')
+  const [maxImages, setMaxImages] = useState(30)
+  const [textRecognition, setTextRecognition] = useState(false)
+  const [outputFormat, setOutputFormat] = useState('png')
+  const [wanScenario, setWanScenario] = useState('text')
   const [quote, setQuote] = useState<{ price: string; key: string } | null>(null)
   const [quoteError, setQuoteError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -112,6 +124,7 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
   }
 
   const model = models.find(item => item.id === modelId)
+  const isWan3 = modelId === 'wan_3' || modelId === 'wan_3_prime'
   const referencesIds = references.map(item => item.id)
   const videoIds = videoReferences.map(item => item.id)
   const audioIds = audioReferences.map(item => item.id)
@@ -119,6 +132,12 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
     model: modelId, prompt: prompt.trim(), aspect_ratio: ratio,
     duration, quality, reference_ids: referencesIds,
     video_reference_ids: videoIds, audio_reference_ids: audioIds,
+    ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+    ...(model?.supports_layers ? {
+      max_images: maxImages,
+      text_recognition: textRecognition,
+      output_format: outputFormat,
+    } : {}),
   })
   const quoteReady = Boolean(quote && quote.key === quoteKey)
   const price = quoteReady
@@ -146,6 +165,12 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           duration, quality: quality || undefined, reference_ids: referencesIds,
           ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
           ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
+          ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+          ...(model.supports_layers ? {
+            max_images: maxImages,
+            text_recognition: textRecognition,
+            output_format: outputFormat,
+          } : {}),
         }),
       }).then(async response => {
         const result = await response.json() as { ok?: boolean; price?: string }
@@ -207,6 +232,12 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           reference_ids: referencesIds, quality: quality || undefined,
           ...(videoIds.length ? { video_reference_ids: videoIds } : {}),
           ...(audioIds.length ? { audio_reference_ids: audioIds } : {}),
+          ...(isWan3 ? { wan_scenario: wanScenario } : {}),
+          ...(model.supports_layers ? {
+            max_images: maxImages,
+            text_recognition: textRecognition,
+            output_format: outputFormat,
+          } : {}),
           expected_price: quote!.price,
         }),
       })
@@ -243,6 +274,10 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           setRatio(next?.ratios.includes('1:1') ? '1:1' : next?.ratios[0] || '16:9')
           setDuration(next?.durations?.includes(5) ? 5 : next?.durations?.[0] || 5)
           setQuality(next?.qualities?.includes('2K') ? '2K' : next?.qualities?.[0] || '')
+          setMaxImages(next?.layers_max_images?.default || 30)
+          setTextRecognition(false)
+          setOutputFormat(next?.layers_formats?.[0] || 'png')
+          setWanScenario('text')
           setReferences(previous => previous.slice(0, next?.max_references || 0))
           setVideoReferences(previous => previous.slice(0, next?.max_video_references || 0))
           setAudioReferences(previous => previous.slice(0, next?.max_audio_references || 0))
@@ -268,8 +303,67 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
           {model.qualities.map(item => <option key={item} value={item}>{item}</option>)}
         </select>
       </div> : null}
+      {isWan3 && model?.supported_modes ? <div className="space-y-2">
+        <label className="block text-sm text-[#d7c0a2]" htmlFor="web-wan-scenario">
+          Сценарий Wan 3.0
+        </label>
+        <select id="web-wan-scenario" value={wanScenario} disabled={busy}
+          onChange={event => {
+            setWanScenario(event.target.value)
+            setReferences([])
+            idempotencyKey.current = ''
+          }}
+          className="min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+          {model.supported_modes.map(item => <option key={item} value={item}>{
+            item === 'text' ? 'Текст → видео'
+              : item === 'first_frame' ? 'Первый кадр → видео (1 фото)'
+                : item === 'first_last' ? 'Первый и последний кадр (2 фото)'
+                  : 'Референсы изображений → видео'
+          }</option>)}
+        </select>
+        <p className="text-xs text-[#adaba4]">
+          Автоматическая длительность, видео, аудио, файл и ссылки требуют
+          отдельного серверного измерения и тарификации.
+        </p>
+      </div> : null}
+      {model?.supports_layers ? <fieldset className="space-y-3 border border-[#a48350]/40 p-3">
+        <legend className="px-1 text-sm font-semibold text-[#f0c779]">Разделение на слои</legend>
+        <label className="block space-y-2 text-sm text-[#d7c0a2]">
+          Максимум изображений (включая основу)
+          <input type="number" min={model.layers_max_images?.min || 2}
+            max={model.layers_max_images?.max || 100}
+            step={1} value={maxImages} disabled={busy}
+            onChange={event => {
+              const value = Number(event.target.value)
+              setMaxImages(Number.isInteger(value) ? value : 30)
+              idempotencyKey.current = ''
+            }}
+            className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white" />
+        </label>
+        <label className="block space-y-2 text-sm text-[#d7c0a2]">
+          Формат слоёв
+          <select value={outputFormat} disabled={busy}
+            onChange={event => { setOutputFormat(event.target.value); idempotencyKey.current = '' }}
+            className="mt-2 min-h-11 w-full border border-[#a48350] bg-[#151b1b] p-2 text-white">
+            {(model.layers_formats || ['png']).map(item => <option key={item} value={item}>{item.toUpperCase()}</option>)}
+          </select>
+        </label>
+        <label className="flex min-h-11 items-center gap-3 text-sm text-[#d7c0a2]">
+          <input type="checkbox" checked={textRecognition} disabled={busy}
+            onChange={event => { setTextRecognition(event.target.checked); idempotencyKey.current = '' }} />
+          Распознавать текст на слоях
+        </label>
+        <p className="text-xs text-[#b4aea1]">
+          Резервируем максимум, после получения готовых слоёв возвращаем стоимость неиспользованных изображений.
+        </p>
+      </fieldset> : null}
+      {model?.supported_modes?.length && model.supported_modes.length < 3
+        ? <p className="text-xs text-[#adaba4]">В этой веб-версии доступны режимы: {
+          model.supported_modes.map(mode => mode === 'video_text' ? 'Текст → видео'
+            : mode === 'video_images' ? 'Фото → видео' : mode).join(', ')
+        }. Остальные режимы пока не включены.</p> : null}
       <label className="block text-sm text-[#d7c0a2]" htmlFor="web-prompt">Описание</label>
-      <textarea id="web-prompt" value={prompt} maxLength={2500} rows={4}
+      <textarea id="web-prompt" value={prompt} maxLength={model?.supports_layers ? 2000 : 2500} rows={4}
         onChange={event => { setPrompt(event.target.value); idempotencyKey.current = '' }}
         disabled={busy} required className="w-full border border-[#a48350] bg-[#151b1b] p-3 text-white"
         placeholder="Опишите изображение или видео…" />
@@ -372,9 +466,16 @@ export function WebGenerationPanel({ onBalanceChanged, onTaskChanged }: {
         activeTask.status === 'pending' ? 'генерируется' :
         activeTask.status === 'completed' ? 'готова' : 'ошибка, резерв возвращён'
       }</p>
+      {activeTask.output_count ? <p className="text-sm text-[#d9c7ae]">
+        Сохранено слоёв и изображений: {activeTask.output_count}.
+        {activeTask.cost ? ' Итоговое списание: ' + activeTask.cost + ' кредитов.' : ''}
+      </p> : null}
       {activeTask.result_url ? <a href={activeTask.result_url}
         target="_blank" rel="noopener noreferrer"
         className="text-sm text-[#f3cf92] underline">Открыть готовый результат</a> : null}
+      {activeTask.bundle_url ? <a href={activeTask.bundle_url}
+        target="_blank" rel="noopener noreferrer"
+        className="ml-2 text-sm text-[#f3cf92] underline">Скачать все слои ZIP</a> : null}
       <button type="button" onClick={() => void checkTask(activeTask.task_id)}
         className="ml-2 min-h-11 border border-[#8c7658] px-4 text-sm text-white">
         Проверить статус

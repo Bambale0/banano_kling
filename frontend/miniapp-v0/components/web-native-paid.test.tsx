@@ -190,3 +190,80 @@ test.each([
     expect(request.telegram_id).toBeUndefined()
   },
 )
+
+
+test('Seedream 5.5 Layers reprices max output count before charging and exposes ZIP', async () => {
+  const requests: Array<{ path: string; body: Record<string, unknown> | null }> = []
+  global.fetch = jest.fn().mockImplementation(async (path: string, options?: RequestInit) => {
+    const body = typeof options?.body === 'string' ? JSON.parse(options.body) : null
+    requests.push({ path, body })
+    if (path.endsWith('/models')) return {
+      ok: true, json: async () => ({ ok: true, enabled: true, models: [{
+        id: 'seedream_55_layers', label: 'Seedream 5.5 — слои', type: 'image',
+        price: '15.5', qualities: ['1K', '1.5K', '2K', 'auto'],
+        ratios: ['1:1'], max_references: 1, requires_reference: true,
+        supports_layers: true,
+        layers_max_images: { min: 2, max: 100, default: 30 },
+        layers_formats: ['png', 'jpeg'],
+      }] }),
+    }
+    if (path.endsWith('/reference')) return {
+      ok: true, json: async () => ({ ok: true, reference_id: 'wr_' + 'd'.repeat(32) }),
+    }
+    if (path.endsWith('/quote')) return {
+      ok: true, json: async () => ({
+        ok: true, price: body?.max_images === 5 ? '15.5' : '90.5',
+      }),
+    }
+    if (path.endsWith('/create')) return {
+      ok: true, json: async () => ({
+        ok: true, task_id: 'web_' + 'e'.repeat(32), status: 'pending',
+      }),
+    }
+    if (path.includes('/task/')) return {
+      ok: true, json: async () => ({ ok: true, task: {
+        task_id: 'web_' + 'e'.repeat(32), type: 'image',
+        model: 'seedream_55_layers', status: 'completed',
+        result_url: 'https://neuromixbot.com/uploads/web_results/layer-0.png',
+        bundle_url: 'https://neuromixbot.com/uploads/web_results/layers.zip',
+        output_count: 3, cost: '9.5', created_at_epoch: 1800000000,
+      } }),
+    }
+    throw new Error('Unexpected API route: ' + path)
+  }) as typeof fetch
+
+  render(<WebGenerationPanel onBalanceChanged={jest.fn()} onTaskChanged={jest.fn()} />)
+  await screen.findByRole('option', { name: 'Seedream 5.5 — слои (фото)' })
+  fireEvent.change(screen.getByLabelText('Референсы (до 1 изображений)'), {
+    target: { files: [new File(['fake'], 'portrait.png', { type: 'image/png' })] },
+  })
+  await screen.findByText('portrait.png')
+  fireEvent.change(screen.getByLabelText('Описание'), {
+    target: { value: 'Extract every independent layer' },
+  })
+  fireEvent.change(screen.getByLabelText('Максимум изображений (включая основу)'), {
+    target: { value: 5 },
+  })
+  fireEvent.change(screen.getByLabelText('Формат слоёв'), {
+    target: { value: 'jpeg' },
+  })
+  fireEvent.click(screen.getByLabelText('Распознавать текст на слоях'))
+  const button = await screen.findByRole('button', { name: 'Создать за 15.5 кредитов' })
+  expect(button.hasAttribute('disabled')).toBe(false)
+  fireEvent.click(button)
+  await screen.findByText('Задача: генерируется')
+  const created = requests.find(item => item.path.endsWith('/create'))?.body
+  expect(created).toEqual(expect.objectContaining({
+    model: 'seedream_55_layers',
+    max_images: 5, output_format: 'jpeg', text_recognition: true,
+    reference_ids: ['wr_' + 'd'.repeat(32)],
+    expected_price: '15.5',
+  }))
+  expect(requests.some(item =>
+    item.path.endsWith('/quote') && item.body?.max_images === 5
+      && item.body?.text_recognition === true
+  )).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'Проверить статус' }))
+  expect(await screen.findByRole('link', { name: 'Скачать все слои ZIP' })).toBeTruthy()
+  expect(await screen.findByText(/Сохранено слоёв и изображений: 3/)).toBeTruthy()
+})
