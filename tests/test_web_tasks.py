@@ -1,6 +1,5 @@
 """Web-native history is isolated by a verified browser session, never Telegram ID."""
 from types import SimpleNamespace
-from uuid import uuid4
 
 import pytest
 from aiohttp import web

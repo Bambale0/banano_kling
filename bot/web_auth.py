@@ -675,15 +675,17 @@ async def telegram_oidc_login(request: web.Request) -> web.Response:
     if request.content_length and request.content_length > 8192:
         return _json({"ok": False, "error": "Invalid request"}, 413)
     from bot.browser_auth import (
-        _OIDC_NONCE_COOKIE, _telegram_oidc_client_id, _build_browser_init_data,
+        _OIDC_NONCE_COOKIE,
+        _build_browser_init_data,
+        _telegram_oidc_client_id,
     )
-    from bot.telegram_oidc import fetch_telegram_jwks, verify_telegram_id_token
     from bot.config import config
+    from bot.telegram_oidc import fetch_telegram_jwks, verify_telegram_id_token
 
     try:
         body = await request.json()
         if not isinstance(body, dict) or not isinstance(body.get("id_token"), str):
-            raise ValueError("Invalid Telegram OIDC payload")
+            raise TypeError("Invalid Telegram OIDC payload")
         nonce = request.cookies.get(_OIDC_NONCE_COOKIE, "")
         client_id = _telegram_oidc_client_id()
         if not nonce or not client_id:

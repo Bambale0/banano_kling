@@ -92,7 +92,7 @@ async def task_history(request: web.Request) -> web.Response:
     next_cursor = None
     if len(rows) > 20:
         last = rows[19]
-        next_cursor = f"{int(last[5])}:{str(last[0])}"
+        next_cursor = f"{int(last[5])}:{last[0]!s}"
     return _json({"ok": True, "recent_tasks": records, "next_cursor": next_cursor})
 
 
