@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,6 +13,7 @@ from bot import db as db_backend
 from bot import web_auth, web_commerce
 from bot.services.lava_service import lava_service
 from bot.shared_accounts.wallet import WalletService
+
 
 async def account(subject):
     flow = {"mode": "login", "source": None, "destination": "/login"}
