@@ -533,6 +533,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
             return
           }
           if (!item?.id) throw new Error('Публикация недоступна. Обновите ссылку.')
+          // Telegram's "Repeat in Genjutsu" button must launch the saved
+          // server-side recipe. Never convert a private Genjutsu publication
+          // to a generic video repeat: that loses its protected inputs/model.
+          if (startTarget.kind === 'remix' && item.model === 'genjutsu') {
+            const recipeId = String(item.genjutsu_recipe_id || '')
+            if (!/^[a-f0-9]{32}$/.test(recipeId)) {
+              throw new Error('Для этой публикации повтор Genjutsu недоступен.')
+            }
+            openGenjutsu({ recipe_id: recipeId })
+            return
+          }
           if (startTarget.kind === 'remix' && item.model !== 'genjutsu' && !item.genjutsu_recipe_id) {
             await applyFeedRemix(item, isCurrent)
             return
