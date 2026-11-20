@@ -63,3 +63,69 @@ test('rejected template validation leaves the edit available and does not report
   expect(changed).not.toHaveBeenCalled()
   expect(screen.queryByText('Настройки сохранены')).not.toBeInTheDocument()
 })
+
+test('Light prices are edited independently by quality and public launch requires coverage', async () => {
+  const changed = jest.fn().mockResolvedValue(undefined)
+  const light = {
+    ...settings,
+    prices: {
+      ...settings.prices,
+      motion_transfer_light: { '480p': null, '720p': null, '1080p': null },
+      object_swap_light: { '480p': null, '720p': null, '1080p': null },
+    },
+  }
+  call.mockImplementation(async action => {
+    if (action === 'settings') return { settings: light, version: 8, coverage: [] }
+    if (action === 'admin_runs') return { items: [] }
+    return { ok: true }
+  })
+  render(<GenjutsuAdmin onChanged={changed} />)
+
+  expect(await screen.findByRole('region', { name: 'Тарифы Higgsfield Light' })).toBeInTheDocument()
+  const lightRate = screen.getByLabelText('Перенос движения · Light · 720p · цена за секунду')
+  expect(lightRate).toHaveValue(null)
+  const openToPublic = screen.getByLabelText('Перенос движения · Light · открыть пользователям')
+  expect(openToPublic).toBeDisabled()
+
+  fireEvent.change(lightRate, { target: { value: '5' } })
+  expect(screen.getByText('Ролик 5 с: 50 🍌')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить настройки' }))
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+  expect(call).toHaveBeenCalledWith('save_settings', {
+    expected_version: 8,
+    settings: {
+      ...light,
+      prices: {
+        ...light.prices,
+        motion_transfer_light: { '480p': null, '720p': 5, '1080p': null },
+      },
+    },
+  })
+})
+
+test('Light public switch unlocks only after all resolutions have verified admin results and prices', async () => {
+  const light = {
+    ...settings,
+    prices: {
+      ...settings.prices,
+      motion_transfer_light: { '480p': 3, '720p': 5, '1080p': 7 },
+      object_swap_light: { '480p': null, '720p': null, '1080p': null },
+    },
+  }
+  call.mockImplementation(async action => {
+    if (action === 'settings') return { settings: light, version: 9, coverage: [
+      { operation: 'motion_transfer_light', resolution: '480p', step_id: '1' },
+      { operation: 'motion_transfer_light', resolution: '720p', step_id: '2' },
+      { operation: 'motion_transfer_light', resolution: '1080p', step_id: '3' },
+    ] }
+    if (action === 'admin_runs') return { items: [] }
+    return { ok: true }
+  })
+  render(<GenjutsuAdmin onChanged={jest.fn().mockResolvedValue(undefined)} />)
+  const ready = await screen.findByLabelText('Перенос движения · Light · открыть пользователям')
+  const notReady = screen.getByLabelText('Замена объектов · Light · открыть пользователям')
+  expect(ready).toBeEnabled()
+  expect(notReady).toBeDisabled()
+  fireEvent.click(ready)
+  expect(ready).toBeChecked()
+})

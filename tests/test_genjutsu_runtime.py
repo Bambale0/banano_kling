@@ -35,7 +35,7 @@ async def test_runtime_coexists_with_legacy_body_readers_and_rejects_banned_user
         body = await response.json()
         assert body['enabled'] is False
         assert body['configured'] is False
-        assert set(body['catalog']) == {'motion_transfer', 'object_swap', 'restyle'}
+        assert set(body['catalog']) == {'motion_transfer', 'object_swap', 'restyle', 'motion_transfer_light', 'object_swap_light'}
         assert 'legacy' not in body
         banned.return_value = True
         response = await client.post('/mini-app/api/genjutsu', json={'action': 'bootstrap', 'init_data': 'verified-by-test-seam'})

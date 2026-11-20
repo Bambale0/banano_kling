@@ -11,9 +11,10 @@ permissions:
   statuses: write
 
 concurrency:
-  # v2 leaves the stale, unresponsive PR concurrency lock behind while still
-  # canceling superseded runs within this workflow/ref.
-  group: ci-v2-${{ github.workflow }}-${{ github.ref }}
+  # A stale job for an older PR revision must not block current required
+  # checks. Keep concurrency and cancellation for reruns of the SAME SHA,
+  # with all required lint, regression, browser and Docker gates unchanged.
+  group: ci-v4-${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 env:

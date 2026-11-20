@@ -137,3 +137,51 @@ async def test_nsfw_terminal_status_preserves_generic_content_safety_reason():
         assert "private.example" not in repr(result)
     finally:
         await server.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_path", (
+    "higgsfield/genjutsu-light/motion-transfer/v1.0",
+    "higgsfield/genjutsu-light/object-swap/v1.0",
+))
+async def test_light_model_submit_preserves_idempotency_and_documented_payload(model_path):
+    submitted = []
+
+    async def accept(request):
+        submitted.append({
+            "path": request.path,
+            "idempotency_key": request.headers.get("Idempotency-Key"),
+            "payload": await request.json(),
+        })
+        return web.json_response({
+            "request_id": "req_light",
+            "status_url": str(request.url.with_path("/requests/req_light/status")),
+            "cancel_url": str(request.url.with_path("/requests/req_light/cancel")),
+        })
+
+    app = web.Application()
+    app.router.add_post("/" + model_path, accept)
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        provider = Higgsfield(
+            "server-secret", str(server.make_url("")).rstrip("/"),
+            allow_insecure_for_tests=True,
+        )
+        payload = {
+            "prompt": "replace the hero",
+            "video_url": "https://media.example/source.mp4",
+            "image_urls": ["https://media.example/hero.png"],
+            "resolution": "720p",
+        }
+        response = await provider.submit(
+            model_path, payload, timeout=5, idempotency_key="light-intent-1234",
+        )
+        assert response["request_id"] == "req_light"
+        assert submitted == [{
+            "path": "/" + model_path,
+            "idempotency_key": "light-intent-1234",
+            "payload": payload,
+        }]
+    finally:
+        await server.close()
