@@ -302,7 +302,7 @@ def _verified_report_facts(plan: ReportPlan, facts: dict) -> dict[str, Any]:
                     for key in ("from_sign", "to_sign", "at_utc",
                                 "at_local", "local_date")
                 )
-                or re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}",
+                or re.fullmatch(r"\d{4}-\d{2}-\d{2}",
                                 ingress["local_date"]) is None
             ):
                 raise AstroReportError("Некорректные рассчитанные переходы Луны.")
@@ -499,7 +499,7 @@ def _validate_lunar_table(text: str, dates: list[str] | None) -> None:
     if dates is None:
         return
     actual = re.findall(
-        r"(?m)^\\|\\s*((?:19|20|21)\\d{2}-\\d{2}-\\d{2})\\s*\\|",
+        r"(?m)^\|\s*((?:19|20|21)\d{2}-\d{2}-\d{2})\s*\|",
         text,
     )
     if actual != dates:
