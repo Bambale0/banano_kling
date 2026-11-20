@@ -68,6 +68,134 @@ def audit_vk(path: Path) -> dict:
         return result
 
 
+def _status_counts(connection, table: str) -> dict[str, int]:
+    """Counts only: never export legacy task/payment rows or customer fields."""
+    if table not in ('generation_tasks', 'transactions'):
+        raise ValueError('Unsupported legacy status table')
+    rows = connection.execute(
+        'SELECT status, COUNT(*) FROM ' + table + ' GROUP BY status'
+    ).fetchall()
+    return {str(status) if status is not None else '<null>': int(count)
+            for status, count in rows}
+
+
+def _operational_snapshot(connection) -> dict:
+    """Read-only status/financial authority preflight, not a cutover approval.
+
+    Uses the same REPEATABLE READ, READ ONLY PostgreSQL transaction as the
+    existing opening balance report. No identity, amount or secret per user
+    is ever read here.
+    """
+    generations = _status_counts(connection, 'generation_tasks')
+    transactions = _status_counts(connection, 'transactions')
+    # Unrecognized statuses are considered unresolved, not silently accepted
+    # as settled. Terminal status names must follow the legacy DB contract.
+    terminal = frozenset(('completed', 'failed', 'cancelled', 'canceled', 'refunded'))
+    outstanding_gen = sum(v for k, v in generations.items() if k not in terminal)
+    outstanding_payments = sum(v for k, v in transactions.items() if k not in terminal)
+
+    # Provider and age are aggregate-only diagnostics; a pending legacy row is
+    # not evidence of payment, receivable, refund or provider settlement.
+    pending_by_provider = [
+        {
+            'provider': str(provider),
+            'pending': int(count),
+            'older_1d': int(older_1d),
+            'older_7d': int(older_7d),
+            'older_30d': int(older_30d),
+        }
+        for provider, count, older_1d, older_7d, older_30d in connection.execute(
+            """SELECT COALESCE(provider, '<unknown>'), COUNT(*),
+                      COUNT(*) FILTER (WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day'),
+                      COUNT(*) FILTER (WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '7 days'),
+                      COUNT(*) FILTER (WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '30 days')
+               FROM transactions WHERE status='pending'
+               GROUP BY COALESCE(provider, '<unknown>')
+               ORDER BY COUNT(*) DESC, COALESCE(provider, '<unknown>')"""
+        ).fetchall()
+    ]
+    unresolved_by_model = [
+        {
+            'status': str(status) if status is not None else '<null>',
+            'model': str(model) if model is not None else '<unknown>',
+            'count': int(count),
+            'older_1d': int(older_1d),
+        }
+        for status, model, count, older_1d in connection.execute(
+            """SELECT status, model, COUNT(*),
+                      COUNT(*) FILTER (WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '1 day')
+               FROM generation_tasks
+               WHERE status IS NULL OR status NOT IN
+                     ('completed', 'failed', 'cancelled', 'canceled', 'refunded')
+               GROUP BY status, model
+               ORDER BY COUNT(*) DESC, status, model"""
+        ).fetchall()
+    ]
+    # These fixed SELECTs run inside the same PostgreSQL snapshot, so an
+    # inconsistency is an error, not permission to ignore missing liabilities.
+    if sum(item['pending'] for item in pending_by_provider) != transactions.get('pending', 0):
+        raise RuntimeError('Inconsistent pending transaction status snapshot')
+    if sum(item['count'] for item in unresolved_by_model) != outstanding_gen:
+        raise RuntimeError('Inconsistent generation status snapshot')
+
+    def exists(name: str) -> bool:
+        return bool(connection.execute(
+            """SELECT EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema=current_schema() AND table_name=%s)""",
+            (name,),
+        ).fetchone()[0])
+
+    wallet_scopes = None
+    opening_claims_by_scope = None
+    if exists('shared_wallets') and exists('shared_wallet_opening_claims'):
+        wallet_scopes = {
+            str(scope): {
+                'wallets': int(count),
+                'available_units': str(available or 0),
+                'reserved_units': str(reserved or 0),
+            }
+            for scope, count, available, reserved in connection.execute(
+                """SELECT scope, COUNT(*), SUM(available_units), SUM(reserved_units)
+                   FROM shared_wallets GROUP BY scope"""
+            ).fetchall()
+        }
+        opening_claims_by_scope = {
+            str(scope): int(count)
+            for scope, count in connection.execute(
+                """SELECT scope, COUNT(*)
+                   FROM shared_wallet_opening_claims GROUP BY scope"""
+            ).fetchall()
+        }
+
+    # Even a zero-pending snapshot is NOT sufficient evidence to activate
+    # live wallets: legacy writers, event replay and opening approval remain
+    # external, independent release gates.
+    blockers = [
+        'legacy_writers_not_fenced',
+        'opening_snapshot_not_approved',
+        'legacy_event_watermarks_unverified',
+        'historical_refund_mapping_unverified',
+    ]
+    if outstanding_gen:
+        blockers.append('unresolved_generation_jobs')
+    if outstanding_payments:
+        blockers.append('unreconciled_legacy_transactions')
+    if wallet_scopes is None or opening_claims_by_scope is None:
+        blockers.append('shared_wallet_schema_unverified')
+    return {
+        'legacy_generation_status_counts': generations,
+        'legacy_transaction_status_counts': transactions,
+        'pending_transactions_by_provider_age': pending_by_provider,
+        'unresolved_generations_by_model_age': unresolved_by_model,
+        'nonterminal_generations': outstanding_gen,
+        'unreconciled_transaction_statuses': outstanding_payments,
+        'wallet_scopes': wallet_scopes,
+        'opening_claims_by_scope': opening_claims_by_scope,
+        'production_cutover_authorized': False,
+        'cutover_blockers': blockers,
+    }
+
+
 def audit_telegram(dsn: str) -> dict:
     import psycopg
 
@@ -82,9 +210,13 @@ def audit_telegram(dsn: str) -> dict:
         with connection.cursor(name='opening_balance_readiness') as cursor:
             cursor.execute('SELECT credits FROM users')
             readiness = _readiness(cursor)
+        operational = _operational_snapshot(connection)
+        if readiness['blocked']:
+            operational['cutover_blockers'].append('balance_precision_not_resolved')
         connection.rollback()
     return {'source': 'telegram', 'read_only': True, 'counts': counts, 'user_column_types': columns,
-            'authority_candidate': 'users.credits', 'opening_balance_readiness': readiness}
+            'authority_candidate': 'users.credits', 'opening_balance_readiness': readiness,
+            'operational_readiness': operational}
 
 
 def main() -> None:
