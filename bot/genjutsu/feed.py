@@ -168,7 +168,7 @@ async def redirect_legacy_repeat(callback, task) -> bool:
 
     from bot.database import get_profile_generation_card
     from bot.keyboards import _mini_app_url_with_start_param
-    from bot.miniapp_links import feed_start_param
+    from bot.miniapp_links import remix_start_param
 
     card = await get_profile_generation_card(task.id)
     recipe_id = card.get("genjutsu_recipe_id") if card else None
@@ -177,11 +177,11 @@ async def redirect_legacy_repeat(callback, task) -> bool:
         return True
     await callback.answer()
     await callback.message.answer(
-        "Посмотрите видео в ленте, затем нажмите «Повторить».",
+        "Откройте Genjutsu, добавьте свои исходники и рассчитайте стоимость повтора.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
             text="Повторить в Genjutsu",
             web_app=WebAppInfo(url=_mini_app_url_with_start_param(
-                feed_start_param(card["id"], card.get("author_referral_code"))
+                remix_start_param(card["id"], card.get("author_referral_code"))
             )),
         )]]),
     )
