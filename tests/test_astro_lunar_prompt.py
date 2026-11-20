@@ -33,6 +33,7 @@ def _facts(*, leap=True):
         "lunar_day_convention": "elapsed UTC 24h since new Moon; not moonrise-based",
         "calendar_place": {
             "name": "Berlin", "country_code": "DE", "place_id": 2950159,
+            "latitude": 52.52, "longitude": 13.405,
             "timezone": "Europe/Berlin", "source": "GeoNames",
         },
         "days": [
@@ -224,6 +225,7 @@ def test_report_input_uses_verified_geonames_city_without_birth_profile(monkeypa
     from bot.services import astro_lunar, astro_places
 
     selected = {"name": "Berlin", "country_code": "DE", "place_id": 2950159,
+                "latitude": 52.52, "longitude": 13.405,
                 "timezone": "Europe/Berlin"}
     monkeypatch.setattr(
         astro_places, "get_place", lambda place_id: selected
