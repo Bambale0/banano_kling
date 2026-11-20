@@ -389,11 +389,46 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
     op => !op.endsWith('_light') || bootstrap?.is_admin
       || op === primaryStep?.operation || verifiedOperations.includes(op),
   )
+  const modelFamily = primaryStep.operation.endsWith('_light') ? 'light' : 'legacy'
+  const lightAvailable = visibleOperations.some(op => op.endsWith('_light'))
+  const familyOperations = visibleOperations.filter(op =>
+    op.endsWith('_light') === (modelFamily === 'light'),
+  )
+  function selectModel(family: 'legacy' | 'light') {
+    if (family === modelFamily || recipe || !bootstrap || blocked) return
+    if (family === 'light' && !lightAvailable) return
+    const matching: Partial<Record<Operation, Operation>> = {
+      motion_transfer: 'motion_transfer_light',
+      object_swap: 'object_swap_light',
+      motion_transfer_light: 'motion_transfer',
+      object_swap_light: 'object_swap',
+    }
+    const candidates = visibleOperations.filter(op => op.endsWith('_light') === (family === 'light'))
+    const desired = matching[primaryStep.operation]
+    const operation = desired && candidates.includes(desired) ? desired : candidates[0]
+    if (!operation) return
+    const caps = bootstrap.catalog[operation]
+    const resolution = caps.resolutions.includes(primaryStep.resolution)
+      ? primaryStep.resolution : caps.resolutions[0]
+    patchStep(0, { operation, resolution, preset_id: null })
+  }
 
   return <section className="mx-auto min-w-0 w-full max-w-2xl space-y-5 overflow-x-clip pb-28" aria-label="Студия Genjutsu">
     <header className="sticky top-[max(0px,var(--miniapp-safe-top))] sm:top-0 z-20 flex min-w-0 items-center justify-between gap-3 border-b border-white/[0.06] bg-background/90 px-1 py-3 backdrop-blur-xl sm:px-2">
       <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span><span className="text-lg font-semibold tracking-tight">Genjutsu</span></div>
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="inline-flex h-7 items-center rounded-full border border-white/10 bg-white/[0.035] px-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Higgsfield</span>
+          <span className="text-lg font-semibold tracking-tight">Genjutsu</span>
+          <span className="mx-1 hidden h-5 w-px bg-white/20 sm:block" aria-hidden="true" />
+          <label className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/45 bg-amber-500/[0.07] px-2.5 py-1 text-xs font-medium text-amber-200">
+            <Layers3 className="h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+            <span className="shrink-0">Модель:</span>
+            <select aria-label="Модель Genjutsu" className="min-w-0 max-w-[136px] cursor-pointer bg-transparent font-semibold text-foreground outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:cursor-default" value={modelFamily} disabled={!bootstrap || blocked || Boolean(recipe) || tab !== 'editor'} onChange={e => selectModel(e.target.value as 'legacy' | 'light')}>
+              <option value="legacy">Genjutsu</option>
+              <option value="light" disabled={!lightAvailable}>Genjutsu Light</option>
+            </select>
+          </label>
+        </div>
         <p className="mt-1 truncate text-xs text-muted-foreground">Редактирование видео по референсам</p>
       </div>
       <Button className="shrink-0 rounded-full px-4" variant="ghost" aria-label="Закрыть студию" disabled={blocked} onClick={() => void action('close', async () => { if (plan.source_asset_id && bootstrap?.enabled) await saveCurrent(); onClose() })}>Закрыть</Button>
@@ -467,7 +502,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <p className="mt-1 text-sm text-muted-foreground">Выберите сценарий — остальные поля подстроятся автоматически.</p>
           </div>
           <div data-testid="genjutsu-operation-grid" className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3">
-            {visibleOperations.map(op => {
+            {familyOperations.map(op => {
               const copy = operationCopy[op]
               const Icon = copy.icon
               const active = primaryStep.operation === op
@@ -478,7 +513,7 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             })}
           </div>
           <p className="px-1 text-sm text-muted-foreground">{operationCopy[primaryStep.operation].description}</p>
-          <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{visibleOperations.map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
+          <label className="sr-only">Операция шага 1<select value={primaryStep.operation} onChange={e => patchStep(0, { operation: e.target.value as Operation, preset_id: null })}>{familyOperations.map(op => <option key={op} value={op}>{operationLabels[op]}</option>)}</select></label>
         </section>
 
         <details className="group rounded-[22px] border border-white/[0.06] bg-white/[0.02] px-4 py-3">
