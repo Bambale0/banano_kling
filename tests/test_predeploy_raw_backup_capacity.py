@@ -102,6 +102,27 @@ def test_raw_only_refuses_stale_archive_in_reused_backup_directory(tmp_path: Pat
     assert not (target / "bot-latest.db").exists()
 
 
+
+def test_predeploy_postgres_keeps_custom_dump_without_duplicate_archive(tmp_path: Path) -> None:
+    script, _, target, env = _prepare(tmp_path)
+    pg_dump = Path(env["PATH"].split(os.pathsep)[0]) / "pg_dump"
+    pg_dump.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "from pathlib import Path\n"
+        "args=sys.argv[1:]\n"
+        "Path(args[args.index('--file')+1]).write_bytes(b'PGDMP' + b'known-backup' * 100)\n",
+        encoding="utf-8",
+    )
+    pg_dump.chmod(0o755)
+    env["DATABASE_URL"] = "postgresql://test:synthetic@127.0.0.1:5432/test_db"
+    env["BACKUP_RAW_ONLY"] = "1"
+    result = _run(script, env)
+    assert result.returncode == 0, result.stderr
+    assert (target / "postgres-latest.dump").read_bytes().startswith(b"PGDMP")
+    assert not (target / "bot-latest.tar.gz").exists()
+
+
 def test_backend_deploy_explicitly_opts_in_without_skipping_backup() -> None:
     deploy = (Path(__file__).resolve().parents[1] / "scripts" / "deploy_backend_docker.sh").read_text()
     assert 'SEND_BACKUP_TO_ADMINS=0 BACKUP_RAW_ONLY=1' in deploy
