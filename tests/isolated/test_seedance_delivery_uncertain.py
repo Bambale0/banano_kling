@@ -60,6 +60,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             "os": __import__("os"), "MODEL_KEY": "seedance_2_5",
             "TelegramDeliveryUncertain": Uncertain,
             "TelegramDeliveryRetryable": Retryable,
+            "uncertain_retry_seconds": lambda task_id, attempt: 120,
             "telegram_delivery_retry_delay": lambda exc: exc.retry_after if isinstance(exc, Retryable) else None,
             "telegram_delivery_is_definitely_rejected": lambda exc: isinstance(exc, Rejected),
             "is_terminal_telegram_delivery_error": lambda exc: False,
@@ -98,6 +99,23 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         self.download.assert_not_awaited()
         self.bot.send_message.assert_not_awaited()
 
+    async def test_uncertain_retry_uploads_direct_file_in_both_seedance_flows(self):
+        for path, name in [
+            ("bot/handlers/seedance_25_public_release.py", "_public_send_results"),
+            ("bot/handlers/seedance_25_fullstack.py", "_send_seedance25_results"),
+        ]:
+            self.bot.send_video.reset_mock()
+            self.download.reset_mock()
+            fn = load_function(path, name, self.ns)
+            result = await fn(
+                {"bot": self.bot}, 1, "task", "https://example.test/result.mp4",
+                None, {"delivery_status": "uncertain"},
+            )
+            self.assertTrue(result)
+            self.download.assert_awaited_once()
+            self.bot.send_video.assert_awaited_once()
+            self.assertEqual(self.bot.send_video.await_args.kwargs["video"], "file")
+
     async def test_explicit_rejection_allows_downloaded_file(self):
         self.bot.send_video.side_effect = [Rejected("wrong file"), None]
         self.assertTrue(await self.run_delivery("bot/handlers/seedance_25_public_release.py", "_public_send_results"))
@@ -116,6 +134,18 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(Uncertain):
             await self.run_delivery("bot/handlers/seedance_25_public_release.py", "_public_send_results")
         self.assertEqual(self.bot.send_message.await_count, 1)
+
+    async def test_retry_policy_is_paced_deterministic_and_capped(self):
+        ns = {}
+        source = (ROOT / "bot/services/delivery_state.py").read_text()
+        exec(compile(source, "delivery_state.py", "exec"), ns)  # noqa: S102 - pure fixed repo module
+        delay_1 = ns["uncertain_retry_seconds"]("task-a", 1)
+        delay_2 = ns["uncertain_retry_seconds"]("task-a", 2)
+        delay_many = ns["uncertain_retry_seconds"]("task-a", 50)
+        self.assertEqual(delay_1, ns["uncertain_retry_seconds"]("task-a", 1))
+        self.assertGreaterEqual(delay_1, 10)
+        self.assertGreater(delay_2, delay_1)
+        self.assertLessEqual(delay_many, 3600)
 
     async def test_uncertain_is_not_automatically_retryable(self):
         ns = {}
@@ -194,6 +224,16 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.bot.send_message.await_count, 1)
             self.assertEqual(self.mark.call_args.args[:2], ("task", "delivered"))
 
+    async def test_tracker_retains_confirmed_primary_message_id(self):
+        message = types.SimpleNamespace(message_id=702)
+        state = {}
+        result = await self.ns["tracked_telegram_send"](
+            state, True, AsyncMock(return_value=message), 1,
+        )
+        self.assertIs(result, message)
+        self.assertTrue(state["_telegram_primary_delivered"])
+        self.assertEqual(state["_telegram_primary_message_id"], 702)
+
     async def test_tracker_clears_each_confirmed_rejection(self):
         for error in [Rejected("bad"), Retryable(75)]:
             progress = {}
@@ -226,7 +266,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
             else:
                 sys.modules["bot.database"] = old
 
-    async def test_dispatcher_stores_uncertain_and_does_not_requeue(self):
+    async def test_dispatcher_schedules_uncertain_for_later_retry(self):
         self.ns.update(asyncio=asyncio, SEEDANCE25_DELIVERY_TIMEOUT_SECONDS=1,
             _can_attempt_seedance25_result_delivery=AsyncMock(return_value=True),
             _claim_seedance25_delivery=AsyncMock(return_value=True),
@@ -236,6 +276,7 @@ class DeliveryTests(unittest.IsolatedAsyncioTestCase):
         fn = load_function("bot/handlers/seedance_25_fullstack.py", "_retry_seedance25_delivery", self.ns)
         await fn({"bot": self.bot}, {"task_id": "task", "telegram_id": 1}, {})
         self.assertEqual(self.mark.call_args.args[:2], ("task", "uncertain"))
+        self.assertEqual(self.mark.call_args.kwargs["retry_after_seconds"], 120)
 
 
 if __name__ == "__main__":
