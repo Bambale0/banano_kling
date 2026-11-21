@@ -81,7 +81,11 @@ async def start(request: web.Request) -> web.Response:
 
     await auth._ensure_tables()
     async with db_backend.connect() as db:
-        if not db_backend.is_postgres():
+        if db_backend.is_postgres():
+            # A browser can have only one active challenge even when two API
+            # workers receive /start concurrently. Serialize same-cookie writes.
+            await db.execute("SELECT pg_advisory_xact_lock(?)", (int(browser_hash[:15], 16),))
+        else:
             await db.execute("BEGIN IMMEDIATE")
         try:
             # Keep terminal challenges for a short audit window; then purge
