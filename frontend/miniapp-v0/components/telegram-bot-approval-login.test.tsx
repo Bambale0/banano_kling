@@ -86,7 +86,7 @@ test('cancel aborts browser polling and denies the pending request', async () =>
 test('invalid challenge response never opens an arbitrary URL or starts polling', async () => {
   global.fetch = jest.fn(async () => ({
     ok: true, json: async () => ({ ...syntheticApproval(), url: 'https://evil.example/phish' }),
-  })) as typeof fetch
+  })) as unknown as typeof fetch
 
   render(<TelegramBotApprovalLogin />)
   fireEvent.click(screen.getByRole('button', { name: 'Войти через Telegram' }))
