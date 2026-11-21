@@ -61,3 +61,29 @@ async def test_banned_browser_login_approval_is_still_blocked(monkeypatch):
     await main.AccessGuardMiddleware()(handler, _message("/start auth_" + "a" * 43), {})
     handler.assert_not_awaited()
     blocked.assert_awaited_once()
+
+
+def test_browser_approval_router_is_first_even_during_generation_fsm():
+    dispatcher = main.setup_dispatcher()
+    assert dispatcher.sub_routers[0].name == "telegram_browser_approval"
+
+
+@pytest.mark.asyncio
+async def test_approval_deep_link_does_not_reset_existing_telegram_fsm(monkeypatch):
+    from bot.handlers import common, telegram_browser_approval_handlers as handlers
+
+    user_created = AsyncMock()
+    marked_available = AsyncMock()
+    send = AsyncMock()
+    sync = AsyncMock()
+    monkeypatch.setattr(handlers, "get_or_create_user", user_created)
+    monkeypatch.setattr(handlers, "mark_telegram_chat_available", marked_available)
+    monkeypatch.setattr(handlers, "send_confirmation", send)
+    monkeypatch.setattr(common, "_sync_telegram_profile", sync)
+
+    message = _message("/start auth_" + "b" * 43)
+    await handlers.browser_login_start(message)
+    user_created.assert_awaited_once_with(88001337)
+    marked_available.assert_awaited_once_with(88001337)
+    send.assert_awaited_once_with(message, "b" * 43)
+    sync.assert_awaited_once()
