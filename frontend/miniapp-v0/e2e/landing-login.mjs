@@ -162,9 +162,11 @@ try {
       status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
     }))
     if (width === 390) {
-      // CI cannot open a real Telegram bot. Simulate the browser popup blocker,
-      // then approve the challenge server-side after seeing the matching code.
-      await page.addInitScript(() => { window.open = () => null })
+      // Telegram iOS WebView used to create an about:blank popup and strand
+      // the user there. Enforce direct navigation only on a real link click.
+      await page.addInitScript(() => {
+        window.open = () => { throw new Error('iOS about:blank popup regression') }
+      })
     }
     const response = await page.goto(origin + '/login' + (width === 390 ? '?startapp=test_ref&return_to=' + encodeURIComponent('/mini-app/?intent=topup&package_id=mini&provider=lava_card') : ''), {
       waitUntil: 'load',
@@ -190,8 +192,15 @@ try {
       const link = page.getByRole('link', { name: /Открыть Telegram/ })
       assert.equal(await link.getAttribute('href'),
         'https://t.me/neuromix_test_bot?start=auth_' + challenge)
+      assert.equal(await link.getAttribute('target'), null,
+        'Telegram iOS must use a direct user-initiated link, not a blank popup')
       assert.equal(approvalRequests.length, 1)
       assert.equal(approvalRequests[0].claimed, false)
+      // Simulate returning from the bot after the iOS webview unloaded.
+      // The browser-bound ticket must survive a same-tab reload.
+      await page.reload({ waitUntil: 'load' })
+      await page.getByText('492017', { exact: true }).waitFor()
+      assert.equal(approvalRequests.length, 1, 'resuming must not issue another challenge')
       approvalRequests[0].approved = true // simulated verified callback from the bot
       await page.waitForURL('**/mini-app/**')
       assert.equal(approvalRequests[0].claimed, true, 'claim must be consumed once')
