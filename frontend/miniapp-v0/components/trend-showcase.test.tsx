@@ -136,6 +136,26 @@ describe('Trend showcase S3 preview performance', () => {
   })
 
 
+  it('keeps the JPG poster visible when a compact trend MP4 stalls, pauses or fails', () => {
+    const compact = '/uploads/trend-previews/179526/abcdef1234567890abcdef12.mp4'
+    const poster = '/uploads/trend-previews/179526/abcdef1234567890abcdef12.jpg'
+    show(trend(9, compact, poster))
+    const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 9' })
+    const image = card.querySelector('img')
+    const video = card.querySelector('video')
+    expect(image?.getAttribute('src')).toContain(poster)
+    expect(video).toBeInTheDocument()
+    // The existing bug: an opaque video sits above the valid JPG before playback starts.
+    expect(video).toHaveClass('opacity-0')
+    fireEvent.playing(video!)
+    expect(video).toHaveClass('opacity-100')
+    fireEvent.pause(video!)
+    expect(video).toHaveClass('opacity-0')
+    fireEvent.error(video!)
+    expect(card.querySelector('video')).toBeNull()
+    expect(card.querySelector('img')).toBeInTheDocument()
+  })
+
   it('always uses same-origin poster even if a legacy API includes a signed URL', () => {
     const direct = 'https://s3.example.test/bucket/poster.jpg?X-Amz-Signature=temporary'
     const item = { ...trend(7, original, videoPoster), preview_poster_fast_url: direct }
