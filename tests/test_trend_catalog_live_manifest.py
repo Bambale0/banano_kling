@@ -1,9 +1,7 @@
 """Regression: video Trends have a durable, same-origin live MP4 without losing the full original."""
 
 import pytest
-
 from bot.services import trend_catalog_media_cache as media
-
 
 ORIGINAL = "https://tanyapp.chillcreative.ru/uploads/feed/clip.mp4"
 ALIAS = "https://neuromixbot.com/uploads/feed/clip.mp4"
