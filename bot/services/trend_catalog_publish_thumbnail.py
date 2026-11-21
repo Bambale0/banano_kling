@@ -61,7 +61,7 @@ async def ensure_published_trend_poster(prompt: Mapping[str, Any] | None) -> boo
                     return False
                 logger.info("Trend poster persisted after approval: trend_id=%s", trend_id)
                 return True
-    except (Exception) as exc:  # noqa: BLE001 -- approval is already durable
+    except Exception as exc:  # noqa: BLE001 -- approval is already durable
         logger.warning(
             "Trend poster generation failed after approval: trend_id=%s error=%s",
             trend_id, type(exc).__name__,
