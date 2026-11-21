@@ -8,6 +8,8 @@ export interface ShowcaseTrend extends PromptItem {
   badge?: 'new'
   badge_until?: string | null
   preview_poster_fast_url?: string | null
+  /** Muted 2–6s H.264 loop for visible cards; preview_url stays the full original. */
+  preview_video_url?: string | null
 }
 
 export interface ShowcaseCategory {

@@ -5672,6 +5672,11 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
         from bot.services.trend_poster_origin import register_public_trend_poster_route
 
         register_public_trend_poster_route(app)
+        from bot.services.trend_catalog_live_video import (
+            live_preview_reconciliation_ctx,
+        )
+
+        app.cleanup_ctx.append(live_preview_reconciliation_ctx)
 
         async def s3_upload_handler(request: web.Request) -> web.StreamResponse:
             relative = str(request.match_info.get("path") or "")

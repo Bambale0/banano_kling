@@ -7128,6 +7128,14 @@ async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
         )
 
         await ensure_published_trend_poster(approved)
+        # A full source is preserved; conversion of a muted grid loop must not
+        # hold up approval. The startup worker reconciles pending videos after
+        # restarts or temporary S3 errors.
+        from bot.services.trend_catalog_live_video import (
+            schedule_published_live_preview,
+        )
+
+        schedule_published_live_preview(approved)
     return approved
 
 
