@@ -106,6 +106,7 @@ jobs:
           lib/__tests__/personalization-errors.test.ts
           components/forms/image-generator-form-remix.test.tsx
           components/tabs/__tests__/feed-image-remix.test.tsx
+          components/__tests__/genjutsu-edit-result.test.tsx
 
       - name: Build static Mini App
         run: npm run build
@@ -122,4 +123,3 @@ jobs:
 
       - name: Check VK result chat delivery states
         run: E2E_APP_PATH=/ node e2e/vk-chat-delivery.mjs
-

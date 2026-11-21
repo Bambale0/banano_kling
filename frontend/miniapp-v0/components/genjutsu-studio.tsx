@@ -598,7 +598,28 @@ export function GenjutsuStudio({ initial = {}, onClose }: {
             <p className="text-xs text-muted-foreground">Резерв {step.reserved_credits} 🍌 · возврат {step.refunded_credits} 🍌{step.actual_credits !== null ? ` · расчёт ${step.actual_credits} 🍌` : ''}</p>
             {step.error_code && <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs"><p className="font-medium text-destructive">{stepFailure(step.error_code).title}</p><p className="mt-1 text-muted-foreground">{stepFailure(step.error_code).detail}</p></div>}
             <div className={compare ? 'grid gap-2 sm:grid-cols-2' : ''}>{compare && step.source_asset?.url && <div><p className="text-xs">Исходник</p><video src={step.source_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}{step.output_asset?.url && <div><p className="text-xs">Результат</p><video src={step.output_asset.url} controls playsInline preload="metadata" className="max-h-80 w-full rounded-xl bg-black" /></div>}</div>
-            {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => { const output = step.output_asset!; await newWork({ ...freshPlan(), source_asset_id: output.id }, output) })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
+            {step.output_asset?.url && <div className="flex flex-wrap gap-2"><a className="rounded-lg border border-border px-3 py-2 text-sm" href={`${step.output_asset.url}&download=1`} target="_blank" rel="noreferrer">Скачать оригинал</a><Button variant="outline" size="sm" disabled={blocked} onClick={() => void action('edit-result', async () => {
+              const output = step.output_asset!
+              // Reuse only the completed step (not the whole multi-step
+              // pipeline). Protected recipes never expose their hidden plan.
+              const previous = !run.private_recipe ? run.plan?.steps[step.ordinal] : undefined
+              const next: Plan = previous
+                ? {
+                    ...freshPlan(),
+                    source_asset_id: output.id,
+                    steps: [{ ...previous, references: previous.references.map(ref => ({ ...ref })) }],
+                    variants: run.plan?.variants ?? 1,
+                  }
+                : {
+                    ...freshPlan(),
+                    source_asset_id: output.id,
+                    // These two fields are already disclosed by run_view for
+                    // private recipes. Hidden prompts/references stay private.
+                    steps: [{ ...freshStep(), operation: step.spec.operation, resolution: step.spec.resolution }],
+                  }
+              await newWork(next, output)
+              if (previous) setNotice('Промпт, модель и референсы перенесены. Проверьте параметры перед расчётом.')
+            })}>Редактировать результат</Button><Button size="sm" variant="ghost" disabled={blocked} onClick={() => void action('redeliver', () => runAction('redeliver', step.id))}>Отправить ещё раз</Button></div>}
             <GenjutsuFeedPublisher key={run.id + ':' + step.id} run={run} step={step} disabled={blocked} />
             {step.delivery_status && <p className="text-xs text-muted-foreground">Telegram: {statusLabels[step.delivery_status] || step.delivery_status}. Файл доступен в этой работе независимо от чата.</p>}
             {step.status === 'awaiting_confirmation' && <Button disabled={blocked} onClick={() => void action('continue', () => runAction('continue', step.id))}>Продолжить этот шаг</Button>}
