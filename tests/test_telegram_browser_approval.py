@@ -14,6 +14,8 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from bot import database, telegram_browser_approval as approval, web_auth
+from bot import db as db_backend
+from bot import browser_auth
 
 ROOT = "/mini-app/api/web-auth/telegram-approval"
 ORIGIN = "https://neuromixbot.com"
@@ -35,6 +37,8 @@ def _callback(challenge: str, *, telegram_id: int, approve: bool = True):
 @pytest.fixture
 def approval_app(monkeypatch):
     monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", ORIGIN)
+    monkeypatch.setitem(browser_auth._BOT_USERNAME_CACHE, "value", "")
+    monkeypatch.setitem(browser_auth._BOT_USERNAME_CACHE, "until", 0.0)
     app = web.Application()
     app["bot"] = SimpleNamespace(get_me=AsyncMock(
         return_value=SimpleNamespace(username="neuromix_test_bot"),
@@ -121,7 +125,7 @@ async def test_browser_confirmed_telegram_login_uses_real_legacy_owner_and_is_on
         replay = await _claim(client, body["id"], cookie)
         assert replay.status == 409
 
-        async with database.db_backend.connect() as db:
+        async with db_backend.connect() as db:
             row = await (await db.execute(
                 "SELECT account_id FROM shared_account_identities "
                 "WHERE platform='telegram' AND external_id=?",
