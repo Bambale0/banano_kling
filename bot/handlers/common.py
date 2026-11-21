@@ -3793,6 +3793,14 @@ async def check_required_subscription(callback: types.CallbackQuery, state: FSMC
     await _safe_callback_answer(callback, "✅ Подписка подтверждена")
 
 
+@router.callback_query(F.data.startswith("wba:"))
+async def telegram_browser_auth_decision(callback: types.CallbackQuery):
+    """Accept web login only from an authenticated Telegram callback sender."""
+    from bot.telegram_browser_approval import decide
+
+    await decide(callback)
+
+
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start"""
@@ -3805,8 +3813,19 @@ async def cmd_start(message: types.Message, state: FSMContext):
         "Start command received: user_id=%s username=%s args=%s",
         getattr(message.from_user, "id", None),
         getattr(message.from_user, "username", None),
-        args,
+        ["<browser-login>"] if args and args[0].startswith("auth_") else args,
     )
+
+    if args and args[0].startswith("auth_"):
+        # Handle the opaque one-time browser challenge before referral parsing
+        # and ordinary /start navigation. Never print the raw token in logs.
+        from bot.telegram_browser_approval import send_confirmation
+
+        await get_or_create_user(message.from_user.id)
+        await mark_telegram_chat_available(message.from_user.id)
+        await _sync_telegram_profile(message.from_user)
+        await send_confirmation(message, args[0][5:])
+        return
 
     # Определяем реферальный код из любого типа deep link (единая функция)
     from bot.services.referral_service import referral_code_from_start_param
