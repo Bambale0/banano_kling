@@ -156,6 +156,28 @@ describe('Trend showcase S3 preview performance', () => {
     expect(card.querySelector('img')).toBeInTheDocument()
   })
 
+  it('animates only the durable short MP4 and opens the full original in the detail dialog', () => {
+    const item: ShowcaseTrend = {
+      ...trend(12, original, videoPoster),
+      preview_video_url: '/uploads/trend-previews/live/' + 'a'.repeat(32) + '.mp4',
+    }
+    const { container } = show(item)
+    const card = screen.getByRole('button', { name: 'Открыть тренд Тестовый тренд 12' })
+    const live = card.querySelector('video')
+    expect(live).toBeInTheDocument()
+    expect(live?.getAttribute('src')).toContain('/uploads/trend-previews/live/')
+    expect(live?.getAttribute('src')).not.toContain('/uploads/feed/original.mp4')
+    expect(live).toHaveClass('opacity-0')
+    fireEvent.playing(live!)
+    expect(live).toHaveClass('opacity-100')
+    fireEvent.error(live!)
+    expect(card.querySelector('img')?.getAttribute('src')).toContain(videoPoster)
+    fireEvent.click(card)
+    expect(screen.getByRole('dialog').querySelector('video')?.getAttribute('src'))
+      .toContain('/uploads/feed/original.mp4#t=0.001')
+    expect(container.querySelectorAll('video').length).toBeGreaterThan(0)
+  })
+
   it('always uses same-origin poster even if a legacy API includes a signed URL', () => {
     const direct = 'https://s3.example.test/bucket/poster.jpg?X-Amz-Signature=temporary'
     const item = { ...trend(7, original, videoPoster), preview_poster_fast_url: direct }
