@@ -10,7 +10,7 @@ import hashlib
 import logging
 import re
 import time
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -21,7 +21,7 @@ from bot.payment_utils import total_package_credits
 from bot.services.lava_service import LavaProviderUnavailable, lava_service
 from bot.services.preset_manager import preset_manager
 from bot.shared_accounts.schema import ensure_schema
-from bot.shared_accounts.wallet import WalletService
+from bot.shared_accounts.wallet import WalletService, format_units
 
 logger = logging.getLogger(__name__)
 _KEY = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -491,17 +491,71 @@ async def wallet_balance(request: web.Request) -> web.Response:
     switched off, so an incident rollback never hides customer liabilities.
     No raw journal entries or cross-account identity metadata are returned.
     """
-    from bot.shared_accounts.store import linked_platforms
+    from bot.shared_accounts.store import linked_platforms, linked_telegram_id
     from bot.web_auth import _json, _session_account
 
     account = await _session_account(request)
     if not account:
         return _json({"ok": False, "error": "session_required"}, 401)
-    if await linked_platforms(account):
+    platforms = await linked_platforms(account)
+    if platforms:
+        if "telegram" not in platforms:
+            return _json({
+                "ok": False, "code": "FINANCIAL_CUTOVER_REQUIRED",
+                "error": "Баланс этой платформы пока не подключён к веб-кабинету.",
+            }, 409)
+        # This is a read-only projection of the EXISTING Telegram authority,
+        # not a copied opening credit in the independent shared wallet.
+        # Legacy generation, payment, refund and bonus writers keep running.
+        try:
+            telegram_id = await linked_telegram_id(account)
+            if telegram_id is None:
+                return _json({"ok": False, "code": "balance_unavailable"}, 503)
+            async with db_backend.connect() as db:
+                row = await (await db.execute(
+                    """SELECT u.credits,
+                              COALESCE(w.available_units, 0),
+                              COALESCE(w.reserved_units, 0)
+                       FROM users u LEFT JOIN shared_wallets w
+                         ON w.scope='live' AND w.account_id=?
+                       WHERE u.telegram_id=? LIMIT 1""",
+                    (account, telegram_id),
+                )).fetchone()
+            # The user may unlink or revoke their browser session while DB
+            # I/O runs. Revalidate BEFORE returning financial information.
+            if await _session_account(request) != account:
+                return _json({"ok": False, "error": "session_required"}, 401)
+            if await linked_telegram_id(account) != telegram_id:
+                return _json({"ok": False, "code": "identity_changed"}, 403)
+            if not row:
+                return _json({"ok": False, "code": "balance_unavailable"}, 503)
+            raw = Decimal(str(row[0]))
+            if (not raw.is_finite() or raw < 0
+                    or raw > Decimal("922337203685477.5807")):
+                return _json({"ok": False, "code": "balance_unavailable"}, 503)
+            # Four places are presentation-only. Never overwrite, import or
+            # round users.credits; legacy float residue requires cutover audit.
+            shown = raw.quantize(Decimal("0.0001"), rounding=ROUND_HALF_EVEN)
+        except (InvalidOperation, ValueError, TypeError):
+            return _json({"ok": False, "code": "balance_unavailable"}, 503)
+        except Exception:
+            logger.exception("web_linked_legacy_balance_read_failed")
+            return _json({"ok": False, "code": "balance_unavailable"}, 503)
+        # Money from a formerly independent website account may survive a
+        # verified account link. Never silently hide it, add it to Telegram's
+        # spendable funds or create a second opening credit.
+        web_available, web_reserved = int(row[1]), int(row[2])
+        held_web_balance = (
+            {"available": format_units(web_available),
+             "reserved": format_units(web_reserved)}
+            if web_available or web_reserved else None
+        )
         return _json({
-            "ok": False, "code": "FINANCIAL_CUTOVER_REQUIRED",
-            "error": "Баланс Telegram доступен только в привязанной студии.",
-        }, 409)
+            "ok": True, "scope": "telegram_legacy",
+            "balance": {"available": f"{shown:.4f}", "reserved": None, "revision": None},
+            "precision_review": raw != shown,
+            "held_web_balance": held_web_balance,
+        })
     try:
         snapshot = await WalletService("live").snapshot(account)
     except Exception:
