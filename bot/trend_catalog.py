@@ -140,9 +140,13 @@ def _card(row: Any, *, tariff: str, is_admin: bool = False) -> dict[str, Any]:
     public['vk_native_image_repeat_supported'] = supports_native_vk_image_trend(priced)
     public['vk_native_video_repeat_supported'] = supports_native_vk_video_trend(priced)
     # Always use the same public serializer, even for an administrative list.
-    media = cached_trend_preview_assets(public.get("preview_url"))
-    public["preview_url"] = media["preview_url"]
+    # Public card retains the original URL for full-view and repeat workflows.
+    # Legacy local compact copies are used only for the muted grid animation.
+    source_url = public.get("preview_url")
+    media = cached_trend_preview_assets(source_url)
     public["preview_poster_url"] = media["preview_poster_url"]
+    if media["preview_url"] and media["preview_url"] != source_url:
+        public["preview_video_url"] = media["preview_url"]
     # sqlite3.Row.__contains__ checks VALUES, not keys: use column names explicitly.
     columns = set(row.keys())
     badge = str(row["showcase_badge"] or "") if "showcase_badge" in columns else ""
