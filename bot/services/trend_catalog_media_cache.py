@@ -183,5 +183,7 @@ async def enrich_cards(cards: list[dict]) -> None:
         if key and not card.get("preview_poster_url") and key in by_key:
             card["preview_poster_url"] = by_key[key]
         # Keep preview_url untouched: dialogs/repeats must open the full source.
-        if key and key in live and not card.get("preview_video_url"):
+        # A durable same-origin live clip supersedes legacy local previews
+        # which still redirect to S3 and can stall in Telegram WebView.
+        if key and key in live:
             card["preview_video_url"] = live[key]
