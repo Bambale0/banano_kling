@@ -1,4 +1,5 @@
 """Regression: video Trends have a durable, same-origin live MP4 without losing the full original."""
+
 import pytest
 
 from bot.services import trend_catalog_media_cache as media
