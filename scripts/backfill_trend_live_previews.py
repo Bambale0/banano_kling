@@ -30,7 +30,7 @@ async def run(*, limit: int = 40, execute: bool = False) -> dict[str, int]:
     async with db_backend.connect() as conn:
         rows = await (await conn.execute(
             """SELECT id, preview_url FROM user_prompts
-               WHERE status = 'approved' AND is_public = 1
+               WHERE status = 'approved' AND is_public = TRUE
                  AND category = 'video'
                  AND LOWER(COALESCE(tags, '')) LIKE '%"trend"%'
                ORDER BY id DESC LIMIT 500"""
