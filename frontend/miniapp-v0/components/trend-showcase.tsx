@@ -48,9 +48,13 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   // some browser networks never complete requests to that endpoint.
   const activePoster = poster && !posterFailed ? poster : ''
   const preview = trend.preview_url ? normalizeMiniAppMediaUrl(trend.preview_url) : ''
-  // Only compact, pre-encoded preview MP4s may autoplay in a scrolling grid.
-  // A large original video is fetched only when the user explicitly opens it.
-  const canAutoPlay = video && Boolean(poster) && /\/uploads\/trend-previews\//.test(preview)
+  // Only a compact, pre-encoded MP4 may autoplay in the grid.
+  // Keep preview_url as the full original for the detail dialog and repeats.
+  const livePreview = trend.preview_video_url
+    ? normalizeMiniAppMediaUrl(trend.preview_video_url)
+    : (/\/uploads\/trend-previews\//.test(preview) ? preview : '')
+  const canAutoPlay = video && Boolean(poster) && Boolean(livePreview)
+    && /\/uploads\/trend-previews\//.test(livePreview)
 
   useEffect(() => {
     setPosterFailed(false)
