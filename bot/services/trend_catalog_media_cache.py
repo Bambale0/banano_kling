@@ -34,7 +34,7 @@ _LIVE_TABLE = """
         updated_at BIGINT NOT NULL
     )
 """
-_LIVE_OUTPUT_RE = re.compile(r"/uploads/trend-previews/live/[a-f0-9]{32}\\.mp4")
+_LIVE_OUTPUT_RE = re.compile(r"/uploads/trend-previews/live/[a-f0-9]{32}\.mp4")
 _VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
 
 
