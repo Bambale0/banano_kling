@@ -61,6 +61,17 @@ _DDL = (
         expires_at_epoch BIGINT NOT NULL)""",
     """CREATE INDEX IF NOT EXISTS web_auth_flows_limits
        ON web_auth_flows(provider, subject, created_at_epoch)""",
+    """CREATE TABLE IF NOT EXISTS web_auth_telegram_approvals (
+        request_id TEXT PRIMARY KEY,
+        challenge_hash TEXT UNIQUE NOT NULL,
+        browser_hash TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('pending','approved','denied','expired','consumed')),
+        confirm_code TEXT NOT NULL,
+        telegram_id BIGINT,
+        created_at_epoch BIGINT NOT NULL,
+        expires_at_epoch BIGINT NOT NULL)""",
+    """CREATE INDEX IF NOT EXISTS web_auth_telegram_approvals_browser
+       ON web_auth_telegram_approvals(browser_hash, created_at_epoch)""",
 )
 
 
@@ -1001,6 +1012,13 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     app.router.add_post(root + "/email/start", email_start)
     app.router.add_post(root + "/email/verify", email_verify)
     app.router.add_post(root + "/telegram", telegram_login)
+    from bot import telegram_browser_approval
+
+    approval = root + "/telegram-approval"
+    app.router.add_post(approval + "/start", telegram_browser_approval.start)
+    app.router.add_get(approval + "/status", telegram_browser_approval.status)
+    app.router.add_post(approval + "/claim", telegram_browser_approval.claim)
+    app.router.add_post(approval + "/cancel", telegram_browser_approval.cancel)
     app.router.add_post(root + "/native-session", native_telegram_session)
     app.router.add_post(root + "/logout", logout)
     # Independent website finance is dark until both server-owned paid-flow
