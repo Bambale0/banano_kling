@@ -16,7 +16,9 @@ async def test_durable_live_preview_preserves_original_and_poster(isolated_datab
     await media.record_live_preview(ORIGINAL, LIVE)
     assert await media.cached_live_previews([ALIAS]) == {media.source_key(ALIAS): LIVE}
     cards = [
-        {"id": 7, "preview_url": ALIAS, "category": "video", "preview_poster_url": None},
+        {"id": 7, "preview_url": ALIAS, "category": "video",
+         "preview_poster_url": None,
+         "preview_video_url": "/uploads/trend-previews/179502/old-s3-redirect.mp4"},
         {"id": 8, "preview_url": "https://example.net/private.mp4", "category": "video", "preview_poster_url": None},
     ]
     await media.enrich_cards(cards)
