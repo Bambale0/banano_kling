@@ -3804,11 +3804,11 @@ async def telegram_browser_auth_decision(callback: types.CallbackQuery):
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     """Обработчик команды /start"""
-    # /start всегда прерывает текущий сценарий/FSM и возвращает в главное меню
-    await state.clear()
-
     # Извлекаем аргументы deep linking
-    args = message.text.split()[1:] if len(message.text.split()) > 1 else []
+    args = message.text.split()[1:] if message.text and len(message.text.split()) > 1 else []
+    # Website sign-in is not a navigation command: preserve any generation FSM.
+    if not (args and args[0].startswith("auth_")):
+        await state.clear()
     logger.info(
         "Start command received: user_id=%s username=%s args=%s",
         getattr(message.from_user, "id", None),
