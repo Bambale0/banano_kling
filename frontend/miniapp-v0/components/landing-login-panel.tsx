@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { NoiseTexture } from '@/components/magicui/noise-texture'
 import { getInitData } from '@/lib/api'
+import { TelegramBotApprovalLogin } from '@/components/telegram-bot-approval-login'
 import { isBrowserPaymentSession, safePaymentReturnTo } from '@/lib/web-payments'
 
 type TelegramLoginUser = {
@@ -603,6 +604,28 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
 
 export function LoginPanel() {
   const [webAuthenticated, setWebAuthenticated] = useState(false)
+  const [telegramBackupOpen, setTelegramBackupOpen] = useState(false)
+
+  useEffect(() => {
+    // Session restoration must run for the entire login page, not only the
+    // optional OIDC fallback. A paid browser return with signed initData must
+    // continue without forcing another Telegram approval.
+    const query = new URLSearchParams(window.location.search)
+    const hash = new URLSearchParams(window.location.hash.slice(1))
+    const initData = getInitData()
+    const session = new URLSearchParams(initData)
+    const age = Date.now() / 1000 - Number(session.get('auth_date'))
+    if (isBrowserPaymentSession() && age >= 0 && age < 86400) {
+      window.location.replace(studioUrlWithSession(initData))
+      return
+    }
+    // Native Telegram launches also bypass the independent website login.
+    if (['tgWebAppData', 'tgWebAppVersion', 'tgWebAppPlatform'].some(
+      key => query.has(key) || hash.has(key)
+    )) {
+      window.location.replace('/mini-app/' + window.location.search + window.location.hash)
+    }
+  }, [])
   return (
     <main className="neuromix-login min-h-svh">
       <NoiseTexture className="login-noise" />
@@ -646,7 +669,15 @@ export function LoginPanel() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6 px-6 pb-8 sm:px-9 sm:pb-9">
-            {!webAuthenticated ? <TelegramOIDCLogin /> : null}
+            {!webAuthenticated ? <>
+              <TelegramBotApprovalLogin />
+              <button type="button" className="w-full text-center text-xs text-[#dbb76d] underline underline-offset-4"
+                aria-expanded={telegramBackupOpen}
+                onClick={() => setTelegramBackupOpen(value => !value)}>
+                {telegramBackupOpen ? 'Скрыть резервный вход Telegram' : 'Другой способ входа через Telegram'}
+              </button>
+              {telegramBackupOpen ? <TelegramOIDCLogin /> : null}
+            </> : null}
             <YandexWebLogin onSessionDetected={setWebAuthenticated} />
             <div className="flex items-start gap-3 border-t border-[#998054]/30 pt-5">
               <ShieldCheck aria-hidden="true" className="mt-0.5 size-5 shrink-0 text-[#e5b25c]" />

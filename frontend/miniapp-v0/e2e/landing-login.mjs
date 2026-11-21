@@ -9,6 +9,11 @@ const root = resolve(process.cwd(), 'out')
 const artwork = resolve(process.cwd(), '../../web/landing/grunge-mobile-art-v1.webp')
 const landingHtml = resolve(process.cwd(), '../../web/landing/index.html')
 const posts = []
+const approvalRequests = []
+const browserCookie = 'nm_tg_approval_browser=ci-browser-bind'
+const sessionCookie = 'nm_web_session=ci-verified-session'
+const challenge = 'b'.repeat(43)
+const requestId = 'a'.repeat(32)
 const initData = 'user=%7B%22id%22%3A123%7D&auth_date=123456&hash=browser_mock'
 const webstudioInitData = new URLSearchParams({ query_id: 'webstudio_verified-session-abcdef123456', user: JSON.stringify({ id: 123 }), auth_date: '123456', hash: 'signed-webstudio-test' }).toString()
 
@@ -21,6 +26,51 @@ function json(res, status, payload) {
 const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url || '/', 'http://127.0.0.1').pathname
+    if (path === '/mini-app/api/web-auth/telegram-approval/start' && req.method === 'POST') {
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString('utf8')), {})
+      assert.equal(req.headers.origin, 'http://127.0.0.1:' + server.address().port)
+      const ticket = { id: requestId, approved: false, claimed: false }
+      approvalRequests.push(ticket)
+      res.setHeader('Set-Cookie', browserCookie + '; HttpOnly; SameSite=Lax; Path=/mini-app/api/web-auth/telegram-approval')
+      json(res, 200, { ok: true, id: ticket.id, expires_in: 300,
+        confirmation_code: '492017',
+        url: 'https://t.me/neuromix_test_bot?start=auth_' + challenge })
+      return
+    }
+    if (path === '/mini-app/api/web-auth/telegram-approval/status') {
+      const id = new URL(req.url || '/', 'http://127.0.0.1').searchParams.get('id')
+      assert.equal(id, requestId)
+      assert.ok((req.headers.cookie || '').includes(browserCookie), 'approval status must require initiating browser cookie')
+      const current = approvalRequests.at(-1)
+      json(res, 200, { ok: true, status: current?.approved ? 'approved' : 'pending' })
+      return
+    }
+    if (path === '/mini-app/api/web-auth/telegram-approval/claim' && req.method === 'POST') {
+      assert.ok((req.headers.cookie || '').includes(browserCookie), 'approval claim must require initiating browser cookie')
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString('utf8')), { id: requestId })
+      const current = approvalRequests.at(-1)
+      assert.ok(current?.approved && !current?.claimed, 'claim requires a single confirmed Telegram challenge')
+      current.claimed = true
+      res.setHeader('Set-Cookie', sessionCookie + '; HttpOnly; SameSite=Lax; Path=/')
+      json(res, 200, { ok: true, status: 'authenticated' })
+      return
+    }
+    if (path === '/mini-app/api/web-auth/config') {
+      const authenticated = (req.headers.cookie || '').includes(sessionCookie)
+      json(res, 200, { ok: true, authenticated, studio_ready: authenticated,
+        providers: { yandex: false, google: false, email: false } })
+      return
+    }
+    if (path === '/mini-app/api/web-auth/studio' && req.method === 'POST') {
+      assert.ok((req.headers.cookie || '').includes(sessionCookie),
+        'studio bridge must require authenticated web session')
+      json(res, 200, { ok: true, init_data: initData })
+      return
+    }
     if (path === '/mini-app/api/browser-auth/config') {
       json(res, 200, { ok: true, bot_username: 'ExampleBot', oidc_client_id: '123456', oidc_nonce: 'ci-test-nonce-1234567890123456789012' })
       return
@@ -111,12 +161,16 @@ try {
     await page.route('**/telegram-widget.js?22', route => route.fulfill({
       status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
     }))
+    if (width === 390) {
+      // CI cannot open a real Telegram bot. Simulate the browser popup blocker,
+      // then approve the challenge server-side after seeing the matching code.
+      await page.addInitScript(() => { window.open = () => null })
+    }
     const response = await page.goto(origin + '/login' + (width === 390 ? '?startapp=test_ref&return_to=' + encodeURIComponent('/mini-app/?intent=topup&package_id=mini&provider=lava_card') : ''), {
       waitUntil: 'load',
     })
     assert.equal(response.status(), 200)
-    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
-    await page.getByRole('button', { name: 'Продолжить через Telegram' }).waitFor({ state: 'visible' })
+    await page.getByRole('button', { name: 'Войти через Telegram' }).waitFor({ state: 'visible' })
     const metrics = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
       headings: document.querySelectorAll('#login-page-title').length,
@@ -131,22 +185,55 @@ try {
     assert.equal(await page.getByText('Яндекс ID', { exact: true }).count(), 0, 'inactive provider must not be advertised')
     assert.deepEqual(errors, [], 'React/Next hydration errors')
     if (width === 390) {
-      await page.getByRole('button', { name: 'Продолжить через Telegram' }).click()
+      await page.getByRole('button', { name: 'Войти через Telegram' }).click()
+      await page.getByText('492017', { exact: true }).waitFor()
+      const link = page.getByRole('link', { name: /Открыть Telegram/ })
+      assert.equal(await link.getAttribute('href'),
+        'https://t.me/neuromix_test_bot?start=auth_' + challenge)
+      assert.equal(approvalRequests.length, 1)
+      assert.equal(approvalRequests[0].claimed, false)
+      approvalRequests[0].approved = true // simulated verified callback from the bot
       await page.waitForURL('**/mini-app/**')
+      assert.equal(approvalRequests[0].claimed, true, 'claim must be consumed once')
       assert.ok(page.url().includes('startapp=test_ref'), 'startapp survives sign-in')
       assert.equal(new URL(page.url()).searchParams.get('intent'), 'topup')
       assert.equal(new URL(page.url()).searchParams.get('package_id'), 'mini')
       assert.equal(new URL(page.url()).searchParams.get('provider'), 'lava_card')
-      assert.ok(page.url().includes('#tgWebAppData='), 'signed initData goes in URL fragment')
-      assert.equal(posts.length, 1, 'a single signed login POST must be sent')
-      assert.equal(posts[0].id_token, 'ci-id-token')
-      assert.equal(oidcOptions?.scope?.join(','), 'profile')
-      assert.equal(oidcOptions?.nonce, 'ci-test-nonce-1234567890123456789012')
+      assert.ok(page.url().includes('#tgWebAppData='), 'verified studio initData goes in URL fragment')
+      assert.equal(posts.length, 0, 'primary bot approval must not call Telegram OIDC')
+      assert.equal(oidcOptions, null, 'OIDC popup must not start for primary login')
     }
     await page.close()
     console.log(`login/shadcn [${width}]: OK`)
   }
 
+
+  // The old official OIDC login remains available as an explicit backup.
+  const backupOidc = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  await backupOidc.exposeFunction('__ciTrackOidcOptions', options => { posts.push({ oidc_options: options }) })
+  await backupOidc.route('**/telegram-login.js', route => route.fulfill({
+    status: 200, contentType: 'text/javascript', body: `
+      window.Telegram = window.Telegram || {};
+      window.Telegram.Login = {
+        auth(options, callback) {
+          window.__ciTrackOidcOptions(options);
+          callback({ id_token: 'ci-id-token' });
+        }
+      };
+    `,
+  }))
+  await backupOidc.goto(origin + '/login')
+  await backupOidc.getByRole('button', { name: 'Другой способ входа через Telegram' }).click()
+  const fallback = backupOidc.getByRole('button', { name: 'Продолжить через Telegram' })
+  await fallback.waitFor({ state: 'visible' })
+  await fallback.click()
+  await backupOidc.waitForURL('**/mini-app/**')
+  assert.ok(posts.some(item => item.id_token === 'ci-id-token'), 'OIDC backup still posts signed token')
+  const backupOptions = posts.find(item => item.oidc_options)?.oidc_options
+  assert.equal(backupOptions?.scope?.join(','), 'profile')
+  assert.equal(backupOptions?.nonce, 'ci-test-nonce-1234567890123456789012')
+  await backupOidc.close()
+  console.log('login/explicit Telegram OIDC backup: OK')
 
   // Yandex is surfaced only by server configuration, never as an inert tile.
   const yandexGuest = await browser.newPage({ viewport: { width: 390, height: 844 } })
@@ -501,6 +588,7 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
+  await failed.getByRole('button', { name: 'Другой способ входа через Telegram' }).click()
   await failed.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
@@ -516,6 +604,7 @@ try {
     status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
   }))
   await withoutOidc.goto(origin + '/login')
+  await withoutOidc.getByRole('button', { name: 'Другой способ входа через Telegram' }).click()
   await withoutOidc.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await withoutOidc.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await withoutOidc.close()
