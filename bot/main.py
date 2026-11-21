@@ -647,6 +647,13 @@ class AccessGuardMiddleware(BaseMiddleware):
         is_subscription_check_callback = (
             self._callback_data(event) == SUBSCRIPTION_CHECK_CALLBACK
         )
+        command_parts = self._message_text(event).strip().split(maxsplit=1)
+        is_browser_approval = self._callback_data(event).startswith("wba:") or (
+            isinstance(event, types.Message)
+            and len(command_parts) == 2
+            and command_parts[0].split("@", 1)[0].lower() == "/start"
+            and command_parts[1].startswith("auth_")
+        )
         is_admin_management_event = is_admin_user and (
             self._is_admin_management_event(event)
             or await self._is_admin_test_state(data)
@@ -663,6 +670,11 @@ class AccessGuardMiddleware(BaseMiddleware):
                 )
                 return None
             if is_subscription_check_callback:
+                return await handler(event, data)
+            # Authentication is a narrow identity-proof action, not product use.
+            # Keep bans and maintenance enforcement, but subscription must not
+            # make the website login button unusable for a new Telegram user.
+            if is_browser_approval:
                 return await handler(event, data)
             if is_admin_management_event:
                 return await handler(event, data)
