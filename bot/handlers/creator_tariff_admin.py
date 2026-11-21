@@ -45,6 +45,8 @@ MODEL_LABELS = {
     "genjutsu/motion_transfer": "Genjutsu · Motion Transfer",
     "genjutsu/object_swap": "Genjutsu · Object Swap",
     "genjutsu/restyle": "Genjutsu · Restyle",
+    "genjutsu/motion_transfer_light": "Genjutsu Light · Motion Transfer",
+    "genjutsu/object_swap_light": "Genjutsu Light · Object Swap",
 }
 
 
@@ -185,6 +187,7 @@ async def _home(event, state, notice=""):
     await _present(event, text, [
         [_button("👤 Найти пользователя по ID", _cb("lookup", token))],
         [_button("💰 Цены креатора", _cb("prices", token))],
+        [_button("🎬 Genjutsu · цены Creator", _cb("genjutsu_prices", token))],
         [_button("⏸ Выключить…" if status["enabled"] else "▶️ Включить…", _cb("toggle", token, int(not status["enabled"])))],
         [_button("🔙 Разделы цен", "admin_prices")],
     ])
@@ -226,17 +229,26 @@ async def _member_view(event, state, telegram_id, notice=""):
     ])
 
 
-async def _prices(event, state, notice=""):
+async def _prices(event, state, notice="", *, group="all"):
     status = creator_tariff_status()
     raw = _raw_tariff()
-    token = await _screen(state, creator_config_fingerprint=_fingerprint(raw))
-    lines = [
-        "💰 <b>Цены креатора</b>",
-        "Видео — 🍌/сек, входящие видеосекунды + результат, без ×2; фото — 🍌/изображение. Незаданные дополнительные ставки используют обычную цену.",
-        "",
-    ]
+    token = await _screen(state, creator_config_fingerprint=_fingerprint(raw), creator_price_group=group)
+    if group == "genjutsu":
+        lines = [
+            "🎬 <b>Genjutsu · цены Creator</b>",
+            "Отдельные ставки 🍌/сек для Genjutsu и Genjutsu Light. Незаданные цены используют обычный тариф; публичный доступ и базовые цены не меняются.",
+            "",
+        ]
+    else:
+        lines = [
+            "💰 <b>Цены креатора</b>",
+            "Видео — 🍌/сек, входящие видеосекунды + результат, без ×2; фото — 🍌/изображение. Незаданные дополнительные ставки используют обычную цену.",
+            "",
+        ]
     rows = []
     for model, qualities in _editable_qualities(status).items():
+        if group == "genjutsu" and not model.startswith("genjutsu/"):
+            continue
         if model.startswith('genjutsu/'):
             rates = status.get('genjutsu', {}).get('prices', {}).get(model.split('/', 1)[1], {})
         elif _is_image_model(model):
@@ -327,6 +339,8 @@ async def _handle_callback(callback, state, data, parts):
         return await state.update_data(creator_prompt_id=getattr(prompt, "message_id", 0))
     if action == "prices" and not args:
         return await _prices(callback, state)
+    if action == "genjutsu_prices" and not args:
+        return await _prices(callback, state, group="genjutsu")
     if action == "view" and len(args) == 1 and args[0].isdigit():
         target = int(args[0])
         if target != data.get("creator_target"):
@@ -359,7 +373,9 @@ async def _handle_callback(callback, state, data, parts):
         expected = data.get("creator_config_fingerprint")
         if expected != _fingerprint(_raw_tariff()):
             raise CreatorTariffConfigConflict("Цены уже изменились. Откройте раздел заново.")
-        token = await _screen(state, creator_model=model, creator_quality=quality, creator_config_fingerprint=expected)
+        token = await _screen(state, creator_model=model, creator_quality=quality,
+                              creator_config_fingerprint=expected,
+                              creator_price_group=data.get("creator_price_group", "all"))
         await state.set_state(CreatorTariffAdminStates.price)
         unit = (
             "🍌/референс" if model == "seedream_55" and quality == "ref"
@@ -447,5 +463,5 @@ async def creator_tariff_message(message: types.Message, state: FSMContext):
             return await message.answer(str(exc))
         except Exception:
             logger.exception("Creator tariff price save failed actor=%s", message.from_user.id)
-            return await _prices(message, state, "Не удалось завершить сохранение. Проверьте текущие цены перед повтором.")
-        await _prices(message, state, "Цена сохранена. Остальные ставки не изменены.")
+            return await _prices(message, state, "Не удалось завершить сохранение. Проверьте текущие цены перед повтором.", group=data.get("creator_price_group", "all"))
+        await _prices(message, state, "Цена сохранена. Остальные ставки не изменены.", group=data.get("creator_price_group", "all"))

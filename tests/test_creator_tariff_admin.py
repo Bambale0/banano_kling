@@ -405,3 +405,25 @@ async def test_seedream55_reference_creator_invalid_price_is_rejected(editor):
     await click(state, cb, "rate", "seedream_55", "ref")
     await admin.creator_tariff_message(message("0"), state)
     assert not writes
+
+@pytest.mark.asyncio
+async def test_creator_genjutsu_shortcut_shows_light_and_legacy(editor):
+    state, cb, writes, before = editor
+    await admin.open_creator_tariff(cb, state)
+    home = cb.message.edit_text.await_args.args[0]
+    assert 'Тариф креатора' in home
+    await click(state, cb, 'genjutsu_prices')
+    section = cb.message.edit_text.await_args.args[0]
+    assert 'Genjutsu · Motion Transfer' in section
+    assert 'Genjutsu Light · Motion Transfer' in section
+    assert 'Genjutsu Light · Object Swap' in section
+    assert 'Seedance 2.0' not in section
+    await click(state, cb, 'rate', 'genjutsu/object_swap_light', '1080p')
+    submitted = message('3')
+    await admin.creator_tariff_message(submitted, state)
+    assert len(writes) == 1
+    assert writes[0]['creator_tariff']['genjutsu']['prices']['object_swap_light']['1080p'] == 3
+    assert {k: v for k, v in writes[0].items() if k != 'creator_tariff'} == before
+    after_save = submitted.answer.await_args.args[0]
+    assert 'Genjutsu Light · Object Swap' in after_save
+    assert 'Seedance 2.0' not in after_save

@@ -31,6 +31,9 @@ KNOWN_ACTIONS = frozenset({
 # Stable codes are also consumed by the Mini App. Raw provider errors are never returned.
 MESSAGES = {
     'invalid_notification_templates': 'Проверьте тексты уведомлений и обязательные поля в фигурных скобках.',
+    'live_verification_required': 'Для нового открытия режима нужны успешные админские проверки всех разрешений. Уже открытые режимы можно перенастраивать без повторного запуска тестов.',
+    'config_conflict': 'Настройки изменены в другом окне. Обновите раздел и повторите сохранение.',
+    'release_gate_not_passed': 'Нельзя открыть Genjutsu: проверьте подключение провайдера, хранилища и доступные режимы.',
     'invalid_title': 'Введите название проекта от 1 до 120 символов.',
     'invalid_reference_count': 'Проверьте количество фото-референсов для выбранного режима: добавьте недостающие или удалите лишние фото.',
     'reference_required': 'Добавьте фото-референс для выбранного режима.',
@@ -303,11 +306,23 @@ class API:
         if action == 'save_settings':
             self.fields(body, {'settings','expected_version'})
             settings = validate_settings(body.get('settings'))
-            coverage = await repo.verified_coverage()
-            proven = {(row['operation'],row['resolution']) for row in coverage}
-            for op in settings['verified_operations']:
-                if any((op,resolution) not in proven for resolution in CATALOG[op]['resolutions']):
-                    raise PipelineError('live_verification_required', status=409)
+            expected_version = integer(body.get('expected_version'),0,1000000,'invalid_version')
+            current, current_version = await repo.settings()
+            if current_version != expected_version:
+                raise PipelineError('config_conflict', status=409)
+            # Public Light may have been explicitly risk-accepted and already
+            # enabled. Price/template edits must not retroactively revoke it.
+            # Newly enabled operations still require full live evidence.
+            newly_verified = (
+                set(settings['verified_operations']) if settings['public_enabled'] and not current['public_enabled']
+                else set(settings['verified_operations']) - set(current['verified_operations'])
+            )
+            if newly_verified:
+                coverage = await repo.verified_coverage()
+                proven = {(row['operation'],row['resolution']) for row in coverage}
+                for op in newly_verified:
+                    if any((op,resolution) not in proven for resolution in CATALOG[op]['resolutions']):
+                        raise PipelineError('live_verification_required', status=409)
             if settings['public_enabled']:
                 # An unverified future operation must never block an already
                 # verified and active public Genjutsu catalog.
@@ -319,7 +334,7 @@ class API:
                     for rate in settings['prices'][op].values()
                 ):
                     raise PipelineError('price_not_configured', status=409)
-            version = await repo.update_settings(owner, integer(body.get('expected_version'),0,1000000,'invalid_version'), settings)
+            version = await repo.update_settings(owner, expected_version, settings)
             return {'version':version}
         if action == 'admin_runs':
             self.fields(body,set())

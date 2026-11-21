@@ -28,6 +28,7 @@ const notificationLabels: Record<string, string> = {
 
 export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown> }) {
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [previouslyVerified, setPreviouslyVerified] = useState<Operation[]>([])
   const [version, setVersion] = useState(0)
   const [coverage, setCoverage] = useState<{ operation: Operation; resolution: string; step_id: string }[]>([])
   const [runs, setRuns] = useState<RunSummary[]>([])
@@ -48,7 +49,7 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
   }
   async function load() {
     const value = await genjutsuCall<{ settings: Settings; version: number; coverage: typeof coverage }>('settings')
-    setSettings(value.settings); setVersion(value.version); setCoverage(value.coverage)
+    setSettings(value.settings); setPreviouslyVerified(value.settings.verified_operations); setVersion(value.version); setCoverage(value.coverage)
     setRuns((await genjutsuCall<{ items: RunSummary[] }>('admin_runs')).items)
   }
   useEffect(() => { void act(load) }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -73,6 +74,7 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={settings.public_enabled} onChange={e => setSettings({ ...settings, public_enabled: e.target.checked })} />Новые запуски пользователей</label>
       <p className="text-xs text-muted-foreground">Публичное включение требует подключения провайдера, хранилища, тарифов и боевой проверки всех включаемых режимов/качеств. Непроверенные новые модели не блокируют уже проверенные. Выключение не прерывает принятые задачи.</p>
       <p className="text-xs text-muted-foreground">Тариф за оплачиваемую секунду применяется к сумме секунд видеореференса и генерации. В Genjutsu длительность результата определяется выбранным фрагментом.</p>
+      <p className="text-xs text-muted-foreground">Отдельные цены Creator для обычного Genjutsu и Light настраиваются в Telegram-админке: «Тариф креатора» → «Genjutsu · цены Creator». Базовые тарифы здесь не перезаписывают скидки Creator.</p>
       {(['light', 'legacy'] as const).map(group => {
         const operations = (Object.keys(settings.prices) as Operation[]).filter(
           op => op.endsWith('_light') === (group === 'light'),
@@ -95,8 +97,8 @@ export function GenjutsuAdmin({ onChanged }: { onChanged: () => Promise<unknown>
                 <span className="block">{coverage.some(c => c.operation === op && c.resolution === res) ? 'Боевой результат сохранён' : 'Нужен боевой тест'}</span>
                 {group === 'light' && <span className="block">{price === null ? 'Ролик 5 с: цена не задана' : `Ролик 5 с: ${price * 10} 🍌`}</span>}
               </label>)}</div>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`${operationLabels[op]} · открыть пользователям`} checked={settings.verified_operations.includes(op)} disabled={group === 'light' && (!allTested || !allPriced)} onChange={e => setSettings({ ...settings, verified_operations: e.target.checked ? [...settings.verified_operations, op] : settings.verified_operations.filter(v => v !== op) })} />Режим проверен и доступен пользователям</label>
-              {group === 'light' && !allTested && <p className="text-xs text-muted-foreground">Открытие заблокировано до успешного результата от Higgsfield по каждому качеству.</p>}
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`${operationLabels[op]} · открыть пользователям`} checked={settings.verified_operations.includes(op)} disabled={group === 'light' && !previouslyVerified.includes(op) && (!allTested || !allPriced)} onChange={e => setSettings({ ...settings, verified_operations: e.target.checked ? [...settings.verified_operations, op] : settings.verified_operations.filter(v => v !== op) })} />Режим проверен и доступен пользователям</label>
+              {group === 'light' && !allTested && <p className="text-xs text-muted-foreground">{settings.verified_operations.includes(op) ? 'Режим уже открыт в рамках одобренного запуска. Цены можно менять; непроверенные разрешения отмечены выше.' : 'Для нового открытия режима нужны успешные проверки всех разрешений.'}</p>}
             </div>
           })}
         </section>
