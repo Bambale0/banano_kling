@@ -4,6 +4,7 @@ A Telegram deep link is not an authentication credential for a website: the
 server verifies the callback sender, and only the initiating HttpOnly-cookie
 browser can claim the approved one-time request.
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,8 +12,8 @@ import secrets
 import time
 from uuid import uuid4
 
-from aiohttp import web
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiohttp import web
 
 from bot import db as db_backend
 
