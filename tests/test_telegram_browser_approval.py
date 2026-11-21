@@ -2,6 +2,7 @@
 
 No external Telegram requests or paid generation calls are made.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,9 +14,9 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from bot import database, telegram_browser_approval as approval, web_auth
-from bot import db as db_backend
-from bot import browser_auth
+import bot.db as db_backend
+import bot.telegram_browser_approval as approval
+from bot import browser_auth, database, web_auth
 
 ROOT = "/mini-app/api/web-auth/telegram-approval"
 ORIGIN = "https://neuromixbot.com"
