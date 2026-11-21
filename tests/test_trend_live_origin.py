@@ -1,4 +1,5 @@
 """Live Trend MP4s use a narrowly scoped same-origin byte-range endpoint."""
+
 from __future__ import annotations
 
 from io import BytesIO
