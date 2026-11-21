@@ -4,13 +4,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SharedWalletPreview } from '@/components/shared-wallet-preview'
 import { SharedCommercialPreview } from '@/components/shared-commercial-preview'
-import { SharedAccountLinkPreview } from '@/components/shared-account-link-preview'
+import { WebIdentityLinksCard } from '@/components/web-identity-links-card'
 import {
   checkAccountPreviewLogin, fetchAccountPreviewSettings, saveAccountPreviewSettings,
   type AccountPreviewSettings,
 } from '@/lib/shared-account-api'
 
-export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { isAdmin: boolean; telegramBotUsername?: string }) {
+export function SharedAccountPreview({ isAdmin }: { isAdmin: boolean; telegramBotUsername?: string }) {
   const [policy, setPolicy] = useState<AccountPreviewSettings | null>(null)
   const [enabled, setEnabled] = useState(false)
   const [appId, setAppId] = useState('')
@@ -83,7 +83,7 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
   }
 
   if (!isAdmin) {
-    return <SharedAccountLinkPreview vkAppId={null} telegramBotUsername={telegramBotUsername} />
+    return <WebIdentityLinksCard />
   }
 
   function identifier(raw: string): number {
@@ -93,7 +93,7 @@ export function SharedAccountPreview({ isAdmin, telegramBotUsername = '' }: { is
   }
 
   return <div className="space-y-4">
-    <SharedAccountLinkPreview policyRevision={policy?.revision} vkAppId={policy?.vk_app_id ?? null} telegramBotUsername={telegramBotUsername} />
+    <WebIdentityLinksCard />
     <details className="rounded-xl border border-border bg-card">
       <summary className="cursor-pointer p-4 text-sm font-medium">Настройки общих аккаунтов</summary>
     <section aria-label="Проверка общих аккаунтов" className="space-y-3 rounded-xl border border-border bg-card p-4">

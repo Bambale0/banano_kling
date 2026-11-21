@@ -397,6 +397,17 @@ function TelegramOIDCLogin() {
 }
 
 /** Only allow bounded referral/startapp hints to cross website OAuth. */
+/** Explicit website links must not silently turn into Telegram-only studio.
+ * A separate requested Telegram linking flow still takes precedence. */
+export function shouldOpenIndependentWebStudio(
+  authenticated: boolean, studioReady: boolean, search: string,
+): boolean {
+  if (!authenticated) return false
+  const params = new URLSearchParams(search)
+  if (params.get('link') === 'telegram') return false
+  return params.get('web') === '1' || !studioReady
+}
+
 export function standaloneWebStudioDestination(search: string): string {
   const original = new URLSearchParams(search)
   const query = new URLSearchParams({ web: '1' })
@@ -525,8 +536,9 @@ function YandexWebLogin({ onSessionDetected }: { onSessionDetected: (authenticat
         }
         // A browser-only account is a legitimate identity. Do not force
         // Telegram linking or mint a Telegram-shaped ID on this path.
-        if (data.authenticated && !data.studio_ready
-          && new URLSearchParams(window.location.search).get('link') !== 'telegram') {
+        if (shouldOpenIndependentWebStudio(
+          Boolean(data.authenticated), Boolean(data.studio_ready), window.location.search,
+        )) {
           window.location.replace(standaloneWebStudioDestination(window.location.search))
           return
         }

@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { EmailCodeLogin, standaloneWebStudioDestination, emailVerificationDestination } from '../landing-login-panel'
+import { EmailCodeLogin, standaloneWebStudioDestination, shouldOpenIndependentWebStudio, emailVerificationDestination } from '../landing-login-panel'
 
 jest.mock('@/components/magicui/noise-texture', () => ({ NoiseTexture: () => null }))
 jest.mock('@/lib/api', () => ({ getInitData: () => '' }))
@@ -60,4 +60,14 @@ test('verified email returns to server-approved local login for account-aware ro
   ]) {
     expect(emailVerificationDestination(unsafe)).toBe('/login')
   }
+})
+
+
+test('explicit web-only link never silently redirects Telegram-linked Yandex session into legacy TG studio', () => {
+  expect(shouldOpenIndependentWebStudio(true, true, '?web=1')).toBe(true)
+  expect(shouldOpenIndependentWebStudio(true, false, '?web=1')).toBe(true)
+  expect(shouldOpenIndependentWebStudio(true, true, '?ref=ABC')).toBe(false)
+  expect(shouldOpenIndependentWebStudio(true, false, '?ref=ABC')).toBe(true)
+  expect(shouldOpenIndependentWebStudio(true, true, '?web=1&link=telegram')).toBe(false)
+  expect(shouldOpenIndependentWebStudio(false, false, '?web=1')).toBe(false)
 })

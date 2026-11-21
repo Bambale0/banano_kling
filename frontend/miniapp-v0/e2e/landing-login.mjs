@@ -317,6 +317,27 @@ try {
   await yandexLinked.close()
   console.log('login/Yandex-linked -> existing Telegram wallet with referral: OK')
 
+  // The explicit website link must NEVER silently reenter Telegram, even for
+  // an already-linked Yandex account with an existing Telegram studio.
+  const browserExplicit = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let unwantedTelegramBridge = 0
+  await browserExplicit.route('**/mini-app/api/web-auth/config', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, authenticated: true, studio_ready: true, providers: { yandex: true } }),
+  }))
+  await browserExplicit.route('**/mini-app/api/web-auth/studio', route => {
+    unwantedTelegramBridge += 1
+    return route.fulfill({
+      status: 409, contentType: 'application/json', body: JSON.stringify({ ok: false }),
+    })
+  })
+  await browserExplicit.goto(origin + '/login?web=1&ref=web_ref')
+  await browserExplicit.waitForURL(url => url.pathname === '/mini-app/'
+    && url.searchParams.get('web') === '1' && url.searchParams.get('ref') === 'web_ref')
+  assert.equal(unwantedTelegramBridge, 0, 'web=1 must not mint a Telegram bridge')
+  assert.ok(!browserExplicit.url().includes('tgWebAppData='))
+  await browserExplicit.close()
+  console.log('login/linked Yandex explicit web=1 -> independent browser, no Telegram bridge: OK')
 
   // The same /mini-app/ bundle supports browser ownership across viewports.
   // No real user cookies, media, money or provider calls occur in this smoke.
