@@ -70,7 +70,9 @@ def test_browser_approval_router_is_first_even_during_generation_fsm():
 
 @pytest.mark.asyncio
 async def test_approval_deep_link_does_not_reset_existing_telegram_fsm(monkeypatch):
-    from bot.handlers import common, telegram_browser_approval_handlers as handlers
+    from bot.handlers import common, telegram_browser_approval_handlers
+
+    handlers = telegram_browser_approval_handlers
 
     user_created = AsyncMock()
     marked_available = AsyncMock()
