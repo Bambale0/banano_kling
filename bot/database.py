@@ -7123,7 +7123,9 @@ async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
     if approved:
         # Publish success should include a stable public JPG when possible.
         # Thumbnail creation is bounded and cannot roll back the approval.
-        from bot.services.trend_catalog_publish_thumbnail import ensure_published_trend_poster
+        from bot.services.trend_catalog_publish_thumbnail import (
+            ensure_published_trend_poster,
+        )
 
         await ensure_published_trend_poster(approved)
     return approved
