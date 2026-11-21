@@ -94,7 +94,7 @@ async def serve_public_trend_poster(request: web.Request) -> web.Response:
 
 MAX_PUBLIC_LIVE_BYTES = 6 * 1024 * 1024
 _LIVE_HASH_RE = re.compile(r"[a-f0-9]{32}")
-_LIVE_RANGE_RE = re.compile(r"bytes=(\\d*)-(\\d*)")
+_LIVE_RANGE_RE = re.compile(r"bytes=(\d*)-(\d*)")
 
 
 def _read_public_trend_live_video(relative: str) -> bytes:
@@ -108,7 +108,7 @@ def _read_public_trend_live_video(relative: str) -> bytes:
     body = result["Body"]
     try:
         content_range = str(result.get("ContentRange") or "")
-        match = re.fullmatch(r"bytes \\d+-\\d+/(\\d+)", content_range)
+        match = re.fullmatch(r"bytes \d+-\d+/(\d+)", content_range)
         total = int(match.group(1)) if match else None
         if total is not None and total > MAX_PUBLIC_LIVE_BYTES:
             raise PosterTooLargeError(total)
@@ -189,7 +189,7 @@ async def serve_public_trend_live_video(request: web.Request) -> web.Response:
 def register_public_trend_poster_route(app: web.Application) -> None:
     """Only hashed public JPGs/live MP4s bypass private S3 redirects."""
     app.router.add_get(
-        r"/uploads/trend-previews/{poster_path:.*\\.jpg}",
+        r"/uploads/trend-previews/{poster_path:.*\.jpg}",
         serve_public_trend_poster,
         name="public-trend-poster",
     )
