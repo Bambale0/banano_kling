@@ -3082,6 +3082,11 @@ def setup_dispatcher() -> Dispatcher:
     # 4. batch_generation_router (пакетная генерация)
     # 5. common_router (общие команды /start /help - самые общие)
 
+    # Browser auth /start must win even when a generation FSM is active.
+    # Its router matches only the signed-shape auth_ deep link and callbacks.
+    from bot.handlers.telegram_browser_approval_handlers import router as browser_approval_router
+
+    dp.include_router(browser_approval_router)
     dp.include_router(generation_router)  # FSM состояния - ПЕРВЫЙ!
     dp.include_router(image_analyzer_router)  # Анализ фото в промпт
     dp.include_router(creator_tariff_admin_router)  # Отдельный тариф креатора
