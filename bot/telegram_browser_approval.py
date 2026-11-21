@@ -64,7 +64,8 @@ async def start(request: web.Request) -> web.Response:
         username = await _browser_bot_username(request)
         if not username or not all(c.isalnum() or c == "_" for c in username):
             raise ValueError("Missing Telegram bot username")
-    except (KeyError, ValueError, AttributeError, RuntimeError, OSError):
+    except Exception:  # noqa: BLE001 - Bot API availability must not expose errors
+        logger.warning("Telegram approval bot username unavailable", exc_info=False)
         return auth._json({"ok": False, "error": "telegram_unavailable"}, 503)
 
     browser_token = request.cookies.get(_COOKIE, "")
@@ -83,6 +84,12 @@ async def start(request: web.Request) -> web.Response:
         if not db_backend.is_postgres():
             await db.execute("BEGIN IMMEDIATE")
         try:
+            # Keep terminal challenges for a short audit window; then purge
+            # old opaque identifiers without affecting rate-limit history.
+            await db.execute(
+                "DELETE FROM web_auth_telegram_approvals WHERE expires_at_epoch < ?",
+                (now - 86400,),
+            )
             count_row = await (await db.execute(
                 """SELECT COUNT(*) FROM web_auth_telegram_approvals
                    WHERE browser_hash=? AND created_at_epoch>?""",
@@ -122,7 +129,8 @@ async def start(request: web.Request) -> web.Response:
 
 async def _lookup(id_or_challenge: str, *, by_challenge: bool = False):
     auth = _auth()
-    await auth._ensure_tables()
+    # The creating request already ensured the schema; avoid DDL/advisory-lock
+    # round-trips for each short-interval browser poll and bot callback.
     where = "challenge_hash" if by_challenge else "request_id"
     try:
         lookup = auth._digest(id_or_challenge) if by_challenge else id_or_challenge
