@@ -129,3 +129,49 @@ test('Light public switch unlocks only after all resolutions have verified admin
   fireEvent.click(ready)
   expect(ready).toBeChecked()
 })
+
+test('previously-approved public Light stays editable before full live coverage', async () => {
+  const approved = {
+    ...settings,
+    public_enabled: true,
+    verified_operations: ['motion_transfer_light'],
+    prices: {
+      ...settings.prices,
+      motion_transfer_light: { '480p': 2, '720p': 4, '1080p': 8 },
+      object_swap_light: { '480p': 2, '720p': 4, '1080p': 8 },
+    },
+  }
+  call.mockImplementation(async action => {
+    if (action === 'settings') return { settings: approved, version: 12, coverage: [
+      { operation: 'motion_transfer_light', resolution: '480p', step_id: 'existing' },
+    ] }
+    if (action === 'admin_runs') return { items: [] }
+    return { ok: true }
+  })
+  const changed = jest.fn().mockResolvedValue(undefined)
+  render(<GenjutsuAdmin onChanged={changed} />)
+  const active = await screen.findByLabelText('Перенос движения · Light · открыть пользователям')
+  const inactive = screen.getByLabelText('Замена объектов · Light · открыть пользователям')
+  expect(active).toBeChecked()
+  expect(active).toBeEnabled()
+  expect(inactive).toBeDisabled()
+  fireEvent.click(active)
+  expect(active).not.toBeChecked()
+  expect(active).toBeEnabled()
+  fireEvent.click(active)
+  expect(active).toBeChecked()
+  const price = screen.getByLabelText('Перенос движения · Light · 720p · цена за секунду')
+  fireEvent.change(price, { target: { value: '6' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Сохранить настройки' }))
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(1))
+  expect(call).toHaveBeenCalledWith('save_settings', expect.objectContaining({
+    expected_version: 12,
+    settings: expect.objectContaining({
+      public_enabled: true,
+      verified_operations: ['motion_transfer_light'],
+      prices: expect.objectContaining({
+        motion_transfer_light: { '480p': 2, '720p': 6, '1080p': 8 },
+      }),
+    }),
+  }))
+})

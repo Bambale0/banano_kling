@@ -48,7 +48,7 @@ async def project_api(tmp_path):
     API(pipeline, authenticate, recipes=recipes).register(app)
     async with TestClient(TestServer(app)) as client:
         yield SimpleNamespace(
-            repo=repo, recipes=recipes, client=client, authenticate=authenticate, media=media,
+            repo=repo, recipes=recipes, client=client, authenticate=authenticate, media=media, pipeline=pipeline,
         )
 
 
@@ -396,3 +396,51 @@ async def test_invalid_notification_templates_have_safe_admin_message(project_ap
     assert body["code"] == "invalid_notification_templates"
     assert body["error"] == "Проверьте тексты уведомлений и обязательные поля в фигурных скобках."
     assert "SENSITIVE_TEMPLATE" not in repr(body)
+
+
+@pytest.mark.asyncio
+async def test_admin_can_reprice_existing_risk_accepted_light_without_full_coverage(project_api):
+    """Already-public Light stays editable even before all live resolutions pass."""
+    api = project_api
+    api.authenticate.return_value = (101, True)
+    settings, version = await api.repo.settings()
+    settings['public_enabled'] = True
+    settings['verified_operations'] = ['motion_transfer_light', 'object_swap_light']
+    for op in settings['verified_operations']:
+        settings['prices'][op] = {'480p': 2, '720p': 4, '1080p': 8}
+    current_version = await api.repo.update_settings(101, version, settings)
+    api.media.configured = True
+    # A fake provider is configured for release checks only; no provider calls.
+    api.pipeline.provider.configured = True
+
+    updated = {**settings, 'prices': {**settings['prices'],
+               'motion_transfer_light': {'480p': 3, '720p': 4, '1080p': 8}}}
+    response = await api.client.post('/mini-app/api/genjutsu', json={
+        'action': 'save_settings', 'settings': updated, 'expected_version': current_version,
+    })
+    body = await response.json()
+    assert response.status == 200, body
+    saved, new_version = await api.repo.settings()
+    assert new_version == current_version + 1
+    assert saved['prices']['motion_transfer_light']['480p'] == 3
+    assert saved['public_enabled'] is True
+    assert saved['verified_operations'] == ['motion_transfer_light', 'object_swap_light']
+
+
+@pytest.mark.asyncio
+async def test_admin_cannot_newly_verify_unproven_light_even_with_positive_prices(project_api):
+    api = project_api
+    api.authenticate.return_value = (101, True)
+    settings, version = await api.repo.settings()
+    settings['verified_operations'] = ['motion_transfer_light']
+    settings['prices']['motion_transfer_light'] = {'480p': 2, '720p': 4, '1080p': 8}
+    response = await api.client.post('/mini-app/api/genjutsu', json={
+        'action': 'save_settings', 'settings': settings, 'expected_version': version,
+    })
+    body = await response.json()
+    assert response.status == 409
+    assert body['code'] == 'live_verification_required'
+    assert 'проверк' in body['error'].lower()
+    saved, new_version = await api.repo.settings()
+    assert new_version == version
+    assert saved['verified_operations'] == []
