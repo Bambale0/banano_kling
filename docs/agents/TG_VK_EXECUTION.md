@@ -1,5 +1,110 @@
 # TG–VK shared accounts execution ledger
 
+## Native TG wallet-fence refresh — 09.11.2026
+
+- Existing dormant Draft #424 rebased by **merge, not force-push/rewrite**, onto
+  current production `tanyapi@cbf1a619` with public VK-only fallback and safe
+  Telegram linking preserved. Wallet fence preparation / freeze remain **unwired**
+  (never called from startup, HTTP, database constructor or CLI), so production
+  money is not frozen, imported or redirected.
+- Historical text below saying VK-only *must* link Telegram describes the former
+  rollout; production #440 replaced it with an optional link and an entry back
+  to the working native VK bot. No claims of common live balance.
+- The full financial product remains gated on complete writer coverage,
+  settled provider callbacks, exact opening precision, VK counterpart,
+  cross-database coordinator and crash/rollback rehearsal. See #408/#410/#414.
+
+## Legacy fence integration refresh — 08.11.2026 (local validation)
+
+- Continued Draft #424 at 37a589247e2ea735dc5f1b1aa0a52ed87a8dcd39 and
+  merged exact tanyapi e3841e88ecdd1ad1c7dce55639878dec2035d060, without rebase.
+  Common ancestor b9834c795707dc3037340ea553f41c1ea50f0f9b. Conflicts were
+  limited to this ledger and the shared-preview CI command lists; both fence and
+  VK transport/delivery coverage and both histories are preserved.
+- Rechecked current database, Kling4/Wan3, admin, partner, Genjutsu, motion and
+  watchdog credit-write seams. Their authority remains users.credits, protected
+  by the existing row trigger when explicitly frozen. Upstream changes add VK
+  delivery/result metadata, not a new financial authority or trigger bypass.
+  Fence preparation/freezing still has no startup or public production caller.
+  No fence implementation, activation, price, credential or live balance changed.
+- Combined shared-account, audit, wallet/opening/fence/link/commerce, VK delivery/
+  transport and browser-auth pytest matrix: 160 passed, 141 skipped, 6 existing
+  datetime deprecation warnings (15.86s). Skips include unavailable isolated
+  PostgreSQL and engine-specific cases; native PG on this exact merge is pending.
+  Matching shared-preview Ruff command and git diff whitespace checks passed.
+- Adjacent credit-precondition, Genjutsu, partner-policy/debit-guard, watchdog and
+  Wan3 lifecycle matrix: 99 passed, 7 setup errors (7.99s). All seven errors are
+  credit-precondition tests requiring the unavailable pytest-mock `mocker` fixture.
+  Installed pytest-mock 3.17.0 into the isolated test venv from the official
+  registry and reran the entire adjacent matrix: 106 passed in 7.00s. No runtime
+  dependency or repository requirements change was needed.
+- Guidance read: Bambale0/skills diagnosing-bugs, Bambale0/claw backend-integration,
+  anthropics/skills webapp-testing, repository AGENTS/README and opening/fence ADRs.
+  No frontend change in this slice, so browser verification is not applicable.
+- Remaining release gates are unchanged: native PG/exact-head main CI, VK writer
+  fencing, job/payment drain and late settlement bridge, approved opening amounts,
+  authority routing and reconciliation. This merge does not open VK publicly or
+  make the common wallet live. No push, PR mutation, migration or deploy occurred
+  during this local integration step.
+
+## Durable Telegram legacy credit fence — 07.11.2026 (Draft only)
+
+- Baseline tanyapi@b9834c795707dc3037340ea553f41c1ea50f0f9b; isolated branch
+  feature/tanyapi-legacy-wallet-fence. Owner selected common account/balance
+  after voluntary linking; VK must remain independently usable.
+- Preflight: openings are sandbox-only; wallet/link locks and platform identities
+  exist. Direct credits SQL bypasses add/deduct helpers in recovery, payment and
+  specialized tasks. A service-only guard cannot prove writer fencing. Existing
+  PG adapter supports native DDL; public legacy database and isolated PG test
+  seams can exercise real writers. No competing wallet/importer is needed.
+- Intended slice: internal explicit freeze of one verified TG legacy wallet,
+  immutable raw snapshot/idempotency receipt, DB-level credit/identity/delete
+  rejection, crash/retry atomicity. A marker on the users row also changes its
+  version, so an older PG repeatable-read writer cannot ignore a newer fence.
+- Limits: no automatic startup/schema call, HTTP/admin/CLI activation, live
+  freeze/import, rounding, VK-repository change or public launch. Not a complete
+  cutover: pending jobs/payments/events, partner RUB, VK fencing, late-event bridge
+  and live authority routing still need their own implementations and review.
+- Plan: RED isolated real-writer/replay/ownership/race tests; minimal internal
+  fence; SQLite + PG contracts including older-snapshot writer and rollback;
+  independent review; Draft PR with no merge/deploy until the full product gates.
+- No mutable economic setting or provider/payment contract change. Runtime price
+  sources, credits and wallet balances remain untouched outside synthetic tests.
+- RED: five SQLite cases fail because fences module is absent; five native PG
+  variants skipped locally without explicit isolated DSN. No live DB fallback.
+- Implemented explicit schema preparation and atomic internal freeze. A separate
+  preparation call avoids ALTER TABLE waiting on older snapshot readers during
+  freeze. Same-named/disabled guard attestation fails closed. Raw storage values
+  and guard digest are retained without normalization; no receipt is logged.
+- Research confirmed SQLite REPLACE/unique-key and transaction-ABORT hazards.
+  Both additional regressions were RED; conflict guards and ROLLBACK make them
+  GREEN. Isolated shared-account/wallet/link/commerce matrix: 114 passed / 113
+  skipped before final additions; final focused fence matrix: 11 passed / 13
+  skipped (native PG cases await CI). Ruff passed. Real legacy payment completion
+  remains pending with unchanged credits after two rejected settlement attempts.
+- Independent Standards/Spec review at 31240a8: no actionable findings. Final
+  local combined matrix including browser auth: 121 passed / 116 skipped.
+- First native PG workflow reached fence preparation but ten new cases failed
+  before freezing: the process-global compatibility-DDL cache skipped bootstrap
+  for subsequent isolated schemas, leaving telegram_chat_state absent. Reset the
+  cache only in this test fixture so each fresh schema runs real compatibility
+  preparation. No production schema/helper behavior was changed; native rerun
+  remains required and is not counted green.
+- Native rerun at 5d1c41acb159047431cc8d019387c03d6badbd99 passed: 234 tests /
+  3 expected skips in 104.85s, including PostgreSQL stale-snapshot fencing, real
+  credit/debit/payment writes, rollback and all shared identity/wallet/link checks
+  (workflow 42364226745). Both reviewers cleared the fixture-only follow-up.
+  Draft #424 remains unmerged with auto-merge off. Full main CI is tracked
+  separately; no production installation or complete cutover is claimed.
+- Additional guidance for the native VK counterpart: wondelai/skills
+  ddia-systems and its transactions reference; apply row-lock/atomicity/outbox
+  principles without assuming a cross-database transaction. Wider migration
+  diagnostic has evidence for relational fit, isolation and source/derived
+  separation (3/7, about 4.2/10); replication/failover, hot-key load, measured
+  retry budgets and production recovery remain unverified full-release gates.
+
+---
+
 ## One-click cross-platform linking — 08.11.2026
 
 - Base `tanyapi@7945dca70dbf4edca26874189cb6108a770a42ac`. User report: VK Mini App “Привязать” revealed a technical form (create URL, paste code, accept, confirm twice), while Telegram `startapp` invitations did not open the linking screen. Root cause is the explicit multi-step form, missing incoming-link routing for Telegram, and the two-confirmation backend contract.
