@@ -65,12 +65,57 @@ test('rollback hides new money actions but preserves own balance and completed m
   expect(screen.getByText(/создание новых платных задач отключено/i)).toBeTruthy()
 })
 
-test('linked legacy actors never read standalone live balance or expose duplicate checkout', () => {
-  const calls = mockFetch(true)
+test('linked Telegram browser reads original Telegram funds without duplicate checkout', async () => {
+  const calls: string[] = []
+  global.fetch = jest.fn().mockImplementation(async (raw: string) => {
+    calls.push(String(raw))
+    if (String(raw).endsWith('/web-payments/balance')) return answer({
+      ok: true, scope: 'telegram_legacy',
+      balance: { available: '24.1250', reserved: null, revision: null },
+      precision_review: false,
+    })
+    throw new Error('Linked actor must not call paid web API: ' + raw)
+  }) as typeof fetch
   render(<BrowserNativePaidEntry accountId={'c'.repeat(32)} telegramLinked onSessionExpired={jest.fn()} />)
+  expect(await screen.findByText(/24.1250/)).toBeTruthy()
   expect(screen.getByText(/баланс Telegram/i)).toBeTruthy()
-  expect(calls).toHaveLength(0)
+  expect(calls).toEqual(['/mini-app/api/web-auth/web-payments/balance'])
   expect(screen.queryByText('Пополнение веб-кошелька готово')).toBeNull()
+  expect(screen.queryByText('Веб-генератор готов')).toBeNull()
+})
+
+test('linked legacy float residue never implies a balance migration', async () => {
+  global.fetch = jest.fn().mockResolvedValue(answer({
+    ok: true, scope: 'telegram_legacy',
+    balance: { available: '0.3000', reserved: null, revision: null },
+    precision_review: true,
+  })) as typeof fetch
+  render(<BrowserNativePaidEntry accountId={'d'.repeat(32)} telegramLinked onSessionExpired={jest.fn()} />)
+  expect(await screen.findByText(/0.3000/)).toBeTruthy()
+  expect(screen.getByText(/точности отображения/i)).toBeTruthy()
+})
+
+test('previous web funds remain visible separately after Telegram link', async () => {
+  global.fetch = jest.fn().mockResolvedValue(answer({
+    ok: true, scope: 'telegram_legacy',
+    balance: { available: '12.1250', reserved: null, revision: null },
+    held_web_balance: { available: '2.0000', reserved: '0.3000' },
+    precision_review: false,
+  })) as typeof fetch
+  render(<BrowserNativePaidEntry accountId={'f'.repeat(32)} telegramLinked onSessionExpired={jest.fn()} />)
+  expect(await screen.findByText(/12.1250/)).toBeTruthy()
+  expect(screen.getByText(/2.0000 ROX/)).toBeTruthy()
+  expect(screen.getByText(/зарезервировано 0.3000/)).toBeTruthy()
+  expect(screen.queryByText(/14.1250/)).toBeNull()
+  expect(screen.queryByText('Пополнение веб-кошелька готово')).toBeNull()
+})
+
+test('linked revoked session must revoke UI and never leak cached credits', async () => {
+  const onSessionExpired = jest.fn()
+  global.fetch = jest.fn().mockResolvedValue(answer({ ok: false }, 401)) as typeof fetch
+  render(<BrowserNativePaidEntry accountId={'e'.repeat(32)} telegramLinked onSessionExpired={onSessionExpired} />)
+  await waitFor(() => expect(onSessionExpired).toHaveBeenCalledTimes(1))
+  expect(screen.queryByText(/24.1250/)).toBeNull()
 })
 
 test('revoked session clears access without showing stale private money', async () => {

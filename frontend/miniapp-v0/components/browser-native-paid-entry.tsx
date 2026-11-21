@@ -52,6 +52,74 @@ function safeResultUrl(raw: string | null | undefined): string | null {
 const ROOT = '/mini-app/api/web-auth'
 const initial: WebState = { available: false, balance: null, tasks: [], nextCursor: null }
 
+type LinkedBalance = {
+  ok?: boolean
+  scope?: string
+  balance?: { available?: string }
+  precision_review?: boolean
+  held_web_balance?: { available: string; reserved: string } | null
+}
+
+/** The verified browser and native Telegram studio read ONE legacy authority.
+ * This is a projection, not a second wallet or an opening-balance migration. */
+function LinkedTelegramBalance({ onSessionExpired }: { onSessionExpired: () => void }) {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [amount, setAmount] = useState<string | null>(null)
+  const [precisionReview, setPrecisionReview] = useState(false)
+  const [heldWebBalance, setHeldWebBalance] = useState<LinkedBalance['held_web_balance']>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    void fetchOwnerData<LinkedBalance>(ROOT + '/web-payments/balance', controller.signal)
+      .then(data => {
+        if (controller.signal.aborted) return
+        if (!data.ok || data.scope !== 'telegram_legacy'
+          || typeof data.balance?.available !== 'string') {
+          throw new Error('linked_balance_unavailable')
+        }
+        setAmount(data.balance.available)
+        setPrecisionReview(Boolean(data.precision_review))
+        setHeldWebBalance(data.held_web_balance ?? null)
+        setStatus('ready')
+      }).catch(error => {
+        if (controller.signal.aborted) return
+        setAmount(null)
+        setHeldWebBalance(null)
+        if (error instanceof RevokedSession) {
+          onSessionExpired()
+        } else {
+          setStatus('error')
+        }
+      })
+    return () => controller.abort()
+  }, [onSessionExpired])
+
+  if (status === 'loading') return <p role="status" className="text-sm text-[#bdb6aa]">
+    Проверяем баланс Telegram…
+  </p>
+  if (status !== 'ready' || amount === null) return <p role="status" className="text-sm text-[#d6bf91]">
+    Баланс Telegram временно недоступен. Повторите попытку после обновления страницы.
+  </p>
+  return <section aria-label="Баланс связанного аккаунта" className="space-y-2 border border-[#a48350]/40 bg-[#1b2325] p-4">
+    <h2 className="text-lg font-semibold">Баланс Telegram в веб-студии</h2>
+    <p className="text-sm text-[#dfcbaf]">Доступно: <strong>{amount}</strong> ROX</p>
+    <p className="text-sm text-[#bdb6aa]">
+      Это текущий баланс привязанного Telegram-аккаунта. Веб-кошелёк повторно не создаётся;
+      оплата и генерации используют существующий Telegram-контур.
+    </p>
+    {precisionReview ? <p className="text-sm text-[#d6bf91]">
+      Есть погрешность точности отображения старого баланса; исходная сумма не изменена.
+    </p> : null}
+    {heldWebBalance ? <p role="status" className="text-sm text-[#d6bf91]">
+      В прежнем веб-кошельке сохранено {heldWebBalance.available} ROX
+      {heldWebBalance.reserved !== '0.0000'
+        ? ` (зарезервировано ${heldWebBalance.reserved} ROX)` : ''}.
+      Эти средства не прибавлены к доступному Telegram-балансу;
+      их перенос требует отдельной финансовой сверки.
+    </p> : null}
+  </section>
+}
+
 export function BrowserNativePaidEntry({
   accountId, telegramLinked, onSessionExpired,
 }: {
@@ -140,9 +208,8 @@ export function BrowserNativePaidEntry({
     })
   }
 
-  if (telegramLinked) return <p className="text-sm text-[#bbb4a9]">
-    Баланс Telegram доступен в привязанной студии. Веб-кошелёк не создаётся повторно.
-  </p>
+  if (telegramLinked) return <LinkedTelegramBalance key={accountId}
+    onSessionExpired={onSessionExpired} />
 
   if (status === 'loading') return <p role="status" className="text-sm text-[#bdb6aa]">
     Проверяем доступность веб-генераций и состояние баланса…
