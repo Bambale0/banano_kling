@@ -403,7 +403,6 @@ async def test_admin_can_reprice_existing_risk_accepted_light_without_full_cover
     """Already-public Light stays editable even before all live resolutions pass."""
     api = project_api
     api.authenticate.return_value = (101, True)
-    api.repo  # Existing SQLite-backed HTTP fixture; no paid generation.
     settings, version = await api.repo.settings()
     settings['public_enabled'] = True
     settings['verified_operations'] = ['motion_transfer_light', 'object_swap_light']
