@@ -29,7 +29,7 @@ export function TelegramBotApprovalLogin() {
   }, [])
 
   useEffect(() => {
-    if (!approval || phase !== 'waiting') return
+    if (!approval) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
