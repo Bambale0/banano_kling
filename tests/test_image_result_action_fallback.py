@@ -99,3 +99,29 @@ async def test_polled_image_result_preserves_actions_if_only_document_delivers(
     )
     complete.assert_awaited_once()
     mark_delivered.assert_awaited_once()
+
+
+def test_both_image_delivery_paths_attach_actions_on_document_only_fallback():
+    """Every document fallback is wired to the matching photo result keyboard."""
+    import ast
+    from pathlib import Path
+
+    source = Path(main.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_send_original_file"
+    ]
+    assert len(calls) == 2  # Poller and provider-webhook paths
+    for call in calls:
+        markup = next((kw.value for kw in call.keywords if kw.arg == "reply_markup"), None)
+        assert isinstance(markup, ast.IfExp)
+        assert isinstance(markup.test, ast.UnaryOp)
+        assert isinstance(markup.test.op, ast.Not)
+        assert isinstance(markup.test.operand, ast.Name)
+        assert markup.test.operand.id == "preview_sent"
+        assert isinstance(markup.orelse, ast.Constant)
+        assert markup.orelse.value is None
