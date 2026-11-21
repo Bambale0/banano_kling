@@ -14,6 +14,37 @@ type Approval = {
 type Phase = 'idle' | 'starting' | 'waiting' | 'claiming' | 'error' | 'denied' | 'expired'
 
 const ROOT = '/mini-app/api/web-auth/telegram-approval'
+const STORED_APPROVAL = 'neuromix:telegram-browser-approval'
+const DEEP_LINK_RE = /^https:\/\/t\.me\/[a-zA-Z0-9_]{5,32}\?start=auth_[A-Za-z0-9_-]{43}$/
+
+type StoredApproval = Approval & { expires_at: number }
+
+function clearStoredApproval() {
+  try { window.sessionStorage.removeItem(STORED_APPROVAL) } catch { /* private mode */ }
+}
+
+function restoreApproval(): Approval | null {
+  try {
+    const saved = window.sessionStorage.getItem(STORED_APPROVAL)
+    if (!saved) return null
+    const data = JSON.parse(saved) as Partial<StoredApproval>
+    const remaining = Number(data.expires_at) - Date.now()
+    if (!/^[a-f0-9]{32}$/.test(String(data.id || '')) ||
+        !DEEP_LINK_RE.test(String(data.url || '')) ||
+        !/^\d{6}$/.test(String(data.confirmation_code || '')) ||
+        !Number.isFinite(remaining) || remaining <= 0 || remaining > 300_000) {
+      clearStoredApproval()
+      return null
+    }
+    return {
+      id: data.id!, url: data.url!, confirmation_code: data.confirmation_code!,
+      expires_in: remaining / 1000,
+    }
+  } catch {
+    clearStoredApproval()
+    return null
+  }
+}
 
 /** A browser-bound device authorization; Telegram alone cannot mint a web session. */
 export function TelegramBotApprovalLogin() {
@@ -25,6 +56,12 @@ export function TelegramBotApprovalLogin() {
 
   useEffect(() => {
     mounted.current = true
+    const pending = restoreApproval()
+    if (pending) {
+      setApproval(pending)
+      setPhase('waiting')
+      setMessage('Запрос на вход сохранён. Подтвердите его в боте и вернитесь сюда.')
+    }
     return () => { mounted.current = false }
   }, [])
 
@@ -38,7 +75,12 @@ export function TelegramBotApprovalLogin() {
     async function poll(): Promise<void> {
       if (controller.signal.aborted) return
       if (Date.now() >= deadline) {
-        if (mounted.current) { setPhase('expired'); setMessage('Время подтверждения истекло. Попробуйте снова.') }
+        if (mounted.current) {
+          clearStoredApproval()
+          setApproval(null)
+          setPhase('expired')
+          setMessage('Время подтверждения истекло. Попробуйте снова.')
+        }
         return
       }
       try {
@@ -63,17 +105,22 @@ export function TelegramBotApprovalLogin() {
             throw new Error('claim_rejected')
           }
           if (mounted.current && !controller.signal.aborted) {
+            clearStoredApproval()
             // Existing web-auth config resolves the shared Telegram owner and studio bridge.
             window.location.replace('/login' + window.location.search)
           }
           return
         }
         if (data.status === 'denied') {
+          clearStoredApproval()
+          setApproval(null)
           setPhase('denied')
           setMessage('Вход отклонён в Telegram. Новая попытка доступна ниже.')
           return
         }
         if (data.status === 'expired' || data.status === 'consumed') {
+          clearStoredApproval()
+          setApproval(null)
           setPhase('expired')
           setMessage('Запрос уже истёк или был использован. Начните вход заново.')
           return
@@ -97,13 +144,10 @@ export function TelegramBotApprovalLogin() {
     setApproval(null)
     setMessage('Создаём одноразовый запрос для Telegram…')
 
-    // Reserve a tab synchronously with the user's click; async window.open
-    // would be blocked in Safari and mobile Chromium.
-    const telegramTab = window.open('about:blank', '_blank')
-    if (telegramTab) {
-      telegramTab.opener = null
-      try { telegramTab.document.title = 'Открываем Telegram — NEUROMIX' } catch { /* ignored */ }
-    }
+    // No about:blank popup: Telegram iOS WebView can strand the user on that
+    // intermediate tab. The bot link is rendered after the server responds;
+    // the user taps it directly in a fresh gesture, preserving this login tab.
+    clearStoredApproval()
 
     try {
       const response = await fetch(ROOT + '/start', {
@@ -113,21 +157,22 @@ export function TelegramBotApprovalLogin() {
       })
       const data = await response.json() as Partial<Approval> & { ok?: boolean; error?: string }
       if (!response.ok || !data.ok || !data.id || !data.url ||
-          !/^https:\/\/t\.me\/[a-zA-Z0-9_]{5,32}\?start=auth_[A-Za-z0-9_-]{43}$/.test(data.url) ||
+          !DEEP_LINK_RE.test(data.url) ||
           !/^\d{6}$/.test(data.confirmation_code || '') ||
           typeof data.expires_in !== 'number' || !Number.isInteger(data.expires_in) || data.expires_in <= 0) {
         throw new Error(data.error || 'unavailable')
       }
       if (!mounted.current) return
       const ticket = data as Approval
+      try {
+        window.sessionStorage.setItem(STORED_APPROVAL, JSON.stringify({
+          ...ticket, expires_at: Date.now() + ticket.expires_in * 1000,
+        }))
+      } catch { /* private mode: polling still works in the active tab */ }
       setApproval(ticket)
       setPhase('waiting')
-      setMessage(telegramTab
-        ? 'Подтвердите вход в боте и вернитесь на эту страницу.'
-        : 'Браузер заблокировал новое окно. Откройте Telegram по ссылке ниже.')
-      if (telegramTab && !telegramTab.closed) telegramTab.location.replace(ticket.url)
+      setMessage('Нажмите «Открыть Telegram», подтвердите вход в боте и вернитесь на эту страницу.')
     } catch {
-      if (telegramTab && !telegramTab.closed) telegramTab.close()
       if (mounted.current) {
         setPhase('error')
         setMessage('Не удалось запустить подтверждение. Проверьте соединение и попробуйте снова.')
@@ -140,6 +185,7 @@ export function TelegramBotApprovalLogin() {
   const cancel = async () => {
     if (!approval || phase !== 'waiting') return
     const id = approval.id
+    clearStoredApproval()
     // Changing approval aborts the polling request and any in-flight claim.
     setApproval(null)
     setPhase('denied')
@@ -176,7 +222,7 @@ export function TelegramBotApprovalLogin() {
         {approval.confirmation_code}
       </p>
       <p className="text-xs text-[#b8babd]">Ссылка действует 5 минут. Никому не пересылайте её.</p>
-      <a href={approval.url} target="_blank" rel="noopener noreferrer"
+      <a href={approval.url} rel="noopener noreferrer"
         className="flex min-h-11 items-center justify-center gap-2 border border-[#e7b154]/60 text-sm font-semibold text-[#f3d392]">
         Открыть Telegram <ExternalLink aria-hidden="true" className="size-4" />
       </a>
