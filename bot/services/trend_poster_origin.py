@@ -92,10 +92,109 @@ async def serve_public_trend_poster(request: web.Request) -> web.Response:
 
 
 
+MAX_PUBLIC_LIVE_BYTES = 6 * 1024 * 1024
+_LIVE_HASH_RE = re.compile(r"[a-f0-9]{32}")
+_LIVE_RANGE_RE = re.compile(r"bytes=(\\d*)-(\\d*)")
+
+
+def _read_public_trend_live_video(relative: str) -> bytes:
+    """Bounded S3 read from a dedicated, hashed public live-clip namespace."""
+    settings = S3Settings.from_config()
+    result = _s3_client(settings).get_object(
+        Bucket=settings.bucket,
+        Key=object_key(relative, settings),
+        Range=f"bytes=0-{MAX_PUBLIC_LIVE_BYTES}",
+    )
+    body = result["Body"]
+    try:
+        content_range = str(result.get("ContentRange") or "")
+        match = re.fullmatch(r"bytes \\d+-\\d+/(\\d+)", content_range)
+        total = int(match.group(1)) if match else None
+        if total is not None and total > MAX_PUBLIC_LIVE_BYTES:
+            raise PosterTooLargeError(total)
+        payload = body.read(MAX_PUBLIC_LIVE_BYTES + 1)
+        if len(payload) > MAX_PUBLIC_LIVE_BYTES:
+            raise PosterTooLargeError(len(payload))
+        if len(payload) < 12 or payload[4:8] != b"ftyp":
+            raise ValueError("Stored public trend live preview is not an MP4")
+        return payload
+    finally:
+        body.close()
+
+
+def _live_byte_range(header: str, size: int) -> tuple[int, int] | None:
+    if not header:
+        return None
+    match = _LIVE_RANGE_RE.fullmatch(header.strip())
+    if not match or not any(match.groups()):
+        raise web.HTTPRequestRangeNotSatisfiable(
+            headers={"Content-Range": f"bytes */{size}"}
+        )
+    first, last = match.groups()
+    if first:
+        start = int(first)
+        end = int(last) if last else size - 1
+    else:
+        suffix_size = int(last)
+        if suffix_size <= 0:
+            raise web.HTTPRequestRangeNotSatisfiable(
+                headers={"Content-Range": f"bytes */{size}"}
+            )
+        start, end = max(0, size - suffix_size), size - 1
+    if start >= size or start > end:
+        raise web.HTTPRequestRangeNotSatisfiable(
+            headers={"Content-Range": f"bytes */{size}"}
+        )
+    return start, min(end, size - 1)
+
+
+async def serve_public_trend_live_video(request: web.Request) -> web.Response:
+    """Small immutable MP4 over same origin with browser/WebView HTTP Range."""
+    digest = str(request.match_info.get("video_hash") or "")
+    if not _LIVE_HASH_RE.fullmatch(digest):
+        raise web.HTTPNotFound(text="Trend video preview not found")
+    try:
+        payload = await asyncio.to_thread(
+            _read_public_trend_live_video, f"trend-previews/live/{digest}.mp4",
+        )
+    except PosterTooLargeError as exc:
+        logger.warning("Public trend live preview oversized; size=%s", exc.size)
+        raise web.HTTPRequestEntityTooLarge(
+            max_size=MAX_PUBLIC_LIVE_BYTES, actual_size=exc.size,
+        ) from exc
+    except Exception as exc:
+        if _is_missing_object_error(exc):
+            raise web.HTTPNotFound(text="Trend video preview not found") from exc
+        logger.warning("Public trend live preview unavailable; type=%s", type(exc).__name__)
+        raise web.HTTPServiceUnavailable(
+            text="Trend video preview temporarily unavailable",
+        ) from exc
+
+    region = _live_byte_range(request.headers.get("Range", ""), len(payload))
+    headers = {
+        "Cache-Control": _PUBLIC_CACHE_CONTROL,
+        "X-Content-Type-Options": "nosniff",
+        "Accept-Ranges": "bytes",
+    }
+    if region is not None:
+        start, end = region
+        headers["Content-Range"] = f"bytes {start}-{end}/{len(payload)}"
+        return web.Response(
+            status=206, body=payload[start:end + 1],
+            content_type="video/mp4", headers=headers,
+        )
+    return web.Response(body=payload, content_type="video/mp4", headers=headers)
+
+
 def register_public_trend_poster_route(app: web.Application) -> None:
-    """Register only JPG thumbnails; MP4s fall through to normal /uploads."""
+    """Only hashed public JPGs/live MP4s bypass private S3 redirects."""
     app.router.add_get(
-        r"/uploads/trend-previews/{poster_path:.*\.jpg}",
+        r"/uploads/trend-previews/{poster_path:.*\\.jpg}",
         serve_public_trend_poster,
         name="public-trend-poster",
+    )
+    app.router.add_get(
+        r"/uploads/trend-previews/live/{video_hash:[a-f0-9]{32}}.mp4",
+        serve_public_trend_live_video,
+        name="public-trend-live-video",
     )
