@@ -339,6 +339,65 @@ try {
   await browserExplicit.close()
   console.log('login/linked Yandex explicit web=1 -> independent browser, no Telegram bridge: OK')
 
+  // A public website profile requires neither Telegram credentials nor
+  // private /actor, /catalog and /history calls.
+  const websitePublic = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const publicReads = []
+  await websitePublic.route('**/mini-app/api/web-auth/**', route => {
+    publicReads.push(new URL(route.request().url()).pathname)
+    assert.ok(route.request().url().includes('/public-profile?code=SEL4DQAP'),
+      'anonymous profile may only request the public profile projection')
+    return route.fulfill({ status: 200, contentType: 'application/json',
+      body: JSON.stringify({ ok: true, code: 'SEL4DQAP', display_name: 'Автор NEUROMIX' }) })
+  })
+  await websitePublic.goto(origin + '/mini-app/?web=1&profile=SEL4DQAP&ref=SEL4DQAP')
+  await websitePublic.getByRole('heading', { name: 'Автор NEUROMIX' }).waitFor()
+  assert.deepEqual(publicReads, ['/mini-app/api/web-auth/public-profile'])
+  const join = websitePublic.getByRole('link', { name: 'Присоединиться по приглашению' })
+  assert.equal(new URL(await join.getAttribute('href')).searchParams.get('ref'), 'SEL4DQAP')
+  assert.ok(!(await join.getAttribute('href')).includes('t.me'))
+  await websitePublic.close()
+  console.log('public website profile without Telegram or private requests: OK')
+
+  // Independent web auth must retain and attach the inviter only once.
+  const websiteInvited = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  let attachRequests = 0
+  await websiteInvited.route('**/mini-app/api/web-auth/**', route => {
+    const path = new URL(route.request().url()).pathname
+    const response = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    if (path.endsWith('/actor')) return response({
+      ok: true, account_id: 'website-synthetic-owner', auth_channel: 'web',
+      telegram_linked: false, wallet_authority: 'web_live',
+    })
+    if (path.endsWith('/catalog')) return response({
+      ok: true, web_generate_enabled: false, image_models: [], video_models: [],
+    })
+    if (path.endsWith('/history')) return response({
+      ok: true, scope: 'web_only', recent_tasks: [], next_cursor: null, cursor_reset: false,
+    })
+    if (path.endsWith('/public-links')) return response({
+      ok: true, code: 'WOWNED123456789',
+      profile_link: origin + '/mini-app/?web=1&profile=WOWNED123456789&ref=WOWNED123456789',
+      referral_link: origin + '/login?web=1&ref=WOWNED123456789',
+    })
+    if (path.endsWith('/referral/attach')) {
+      attachRequests += 1
+      assert.equal(route.request().postDataJSON().code, 'SEL4DQAP')
+      return response({ ok: true, attached: attachRequests === 1 })
+    }
+    if (path.includes('/web-generation/') || path.includes('/web-payments/')) {
+      return route.fulfill({ status: 503, contentType: 'application/json',
+        body: JSON.stringify({ ok: false, error: 'paid_scope_disabled_in_public_link_e2e' }) })
+    }
+    throw new Error('Unexpected public web route: ' + path)
+  })
+  await websiteInvited.goto(origin + '/mini-app/?web=1&ref=SEL4DQAP')
+  await websiteInvited.getByText('Приглашение закреплено за веб-аккаунтом.').waitFor()
+  await websiteInvited.getByRole('link', { name: origin + '/login?web=1&ref=WOWNED123456789' }).waitFor()
+  assert.equal(attachRequests, 1)
+  await websiteInvited.close()
+  console.log('independent website referral preserved, attached and own share links: OK')
+
   // The same /mini-app/ bundle supports browser ownership across viewports.
   // No real user cookies, media, money or provider calls occur in this smoke.
   for (const [width, height] of [[320, 700], [390, 844], [768, 960], [1440, 900]]) {

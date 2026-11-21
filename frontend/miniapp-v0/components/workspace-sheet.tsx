@@ -4,6 +4,7 @@ import { useMemo, useRef, useState } from 'react'
 import { Bot, BriefcaseBusiness, Copy, Headphones, ImagePlus, Loader2, Mic, PanelTopOpen, Send, Sparkles, Square, Wand2 } from 'lucide-react'
 import { useApp } from '@/lib/app-context'
 import { copyTextToClipboard } from '@/lib/clipboard'
+import { webReferralFromPlatformLink } from '@/lib/web-public-links'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { cn } from '@/lib/utils'
@@ -668,7 +669,7 @@ function PartnersPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const referralLink = partner?.referral_link || ''
+  const referralLink = webReferralFromPlatformLink(partner?.referral_link || '') || partner?.referral_link || ''
   const statusLabel = partner ? 'Партнёр' : '—'
 
   return (

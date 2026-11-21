@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom'
 import { render, screen, waitFor } from '@testing-library/react'
 import { ProfileTab } from '../profile-tab'
 import { useApp } from '@/lib/app-context'
@@ -54,4 +55,17 @@ it('never renders a website logout in native Telegram', async () => {
   render(<ProfileTab />)
   await waitFor(() => expect(mockedMyFeed).toHaveBeenCalled())
   expect(screen.queryByRole('button', { name: 'Выйти из аккаунта' })).toBeNull()
+})
+
+
+it('publishes the actual website profile URL without Telegram deep link', async () => {
+  mockedApp.mockReturnValue({
+    state: { ...fakeState, user: { ...fakeState.user, referralCode: 'SEL4DQAP' } },
+    viewedProfileCode: null, feedDeepLink: null, consumeFeedDeepLink: jest.fn(),
+    setActiveTab: jest.fn(), setPromptPreset: jest.fn(), setVideoPromptPreset: jest.fn(),
+  })
+  render(<ProfileTab />)
+  expect(await screen.findByText('http://localhost/mini-app/?web=1&profile=SEL4DQAP&ref=SEL4DQAP'))
+    .toBeInTheDocument()
+  expect(screen.queryByText(/https:\/\/t\.me/)).not.toBeInTheDocument()
 })

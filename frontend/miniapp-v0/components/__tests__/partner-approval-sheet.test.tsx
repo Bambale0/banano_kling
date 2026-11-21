@@ -63,7 +63,7 @@ describe('PartnerApprovalSheet', () => {
       mockedFetchPartnerOverview.mockResolvedValue(overview(status))
       render(<PartnerApprovalSheet />)
       expect(await screen.findByText('Ваш партнёрский кабинет')).toBeTruthy()
-      expect(screen.getByText(overview().referral_link)).toBeTruthy()
+      expect(screen.getByText('http://localhost/login?web=1&ref=TESTCODE')).toBeTruthy()
       expect(screen.getByText(/1 уровня: 30%/)).toBeTruthy()
       expect(screen.getByRole('button', { name: /скопировать ссылку/i })).toBeTruthy()
       expect(screen.queryByRole('button', { name: /активировать|подать заявку/i })).toBeNull()

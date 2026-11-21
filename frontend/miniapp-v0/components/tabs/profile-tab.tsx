@@ -11,7 +11,8 @@ import { cn, isHttpUrl } from '@/lib/utils'
 import { normalizeMiniAppMediaUrl, videoPreviewFrameUrl } from '@/lib/media-url'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { mergePendingPublication, mergePublication } from '@/lib/feed-events'
-import { platformMiniAppUrl } from '@/lib/account-platform'
+import { currentAccountPlatform, platformMiniAppUrl } from '@/lib/account-platform'
+import { webProfileUrl } from '@/lib/web-public-links'
 import { isBrowserAccountSession, signOutBrowserAccount } from '@/lib/browser-account-session'
 import { Button } from '@/components/ui/button'
 import {
@@ -254,13 +255,11 @@ export function ProfileTab() {
   )
   const profileShareLink =
     isOwnProfile
-      ? user.profileLink ||
-        (ownReferralCode
-          ? platformMiniAppUrl(
-              `profile_${ownReferralCode}_ref_${ownReferralCode}`,
-              user.botUsername,
-            )
-          : '')
+      ? currentAccountPlatform() === 'vk'
+        ? user.profileLink || (ownReferralCode
+            ? platformMiniAppUrl(`profile_${ownReferralCode}_ref_${ownReferralCode}`, user.botUsername)
+            : '')
+        : webProfileUrl(ownReferralCode)
       : ''
   const displayChannelUrl = isOwnProfile ? ownChannelUrl : profile?.channel_url || ''
   const repeatBalance =
