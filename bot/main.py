@@ -1227,7 +1227,14 @@ def _guess_result_filename(result_url: str, fallback_base: str = "original") -> 
         name = f"{name}.png"
     return name
 
-async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: str, image_bytes: bytes | None = None) -> bool:
+async def _send_original_file(
+    bot_instance: Bot,
+    telegram_id: int,
+    result_url: str,
+    image_bytes: bytes | None = None,
+    *,
+    reply_markup=None,
+) -> bool:
     if not result_url:
         return False
     filename = _guess_result_filename(result_url)
@@ -1237,12 +1244,14 @@ async def _send_original_file(bot_instance: Bot, telegram_id: int, result_url: s
                 chat_id=telegram_id,
                 document=types.BufferedInputFile(image_bytes, filename=filename),
                 caption="📎 Исходник файлом",
+                reply_markup=reply_markup,
             )
             return True
         await bot_instance.send_document(
             chat_id=telegram_id,
             document=result_url,
             caption="📎 Исходник файлом",
+            reply_markup=reply_markup,
         )
         return True
     except Exception as e:
@@ -1814,6 +1823,9 @@ async def _send_polled_nexus_image_result(
             telegram_id,
             persisted_url,
             image_bytes,
+            # The document may be the only delivered media when Telegram
+            # rejects both photo variants. Keep Repeat/Animate/Publish usable.
+            reply_markup=keyboard if not preview_sent else None,
         )
     except Exception as exc:
         if await _finish_result_with_unavailable_telegram(
@@ -5330,7 +5342,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 f"Image URL send failed ({url_send_e})"
                             )
 
-                    original_sent = await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
+                    original_sent = await _send_original_file(
+                        bot_instance,
+                        telegram_id,
+                        result_url,
+                        image_bytes,
+                        # The webhook delivery path needs the same action buttons
+                        # when Telegram rejects the preview photo and URL.
+                        reply_markup=kb_link if not preview_sent else None,
+                    )
 
                     if preview_sent:
                         await complete_video_task(task_id, result_url)
