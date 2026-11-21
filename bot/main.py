@@ -5342,7 +5342,15 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
                                 f"Image URL send failed ({url_send_e})"
                             )
 
-                    original_sent = await _send_original_file(bot_instance, telegram_id, result_url, image_bytes)
+                    original_sent = await _send_original_file(
+                        bot_instance,
+                        telegram_id,
+                        result_url,
+                        image_bytes,
+                        # The webhook delivery path needs the same action buttons
+                        # when Telegram rejects the preview photo and URL.
+                        reply_markup=kb_link if not preview_sent else None,
+                    )
 
                     if preview_sent:
                         await complete_video_task(task_id, result_url)
