@@ -88,7 +88,7 @@ export function TelegramBotApprovalLogin() {
     }
     void poll()
     return () => { controller.abort(); if (timer) clearTimeout(timer) }
-  }, [approval, phase])
+  }, [approval])
 
   const start = async () => {
     if (inFlight.current || phase === 'waiting' || phase === 'claiming') return
@@ -115,7 +115,7 @@ export function TelegramBotApprovalLogin() {
       if (!response.ok || !data.ok || !data.id || !data.url ||
           !/^https:\/\/t\.me\/[a-zA-Z0-9_]{5,32}\?start=auth_[A-Za-z0-9_-]{43}$/.test(data.url) ||
           !/^\d{6}$/.test(data.confirmation_code || '') ||
-          !Number.isInteger(data.expires_in) || (data.expires_in || 0) <= 0) {
+          typeof data.expires_in !== 'number' || !Number.isInteger(data.expires_in) || data.expires_in <= 0) {
         throw new Error(data.error || 'unavailable')
       }
       if (!mounted.current) return
