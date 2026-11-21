@@ -15,6 +15,23 @@ LATEST_ARCHIVE="$BACKUP_DIR/bot-latest.tar.gz"
 TMP_ARCHIVE="$BACKUP_DIR/.bot-latest.tar.gz.tmp"
 PARTS_DIR="$BACKUP_DIR/telegram-parts"
 LOCK_FILE="$BACKUP_DIR/.backup.lock"
+
+# Pre-deploy snapshots already retain a restorable database file. Creating
+# bot-latest.tar.gz around that same dump wastes nearly the same space again.
+# Never disable the archive for operator/Telegram delivery by accident.
+BACKUP_RAW_ONLY="${BACKUP_RAW_ONLY:-0}"
+case "$BACKUP_RAW_ONLY" in
+    0|1) ;;
+    *) echo "BACKUP_RAW_ONLY must be 0 or 1" >&2; exit 2 ;;
+esac
+if [ "$BACKUP_RAW_ONLY" = 1 ] && [ "${SEND_BACKUP_TO_ADMINS:-1}" != 0 ]; then
+    echo "BACKUP_RAW_ONLY=1 requires SEND_BACKUP_TO_ADMINS=0" >&2
+    exit 2
+fi
+if [ "$BACKUP_RAW_ONLY" = 1 ] && { [ -e "$BACKUP_DIR/bot-latest.tar.gz" ] || [ -e "$BACKUP_DIR/.bot-latest.tar.gz.tmp" ]; }; then
+    echo "BACKUP_RAW_ONLY=1 requires a fresh backup directory without an older archive" >&2
+    exit 2
+fi
 TELEGRAM_DOCUMENT_MAX_BYTES="${TELEGRAM_DOCUMENT_MAX_BYTES:-47185920}"
 
 read_env_file_value() {
@@ -366,15 +383,21 @@ SQL
             ;;
     esac
 
-    rm -f "$TMP_ARCHIVE"
-    tar -C "$BACKUP_DIR" -czf "$TMP_ARCHIVE" "$archive_member"
-    mv -f "$TMP_ARCHIVE" "$LATEST_ARCHIVE"
+    if [ "$BACKUP_RAW_ONLY" = "1" ]; then
+        # Keep the verified raw database snapshot for explicit restore.
+        # Avoid a second ~same-size tar.gz when no archive is being sent.
+        echo "$(date '+%Y-%m-%d %H:%M:%S') pre-deploy raw backup retained: $BACKUP_DIR/$archive_member (archive intentionally omitted)"
+    else
+        rm -f "$TMP_ARCHIVE"
+        tar -C "$BACKUP_DIR" -czf "$TMP_ARCHIVE" "$archive_member"
+        mv -f "$TMP_ARCHIVE" "$LATEST_ARCHIVE"
 
-    archive_size="$(du -h "$LATEST_ARCHIVE" | awk '{print $1}')"
-    echo "$(date '+%Y-%m-%d %H:%M:%S') archive updated: $LATEST_ARCHIVE ($archive_size)"
+        archive_size="$(du -h "$LATEST_ARCHIVE" | awk '{print $1}')"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') archive updated: $LATEST_ARCHIVE ($archive_size)"
 
-    if [ "${SEND_BACKUP_TO_ADMINS:-1}" = "1" ]; then
-        send_archive_to_admins "$LATEST_ARCHIVE" "$archive_name" "$created_at"
-        echo "$(date '+%Y-%m-%d %H:%M:%S') archive sent to admins"
+        if [ "${SEND_BACKUP_TO_ADMINS:-1}" = "1" ]; then
+            send_archive_to_admins "$LATEST_ARCHIVE" "$archive_name" "$created_at"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') archive sent to admins"
+        fi
     fi
 ) 9>"$LOCK_FILE"

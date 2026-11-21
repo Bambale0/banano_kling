@@ -179,7 +179,7 @@ backup_database() {
     # cannot overwrite prior release backups. Keep even failed attempts for review.
     backup_dir="$(mktemp -d "$backup_root/predeploy-$(date -u '+%Y%m%dT%H%M%SZ')-XXXXXX")"
     log "Creating pre-deploy database backup in $backup_dir"
-    DB_BACKUP_DIR="$backup_dir" SEND_BACKUP_TO_ADMINS=0 "$PROJECT_DIR/scripts/backup_db.sh"
+    DB_BACKUP_DIR="$backup_dir" SEND_BACKUP_TO_ADMINS=0 BACKUP_RAW_ONLY=1 "$PROJECT_DIR/scripts/backup_db.sh"
     log "Database backup retained at $backup_dir (use its dump/database for an explicit restore)"
 }
 
