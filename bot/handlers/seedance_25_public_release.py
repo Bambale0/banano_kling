@@ -732,11 +732,23 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
             data["identityTransfer"] = body["identityTransfer"]
         _identity_intent(data)
     except ValueError as exc:
+        if source_feed_gen_id:
+            # Never log private author prompts or media URLs. The source ID
+            # and phase are enough to correlate a reproducible 400 in logs.
+            logger.warning(
+                "Seedance repeat validation rejected: stage=%s source_id=%s scenario=%s error_type=%s",
+                "identity", immediate_parent_id, data["seedance25_scenario"],
+                type(exc).__name__,
+            )
         error = (
-            "Не удалось проверить входные данные повтора. Проверьте свои файлы."
+            "Не удалось подготовить материалы повтора. "
+            "Откройте публикацию заново и проверьте свои референсы."
             if source_feed_gen_id else str(exc)
         )
-        return web.json_response({"ok": False, "error": error}, status=400)
+        return web.json_response({
+            "ok": False, "error": error,
+            **({"code": "repeat_input_validation_failed"} if source_feed_gen_id else {}),
+        }, status=400)
     scenario = data["seedance25_scenario"]
     if scenario not in {"text", "first_frame", "first_last", "multimodal"}:
         return web.json_response({"ok": False, "error": "Некорректный сценарий Seedance 2.5"}, status=400)
@@ -769,11 +781,23 @@ async def _public_miniapp_generate(request: web.Request, body: dict[str, Any]) -
     except _PublicVideoAccessError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)
     except ValueError as exc:
+        if source_feed_gen_id:
+            # Never log private author prompts or media URLs. The source ID
+            # and phase are enough to correlate a reproducible 400 in logs.
+            logger.warning(
+                "Seedance repeat validation rejected: stage=%s source_id=%s scenario=%s error_type=%s",
+                "media", immediate_parent_id, data["seedance25_scenario"],
+                type(exc).__name__,
+            )
         error = (
-            "Не удалось проверить входные данные повтора. Проверьте свои файлы."
+            "Не удалось подготовить материалы повтора. "
+            "Откройте публикацию заново и проверьте свои референсы."
             if source_feed_gen_id else str(exc)
         )
-        return web.json_response({"ok": False, "error": error}, status=400)
+        return web.json_response({
+            "ok": False, "error": error,
+            **({"code": "repeat_input_validation_failed"} if source_feed_gen_id else {}),
+        }, status=400)
 
     payload.update(source_feed_gen_id=source_feed_gen_id, parent_generation_id=immediate_parent_id)
     billing_quote = await _payload_quote(telegram_id, payload)
