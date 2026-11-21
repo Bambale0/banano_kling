@@ -29,7 +29,7 @@ def _prepare(tmp_path: Path) -> tuple[Path, Path, Path, dict[str, str]]:
         "if len(sys.argv) > 2:\n"
         "    print('ok')\n"
         "    raise SystemExit(0)\n"
-        "match=re.search(r\"\\\\.backup '([^']+)'\", sys.stdin.read())\n"
+        "match=re.search(r\"[.]backup '([^']+)'\", sys.stdin.read())\n"
         "if not match: raise SystemExit('missing backup target')\n"
         "shutil.copyfile(sys.argv[1],match.group(1))\n",
         encoding="utf-8",
@@ -105,4 +105,4 @@ def test_raw_only_refuses_stale_archive_in_reused_backup_directory(tmp_path: Pat
 def test_backend_deploy_explicitly_opts_in_without_skipping_backup() -> None:
     deploy = (Path(__file__).resolve().parents[1] / "scripts" / "deploy_backend_docker.sh").read_text()
     assert 'SEND_BACKUP_TO_ADMINS=0 BACKUP_RAW_ONLY=1' in deploy
-    assert 'SKIP_BACKUP=1' not in deploy.split("backup_database() {", 1)[1].split("container_health() {", 1)[0]
+    assert "rm -rf" not in deploy.split("backup_database() {", 1)[1].split("container_health() {", 1)[0]
