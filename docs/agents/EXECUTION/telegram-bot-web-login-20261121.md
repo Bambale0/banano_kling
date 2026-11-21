@@ -48,3 +48,18 @@
 - This document is an implementation ledger, **not** proof that any unrun test or production deployment passed.
 - Telegram callback button phishing remains a social-engineering possibility: the 6-digit code must match the user's browser; never approve unsolicited messages. The cookie prevents remote claim of the challenge in another browser, not an approved challenge deliberately initiated by an attacker with a cooperating Telegram user.
 - No destructive changes, new payment/generation calls, or production credential changes are required.
+
+
+## iOS Telegram WebView regression — 2026-11-21 (video `555(1).mp4`)
+
+**Reproduced:** User's 51-second iOS video shows `neuromixbot.com` opening from Telegram, followed by `about:blank` screens. Telegram bot receives /start auth_..., displays a six-digit comparison code and the Confirm/Decline buttons, and reports «Вход подтверждён». The browser is stranded in a blank tab and sign-in does not complete visibly.
+
+**Production baseline:** `3205966a10245706b8770d1ef32dc54b98e4e7a9`, checked via Docker image OCI revision and Mini App `revision.txt`.
+
+**Root cause:** Frontend called `window.open('about:blank', '_blank')` synchronously, then after async /start tried `telegramTab.location.replace(t.me URL)`. The same button also exposed `target="_blank"`. The video is consistent with iOS Telegram WebView intercepting the second navigation. Exact native WebView implementation has not been instrumented. Client-only React state also lost the pending request on navigation/reload.
+
+**Fix:** Remove intermediary popup and automatic cross-window redirect. Render the validated t.me deep link as a same-tab native anchor after ticket creation, requiring a direct user tap. Persist only the short-lived pending request ID, confirmation code, deep-link URL and expiry in same-tab sessionStorage, validate expiry/shape on return and restore polling. Keep server-only Telegram identity proof, secure cookie, Origin protection, TTL, one-time claim and shared accounts unchanged. Clear stored approval on success, denial, cancellation and expiry.
+
+**Regression:** Jest enforces no window.open, no target=_blank and preservation of one ticket across remount. Browser E2E validates one ticket after reload and direct t.me anchor. Actual iOS Telegram device smoke remains a necessary post-deploy verification.
+
+**Release gates:** source fix + tests added; green PR CI, protected merge, exact-SHA deploy and live iOS smoke pending at commit time.
