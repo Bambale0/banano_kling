@@ -140,6 +140,8 @@ export function TelegramBotApprovalLogin() {
   const cancel = async () => {
     if (!approval || phase !== 'waiting') return
     const id = approval.id
+    // Changing approval aborts the polling request and any in-flight claim.
+    setApproval(null)
     setPhase('denied')
     setMessage('Запрос отменён.')
     try {
