@@ -16,7 +16,6 @@ from contextlib import suppress
 from pathlib import Path
 from uuid import uuid4
 
-from bot import db as db_backend
 from bot.services.media_input_utils import resolve_local_upload_path
 from bot.services.media_storage import (
     is_s3_enabled,
@@ -29,6 +28,8 @@ from bot.services.trend_catalog_media_cache import (
     source_key,
 )
 from bot.services.trend_preview_service import VIDEO_PREVIEW_EXTENSIONS
+
+from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
 MAX_SOURCE_BYTES = 200 * 1024 * 1024
