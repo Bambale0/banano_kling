@@ -136,7 +136,7 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
       {canAutoPlay && !failed ? (
         <video
           ref={ref}
-          src={visible ? videoPreviewFrameUrl(preview) : undefined}
+          src={visible ? videoPreviewFrameUrl(livePreview) : undefined}
           poster={activePoster || undefined}
           muted
           loop
