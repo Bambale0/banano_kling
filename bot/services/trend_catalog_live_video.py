@@ -166,20 +166,28 @@ def schedule_published_live_preview(prompt: dict | None) -> bool:
     return True
 
 
-async def reconcile_live_previews(*, limit: int = 2) -> dict[str, int]:
-    """Recover unpublished derivatives from DB after restarts/S3 failures."""
+async def reconcile_live_previews(
+    *, limit: int = 2, before_id: int | None = None,
+) -> dict[str, int | None]:
+    """Recover public videos fairly; a corrupt source never starves older rows."""
     count = max(1, min(12, int(limit)))
+    where_cursor = " AND id < ?" if before_id is not None else ""
     async with db_backend.connect() as conn:
         rows = await (await conn.execute(
             """SELECT id, preview_url FROM user_prompts
                WHERE status = 'approved' AND is_public = 1
                  AND category = 'video'
                  AND LOWER(COALESCE(tags, '')) LIKE '%"trend"%'
-               ORDER BY id DESC LIMIT 500"""
+               """ + where_cursor + """
+               ORDER BY id DESC LIMIT 500""",
+            (int(before_id),) if before_id is not None else (),
         )).fetchall()
     urls = [str(r[1] or "") for r in rows]
     have = await cached_live_previews(urls)
-    stats = {"checked": len(rows), "created": 0, "failed": 0, "skipped": 0}
+    stats: dict[str, int | None] = {
+        "checked": len(rows), "created": 0, "failed": 0,
+        "skipped": 0, "next_before_id": None,
+    }
     for row in rows:
         source = str(row[1] or "")
         key = source_key(source)
@@ -190,6 +198,7 @@ async def reconcile_live_previews(*, limit: int = 2) -> dict[str, int]:
             continue
         if stats["created"] + stats["failed"] >= count:
             break
+        stats["next_before_id"] = int(row[0])
         try:
             async with asyncio.timeout(
                 _number("TREND_LIVE_RECONCILE_TIMEOUT_SECONDS", 120, 20, 180)
@@ -208,11 +217,14 @@ async def reconcile_live_previews(*, limit: int = 2) -> dict[str, int]:
 
 async def _reconciliation_worker() -> None:
     await asyncio.sleep(_number("TREND_LIVE_RECONCILE_START_DELAY_SECONDS", 20, 5, 120))
+    cursor: int | None = None
     while True:
         try:
             summary = await reconcile_live_previews(
                 limit=_number("TREND_LIVE_RECONCILE_BATCH_SIZE", 2, 1, 12),
+                before_id=cursor,
             )
+            cursor = summary["next_before_id"]
             if summary["created"] or summary["failed"]:
                 logger.info("Trend live preview reconciliation: %s", summary)
         except asyncio.CancelledError:
