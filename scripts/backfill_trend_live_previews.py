@@ -14,13 +14,14 @@ import asyncio
 import logging
 from pathlib import Path
 
-from bot import db as db_backend
-from bot.services.trend_catalog_live_video import generate_live_preview
 from bot.services.trend_catalog_media_cache import (
     cached_live_previews,
     source_key,
 )
 from bot.services.trend_preview_service import VIDEO_PREVIEW_EXTENSIONS
+
+from bot import db as db_backend
+from bot.services.trend_catalog_live_video import generate_live_preview
 
 logger = logging.getLogger(__name__)
 
