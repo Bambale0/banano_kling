@@ -1244,7 +1244,6 @@ async def _send_original_file(
                 chat_id=telegram_id,
                 document=types.BufferedInputFile(image_bytes, filename=filename),
                 caption="📎 Исходник файлом",
-            reply_markup=reply_markup,
                 reply_markup=reply_markup,
             )
             return True
@@ -1252,6 +1251,7 @@ async def _send_original_file(
             chat_id=telegram_id,
             document=result_url,
             caption="📎 Исходник файлом",
+            reply_markup=reply_markup,
         )
         return True
     except Exception as e:
