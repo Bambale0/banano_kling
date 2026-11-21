@@ -6,6 +6,7 @@ stored in the same public upload bucket as their immutable originals.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from urllib.parse import unquote, urlsplit
 
@@ -26,6 +27,15 @@ _TABLE = """
         updated_at BIGINT NOT NULL
     )
 """
+_LIVE_TABLE = """
+    CREATE TABLE IF NOT EXISTS trend_catalog_live_video_assets (
+        source_key TEXT PRIMARY KEY,
+        preview_url TEXT NOT NULL,
+        updated_at BIGINT NOT NULL
+    )
+"""
+_LIVE_OUTPUT_RE = re.compile(r"/uploads/trend-previews/live/[a-f0-9]{32}\\.mp4")
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
 
 
 def source_key(value: str | None) -> str | None:
@@ -103,16 +113,75 @@ async def cached_thumbnails(source_urls: list[str]) -> dict[str, str]:
         return {}
 
 
+
+async def initialize_live_previews() -> None:
+    """Create the small independent live-clip manifest without migrating poster rows."""
+    async with db_backend.connect() as conn:
+        if db_backend.is_postgres():
+            await conn.execute_native_ddl(_LIVE_TABLE)
+        else:
+            await conn.execute(_LIVE_TABLE)
+        await conn.commit()
+
+
+async def record_live_preview(source_url: str, preview_url: str) -> None:
+    """Publish only own public short video derivatives, never a private original."""
+    source = source_key(source_url)
+    clip = source_key(preview_url)
+    if not source or not source.lower().endswith(_VIDEO_SUFFIXES):
+        raise ValueError("Live preview source must be a known video upload")
+    if not clip or not _LIVE_OUTPUT_RE.fullmatch(clip):
+        raise ValueError("Live preview must be a verified public H.264 derivative")
+    await initialize_live_previews()
+    async with db_backend.connect() as conn:
+        await conn.execute(
+            """INSERT INTO trend_catalog_live_video_assets (source_key, preview_url, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT (source_key) DO UPDATE SET
+                   preview_url = excluded.preview_url,
+                   updated_at = excluded.updated_at""",
+            (source, preview_url, int(time.time())),
+        )
+        await conn.commit()
+
+
+async def cached_live_previews(source_urls: list[str]) -> dict[str, str]:
+    """One database read per catalog page; never fetch media or transcode on hot reads."""
+    keys = list(dict.fromkeys(
+        key for url in source_urls
+        if (key := source_key(url)) and key.lower().endswith(_VIDEO_SUFFIXES)
+    ))[:500]
+    if not keys:
+        return {}
+    try:
+        async with db_backend.connect() as conn:
+            rows = await (await conn.execute(
+                "SELECT source_key, preview_url FROM trend_catalog_live_video_assets WHERE source_key IN ("
+                + ",".join("?" for _ in keys) + ")",
+                tuple(keys),
+            )).fetchall()
+        return {
+            str(row[0]): str(row[1]) for row in rows
+            if (preview := source_key(str(row[1]))) and _LIVE_OUTPUT_RE.fullmatch(preview)
+        }
+    except Exception:  # noqa: BLE001 -- missing/temporarily unavailable optional manifest
+        logger.debug("Trend live preview manifest unavailable; JPG fallback remains visible")
+        return {}
+
+
 async def enrich_cards(cards: list[dict]) -> None:
     if not cards:
         return
+    original_urls = [str(card.get("preview_url") or "") for card in cards]
     by_key = await cached_thumbnails([
-        str(card.get("preview_url") or "") for card in cards
+        url for url, card in zip(original_urls, cards)
         if not card.get("preview_poster_url")
     ])
-    for card in cards:
-        if card.get("preview_poster_url"):
-            continue
-        key = source_key(card.get("preview_url"))
-        if key and key in by_key:
+    live = await cached_live_previews(original_urls)
+    for card, original in zip(cards, original_urls):
+        key = source_key(original)
+        if key and not card.get("preview_poster_url") and key in by_key:
             card["preview_poster_url"] = by_key[key]
+        # Keep preview_url untouched: dialogs/repeats must open the full source.
+        if key and key in live and not card.get("preview_video_url"):
+            card["preview_video_url"] = live[key]
