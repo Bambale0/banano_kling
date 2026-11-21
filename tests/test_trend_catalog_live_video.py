@@ -27,7 +27,7 @@ async def test_live_generation_persists_before_manifest_and_keeps_original(monke
     def encode(_source, dest):
         calls.append(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"\\x00\\x00\\x00\\x18ftypisom" + b"test" * 30)
+        dest.write_bytes(b"\x00\x00\x00\x18ftypisom" + b"test" * 30)
     monkeypatch.setattr(live, "_encode_live_preview", encode)
     monkeypatch.setattr(live, "persist_upload_file", lambda *a, **k: PUBLIC)
 
