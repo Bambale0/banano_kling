@@ -1,4 +1,5 @@
 """Compact Trend loop generation never modifies originals and is restart-safe."""
+
 from unittest.mock import AsyncMock
 
 import pytest
