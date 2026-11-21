@@ -669,7 +669,7 @@ function PartnersPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const referralLink = webReferralFromPlatformLink(partner?.referral_link || '') || partner?.referral_link || ''
+  const referralLink = webReferralFromPlatformLink(partner?.referral_link || '')
   const statusLabel = partner ? 'Партнёр' : '—'
 
   return (

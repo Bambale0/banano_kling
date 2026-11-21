@@ -1,3 +1,4 @@
+import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { PartnerApprovalSheet } from '@/components/partner-approval-sheet'
@@ -70,6 +71,17 @@ describe('PartnerApprovalSheet', () => {
       expect(mockedExecuteMiniAppAction).not.toHaveBeenCalled()
     },
   )
+
+  it('never falls back to a Telegram link or an untrusted URL for malformed platform referral', async () => {
+    mockedFetchPartnerOverview.mockResolvedValue({
+      ...overview(), referral_link: 'https://t.me/other_bot?startapp=bad_token',
+    })
+    render(<PartnerApprovalSheet />)
+    expect(await screen.findByText('Ваш партнёрский кабинет')).toBeTruthy()
+    expect(screen.getByText('Ссылка временно недоступна')).toBeTruthy()
+    expect(screen.queryByText(/https:\/\/t\.me/)).toBeNull()
+    expect(screen.getByRole('button', { name: /скопировать ссылку/i })).toBeDisabled()
+  })
 
   it.each([0, 30, 40])('uses the server-provided individual commission %s without fallback', async (percent) => {
     mockedFetchPartnerOverview.mockResolvedValue({ ...overview(), percent })

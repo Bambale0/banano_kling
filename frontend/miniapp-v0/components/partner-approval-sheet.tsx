@@ -71,7 +71,7 @@ export function PartnerApprovalSheet() {
           {partner ? (
             <PartnerCabinet
               partner={partner}
-              referralLink={webReferralFromPlatformLink(partner.referral_link || '') || partner.referral_link || ''}
+              referralLink={webReferralFromPlatformLink(partner.referral_link || '')}
               isLoading={isLoading}
               onRefresh={loadPartnerData}
             />
