@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { useApp } from '@/lib/app-context'
 import { fetchPartnerOverview } from '@/lib/api'
+import { webReferralFromPlatformLink } from '@/lib/web-public-links'
 
 type PartnerOverview = Awaited<ReturnType<typeof fetchPartnerOverview>>
 
@@ -70,7 +71,7 @@ export function PartnerApprovalSheet() {
           {partner ? (
             <PartnerCabinet
               partner={partner}
-              referralLink={partner.referral_link || ''}
+              referralLink={webReferralFromPlatformLink(partner.referral_link || '')}
               isLoading={isLoading}
               onRefresh={loadPartnerData}
             />

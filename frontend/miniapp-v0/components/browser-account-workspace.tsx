@@ -11,6 +11,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ExternalLink, Image as ImageIcon, LoaderCircle, LogOut, RefreshCw, Video } from 'lucide-react'
 import { BrowserNativePaidEntry } from './browser-native-paid-entry'
+import { WebPublicProfile } from './web-public-profile'
+import { incomingWebReferralCode, publicProfileCodeFromSearch } from '@/lib/web-public-links'
 
 type Actor = {
   account_id: string
@@ -55,6 +57,8 @@ type HistoryPage = {
 }
 
 type TaskDetail = { ok: true; task: Task }
+
+type PublicLinks = { ok: true; code: string; profile_link: string; referral_link: string }
 
 class SessionExpired extends Error {}
 
@@ -104,6 +108,14 @@ function TaskPreview({ task }: { task: Task }) {
 }
 
 export function BrowserAccountWorkspace() {
+  const publicProfileCode = typeof window === 'undefined' ? ''
+    : publicProfileCodeFromSearch(window.location.search)
+  const inviteCode = typeof window === 'undefined' ? ''
+    : incomingWebReferralCode(window.location.search)
+  const signInUrl = inviteCode ? '/login?web=1&ref=' + encodeURIComponent(inviteCode) : '/login'
+  const [publicLinks, setPublicLinks] = useState<PublicLinks | null>(null)
+  const [publicLinksError, setPublicLinksError] = useState(false)
+  const [referralNotice, setReferralNotice] = useState('')
   const [actor, setActor] = useState<Actor | null>(null)
   const [catalog, setCatalog] = useState<Catalog | null>(null)
   const [history, setHistory] = useState<HistoryPage | null>(null)
@@ -118,6 +130,7 @@ export function BrowserAccountWorkspace() {
   const controllers = useRef(new Set<AbortController>())
 
   useEffect(() => {
+    if (publicProfileCode) return
     const epoch = ++generation.current
     const activeControllers = controllers.current
     const controller = new AbortController()
@@ -160,7 +173,7 @@ export function BrowserAccountWorkspace() {
       activeControllers.delete(controller)
       generation.current += 1
     }
-  }, [])
+  }, [publicProfileCode])
 
   const expire = useCallback(() => {
     generation.current += 1
@@ -170,11 +183,67 @@ export function BrowserAccountWorkspace() {
     setCatalog(null)
     setHistory(null)
     setDetail(null)
+    setPublicLinks(null)
+    setPublicLinksError(false)
+    setReferralNotice('')
     setStage('login')
     setPaging(false)
     setDetailLoading(false)
     setChecking(false)
   }, [])
+
+  // The server owns the public identity code; never derive it from an
+  // email subject, untrusted query string, or a Telegram-looking user ID.
+  useEffect(() => {
+    if (!actor || stage !== 'ready' || publicProfileCode) return
+    const controller = new AbortController()
+    void getWebData<PublicLinks>('/mini-app/api/web-auth/public-links', controller.signal)
+      .then(data => {
+        if (controller.signal.aborted) return
+        if (data.ok && /^[A-Z0-9_-]{1,60}$/.test(data.code)
+          && data.profile_link.startsWith(window.location.origin + '/mini-app/?web=1')
+          && data.referral_link.startsWith(window.location.origin + '/login?web=1')) {
+          setPublicLinks(data)
+          setPublicLinksError(false)
+        } else {
+          setPublicLinksError(true)
+        }
+      }).catch(() => {
+        if (!controller.signal.aborted) {
+          setPublicLinks(null)
+          setPublicLinksError(true)
+        }
+      })
+
+    const inviter = inviteCode
+    if (inviter && !actor.telegram_linked) {
+      void fetch('/mini-app/api/web-auth/referral/attach', {
+        method: 'POST', credentials: 'same-origin', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: inviter }), signal: controller.signal,
+      }).then(async response => {
+        if (controller.signal.aborted) return
+        const data = await response.json() as { ok?: boolean; attached?: boolean }
+        if (response.ok && data.ok) {
+          setReferralNotice('Приглашение закреплено за веб-аккаунтом.')
+        } else {
+          setReferralNotice('Приглашение не закреплено. Баланс и бонусы не изменены.')
+        }
+      }).catch(() => {
+        if (!controller.signal.aborted) setReferralNotice('Не удалось подтвердить приглашение.')
+      })
+    }
+    return () => controller.abort()
+  }, [actor, publicProfileCode, stage, inviteCode])
+
+  const copyPublicLink = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setMessage('Ссылка скопирована.')
+    } catch {
+      setMessage('Не удалось скопировать ссылку. Выделите её вручную.')
+    }
+  }
 
   // Recheck the SAME immutable owner when a tab becomes active. Login/logout
   // in another tab changes the shared HTTP-only cookie; never show stale
@@ -284,6 +353,8 @@ export function BrowserAccountWorkspace() {
     }
   }
 
+  if (publicProfileCode) return <WebPublicProfile code={publicProfileCode} />
+
   if (stage === 'loading' || checking) return <main
     className="flex min-h-svh items-center justify-center gap-3 bg-[#111719] p-6 text-[#efc17c]"
     role="status">
@@ -297,7 +368,7 @@ export function BrowserAccountWorkspace() {
     <p role="status" className="max-w-md text-[#bfb8ac]">
       {message || 'Для просмотра своих работ войдите в веб-аккаунт.'}
     </p>
-    <a href="/login" className="border border-[#d8ab67] px-6 py-3 font-bold text-[#f3ca86]">
+    <a href={signInUrl} className="border border-[#d8ab67] px-6 py-3 font-bold text-[#f3ca86]">
       Войти в NEUROMIX
     </a>
     {loggingOut || message ? <button
@@ -326,6 +397,34 @@ export function BrowserAccountWorkspace() {
       </header>
 
       {message ? <p role="alert" className="border border-amber-500/50 p-4 text-sm text-amber-200">{message}</p> : null}
+      {referralNotice ? <p role="status" className="border border-[#b38c55]/40 p-3 text-sm">{referralNotice}</p> : null}
+
+      <section aria-label="Мои публичные веб-ссылки" className="space-y-3 border border-[#b38c55]/35 bg-[#1b2325] p-4">
+        <h2 className="text-lg font-bold">Публичный профиль и приглашения</h2>
+        {publicLinks ? <>
+          {([
+            ['Профиль в браузере', publicLinks.profile_link],
+            ['Реферальная веб-ссылка', publicLinks.referral_link],
+          ] as const).map(([label, value]) => <div key={label} className="space-y-1">
+            <label className="block text-sm text-[#d9b881]">{label}</label>
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <a className="min-w-0 flex-1 break-all text-sm underline underline-offset-4"
+                href={value} target="_blank" rel="noopener noreferrer">{value}</a>
+              <button type="button" onClick={() => void copyPublicLink(value)}
+                className="min-h-10 border border-[#bd9559]/60 px-4 text-sm font-semibold">
+                Копировать
+              </button>
+            </div>
+          </div>)}
+          <p className="text-xs text-[#bcb6a9]">
+            Веб-приглашение закрепляет источник регистрации. Денежные партнёрские выплаты
+            выполняются только по отдельно подтверждённой платёжной механике.
+          </p>
+        </> : <p role="status" className="text-sm text-[#bcb6a9]">
+          {publicLinksError ? 'Публичные ссылки временно недоступны. Обновите страницу.' :
+            'Получаем ваши веб-ссылки…'}
+        </p>}
+      </section>
 
       {!actor?.telegram_linked ? <a href="/login?link=telegram"
         className="inline-flex min-h-11 items-center border border-[#cca36a]/50 px-4 text-sm text-[#f0c888]">

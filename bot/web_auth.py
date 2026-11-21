@@ -1012,3 +1012,7 @@ def setup_web_auth_routes(app: web.Application, miniapp_root: str) -> None:
     from bot.web_generation import register_routes as register_web_generation
 
     register_web_generation(app, root)
+
+    from bot.web_public_links import register_routes as register_web_public_links
+
+    register_web_public_links(app, miniapp_root)
