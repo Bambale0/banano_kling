@@ -588,6 +588,7 @@ try {
   const failed = await browser.newPage()
   await failed.route('**/mini-app/api/browser-auth/config', route => route.fulfill({ status: 503, body: 'unavailable' }))
   await failed.goto(origin + '/login')
+  await failed.getByRole('button', { name: 'Другой способ входа через Telegram' }).click()
   await failed.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await failed.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await failed.close()
@@ -603,6 +604,7 @@ try {
     status: 200, contentType: 'text/javascript', body: telegramWidgetMock,
   }))
   await withoutOidc.goto(origin + '/login')
+  await withoutOidc.getByRole('button', { name: 'Другой способ входа через Telegram' }).click()
   await withoutOidc.getByText('Не получилось войти сразу.', { exact: false }).waitFor()
   assert.equal(await withoutOidc.getByRole('link', { name: /Или откройте существующую студию/ }).getAttribute('href'), '/mini-app/')
   await withoutOidc.close()
