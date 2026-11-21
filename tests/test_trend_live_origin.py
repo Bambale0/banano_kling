@@ -7,6 +7,7 @@ from io import BytesIO
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import make_mocked_request
+
 from bot.services import trend_poster_origin as origin
 
 MP4 = b"\x00\x00\x00\x18ftypisom" + b"0" * 500
