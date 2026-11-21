@@ -127,6 +127,15 @@ try {
           clientErrors.push(request.postDataJSON().message)
         }
         let payload = { ok: true, items: [], feed: [], prompts: [], categories: [], references: [], notifications: [] }
+        if (path.endsWith('/web-auth/config')) {
+          return route.fulfill({ json: { ok: true, authenticated: true, connected: ['telegram', 'yandex'],
+            providers: { telegram: true, yandex: true, google: false, email: false } } })
+        }
+        if (path.endsWith('/web-auth/native-session')) {
+          assert.equal(request.method(), 'POST')
+          assert.equal(request.postDataJSON().init_data, 'query_id=browser-test')
+          return route.fulfill({ json: { ok: true, authenticated: true } })
+        }
         if (path.endsWith('/bootstrap')) payload = {
           ...payload, telegram_id: 1001, first_name: 'Browser', last_name: 'Test', telegram_username: 'preview_test',
           credits: 10, is_admin: admin, bot_username: 'test_bot', referral_code: 'BROWSER',
@@ -199,46 +208,42 @@ try {
         assert(previewRequests.some(request => request.path.endsWith('/logout')))
         await checkCommercialPanel(page, 'telegram')
         const accounts = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
-        await accounts.getByLabel('Telegram привязан', { exact: true }).waitFor()
-        const connect = accounts.getByRole('button', { name: 'Привязать ВКонтакте', exact: true })
-        await connect.waitFor()
-        const platformBox = await accounts.getByText('ВКонтакте', { exact: true }).boundingBox()
-        const buttonBox = await connect.boundingBox()
-        assert(platformBox.x + platformBox.width <= buttonBox.x, 'Platform name must not overlap the linking button')
+        await accounts.getByLabel('Яндекс ID привязан', { exact: true }).waitFor()
+        assert.equal(await accounts.getByText('Google', { exact: true }).count(), 1)
+        assert.equal(await accounts.getByText('Электронная почта', { exact: true }).count(), 1)
+        assert.equal(await accounts.getByText('ВКонтакте', { exact: true }).count(), 0,
+          'Native Telegram profile must not offer the retired VK identity link')
+        assert.equal(await accounts.getByLabel('Telegram привязан', { exact: true }).count(), 0)
+        assert.equal(await accounts.getByRole('button', { name: 'Добавить почту' }).count(), 0,
+          'Unconfigured email delivery must not offer a broken OTP flow')
+        assert.equal(await accounts.getByText('Сервис пока не настроен', { exact: true }).count(), 2)
         assert.equal(await accounts.evaluate(node => node.scrollWidth <= node.clientWidth), true, 'Card must not overflow')
-        await accounts.screenshot({ path: resolve(process.env.TEMP || '/tmp', `neuromix-linked-accounts-${width}.png`) })
-        assert.equal(previewRequests.filter(request => request.path.includes('/links')).length, 0, 'Opening an invitation must not mutate its state')
-        await connect.click()
-        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
-        const opened = await page.evaluate(() => window.__LINK_NAVIGATIONS__)
-        assert.deepEqual(opened, [], 'VK launch must wait for an explicit user gesture')
-        const vkLink = page.getByRole('link', { name: 'Открыть ВКонтакте ещё раз' })
-        assert.equal(await vkLink.getAttribute('href'), 'https://vk.com/app123#link_' + 'c'.repeat(43))
-        assert.equal(await page.getByLabel('Код из ссылки').count(), 0, 'Quick-link must not expose a code field')
-        assert.equal(await page.getByRole('button', { name: 'Создать ссылку' }).count(), 0)
-        await page.getByRole('button', { name: 'Отменить', exact: true }).click()
-        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor({ state: 'detached' })
+        await accounts.screenshot({ path: resolve(process.env.TEMP || '/tmp', `neuromix-web-identities-${width}.png`) })
+        assert.equal(previewRequests.filter(request => request.path.includes('/links')).length, 0,
+          'Reading web identities must not mutate legacy VK invitations')
+        const webLink = accounts.getByRole('link', { name: 'Открыть самостоятельную веб-версию' })
+        assert.equal(await webLink.getAttribute('href'), '/login?web=1')
+        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), [],
+          'Native profile must not open any retired VK deep link')
       } else {
         const accounts = page.getByRole('region', { name: 'Связанные аккаунты', exact: true })
-        await accounts.getByLabel('Telegram привязан', { exact: true }).waitFor()
-        const connect = accounts.getByRole('button', { name: 'Привязать ВКонтакте', exact: true })
-        await connect.waitFor()
+        await accounts.getByLabel('Яндекс ID привязан', { exact: true }).waitFor()
+        assert.equal(await accounts.getByText('Google', { exact: true }).count(), 1)
+        assert.equal(await accounts.getByText('Электронная почта', { exact: true }).count(), 1)
+        assert.equal(await accounts.getByText('ВКонтакте', { exact: true }).count(), 0)
+        assert.equal(await accounts.getByRole('link', { name: 'Открыть самостоятельную веб-версию' })
+          .getAttribute('href'), '/login?web=1')
         assert.equal(await page.getByText('Настройки общих аккаунтов', { exact: true }).count(), 0)
         assert.equal(await page.getByLabel('Публичный вход и привязка аккаунтов').count(), 0)
-        assert(previewRequests.some(request => request.path.endsWith('/session')))
-        assert(previewRequests.some(request => request.path.endsWith('/me')))
+        assert.equal(previewRequests.some(request => request.path.endsWith('/session')), false,
+          'Non-admin Telegram profile must not create obsolete VK preview session')
+        assert.equal(previewRequests.some(request => request.path.endsWith('/me')), false,
+          'Real identity state is read from verified web-auth/config, not old TG/VK preview')
         assert.equal(previewRequests.some(request => request.path.endsWith('/settings')), false)
         assert.equal(previewRequests.some(request => request.path.endsWith('/wallet')), false)
         assert.equal(previewRequests.some(request => request.path.includes('/commerce')), false)
-        await connect.click()
-        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor()
-        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), [], 'No delayed VK popup')
-        assert.equal(
-          await page.getByRole('link', { name: 'Открыть ВКонтакте ещё раз' }).getAttribute('href'),
-          'https://vk.com/app123#link_' + 'c'.repeat(43),
-        )
-        await page.getByRole('button', { name: 'Отменить', exact: true }).click()
-        await page.getByRole('region', { name: 'Ожидание привязки' }).waitFor({ state: 'detached' })
+        assert.deepEqual(await page.evaluate(() => window.__LINK_NAVIGATIONS__), [], 'No retired VK popup')
+        assert.equal(previewRequests.filter(request => request.path.includes('/links')).length, 0)
       }
       assert.equal(await page.evaluate(() => Object.values(sessionStorage).some(value => /link_[A-Za-z0-9_-]{43}/.test(value))), false, 'Invitation credentials must stay out of browser storage')
       assert.deepEqual(clientErrors, [])
@@ -258,6 +263,15 @@ try {
     await page.route('**/mini-app/api/**', async route => {
       const path = new URL(route.request().url()).pathname
       let payload = { ok: true, items: [], feed: [], prompts: [], categories: [], references: [], notifications: [] }
+      if (path.endsWith('/web-auth/config')) {
+        return route.fulfill({ json: { ok: true, authenticated: metadataAllowed,
+          connected: metadataAllowed ? ['telegram', 'yandex'] : [],
+          providers: { telegram: true, yandex: true, google: false, email: false } } })
+      }
+      if (path.endsWith('/web-auth/native-session')) {
+        return route.fulfill({ status: metadataAllowed ? 200 : 401,
+          json: metadataAllowed ? { ok: true, authenticated: true } : { ok: false, error: 'expired_init_data' } })
+      }
       if (path.endsWith('/bootstrap')) payload = { ...payload,
         telegram_id: 1001, first_name: 'Expired', credits: 10, is_admin: true, bot_username: 'test_bot',
         telegram_chat_available: true, telegram_bot_start_required: false, actions: [], payment_packages: [],
@@ -283,12 +297,13 @@ try {
     await page.getByRole('button', { name: 'Повторить загрузку настроек', exact: true }).waitFor()
     assert.equal(await page.getByText('Загрузка настроек…', { exact: true }).count(), 0)
     if (metadataAllowed) {
-      await card.getByRole('button', { name: 'Привязать ВКонтакте', exact: true }).waitFor()
+      await card.getByLabel('Яндекс ID привязан', { exact: true }).waitFor()
     } else {
       await card.getByRole('button', { name: 'Повторить проверку', exact: true }).waitFor()
-      const reopen = page.getByRole('link', { name: 'Открыть приложение заново', exact: true })
-      assert.equal(await reopen.getAttribute('href'), 'https://t.me/test_bot?startapp')
+      await card.getByText(/Не удалось подтвердить Telegram-сессию/).waitFor()
       assert.equal(await card.getByText('Не привязан', { exact: true }).count(), 0)
+      assert.equal(await card.getByRole('link', { name: /Привязать/ }).count(), 0,
+        'Expired launch must not expose provider linking actions')
     }
     assert.deepEqual(mutations, [], 'An authentication error must never create or accept an invitation')
     console.log(`PASS settings-401 card retained metadataAllowed=${metadataAllowed}`)
