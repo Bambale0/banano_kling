@@ -7119,7 +7119,16 @@ async def approve_prompt(prompt_id: int) -> Optional[dict[str, Any]]:
                 (row["source_generation_id"], row["author_id"]),
             )
         await db.commit()
-    return await get_prompt_by_id(prompt_id)
+    approved = await get_prompt_by_id(prompt_id)
+    if approved:
+        # Publish success should include a stable public JPG when possible.
+        # Thumbnail creation is bounded and cannot roll back the approval.
+        from bot.services.trend_catalog_publish_thumbnail import (
+            ensure_published_trend_poster,
+        )
+
+        await ensure_published_trend_poster(approved)
+    return approved
 
 
 async def reject_prompt(prompt_id: int, reject_reason: str = "") -> Optional[dict[str, Any]]:
