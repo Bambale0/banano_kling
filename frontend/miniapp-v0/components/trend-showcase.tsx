@@ -39,6 +39,9 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   const [documentVisible, setDocumentVisible] = useState(true)
   const [posterFailed, setPosterFailed] = useState(false)
   const [originalFailed, setOriginalFailed] = useState(false)
+  // Browsers can render a black <video> surface over a perfectly valid poster
+  // while the compact preview redirects to S3, stalls or is autoplay-blocked.
+  const [videoPlaying, setVideoPlaying] = useState(false)
   const video = isVideoPreview(trend)
   const poster = trend.preview_poster_url ? normalizeMiniAppMediaUrl(trend.preview_poster_url) : ''
   // Public JPGs are streamed by our own origin. Do not use signed S3 hosts:
@@ -52,6 +55,7 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
   useEffect(() => {
     setPosterFailed(false)
     setOriginalFailed(false)
+    setVideoPlaying(false)
   }, [poster, preview])
 
   useEffect(() => {
@@ -134,8 +138,11 @@ function LivePreview({ trend }: { trend: ShowcaseTrend }) {
           loop
           playsInline
           preload={visible ? 'metadata' : 'none'}
-          onError={() => setFailed(true)}
-          className="relative h-full w-full object-cover"
+          onPlaying={() => setVideoPlaying(true)}
+          onPause={() => setVideoPlaying(false)}
+          onEmptied={() => setVideoPlaying(false)}
+          onError={() => { setFailed(true); setVideoPlaying(false) }}
+          className={'relative h-full w-full object-cover ' + (videoPlaying && visible && documentVisible ? 'opacity-100' : 'opacity-0')}
           aria-hidden="true"
         />
       ) : null}
