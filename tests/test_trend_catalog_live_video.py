@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock
 
 import pytest
+
 from bot.services import trend_catalog_live_video as live
 
 URL = "https://neuromixbot.com/uploads/feed/sample.mp4"
