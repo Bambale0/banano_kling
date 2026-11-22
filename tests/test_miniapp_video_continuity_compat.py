@@ -694,6 +694,34 @@ def video_repeat_entrypoint(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_legacy_seedance_photo_text_repeat_restores_first_frame_before_launch(
+    video_repeat_entrypoint,
+):
+    """The exact old image-to-video launch path must not degrade into text."""
+    entry = video_repeat_entrypoint
+    first_frame = "https://example.test/legacy-first-frame.png"
+    entry.source.return_value.update({
+        "id": 42, "user_id": 501, "type": "video",
+        "status": "completed", "is_public_feed": True,
+        "model": "seedance_2_5",
+        "prompt": "Animate the original frame",
+        "request_data": {"v_type": "imgtxt", "v_image_url": first_frame},
+    })
+    request = entry.request({
+        "source_feed_gen_id": 42,
+        "v_model": "seedance_2_5",
+        "v_type": "imgtxt",
+        "reference_images": [],
+    })
+    response = await entry.call(request)
+    assert response.status == 200
+    restored = await request.json()
+    assert restored["seedance25_scenario"] == "first_frame"
+    assert restored["seedance25_first_frame_url"] == first_frame
+    entry.delegate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure,expected_status", [
     ("transient_source", 503), ("missing_source", 404), ("missing_card", 404),
     ("invalid_auth", 401), ("forbidden", 403),

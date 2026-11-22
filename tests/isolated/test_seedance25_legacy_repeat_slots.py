@@ -127,6 +127,37 @@ class LegacyRepeatSlotsTests(unittest.TestCase):
         result = self.restore()
         self.assertEqual(result["reference_images"], [self.face, self.fixed])
 
+    def test_legacy_photo_text_restores_provider_first_frame_without_extra_upload(self):
+        """Old generic I2V tasks saved v_image_url, but no Seedance scenario."""
+        self.source["request_data"] = {"v_type": "imgtxt", "v_image_url": self.face}
+        self.body["reference_images"] = []
+        restored = self.restore()
+        self.assertEqual(restored["seedance25_scenario"], "first_frame")
+        self.assertEqual(restored["seedance25_first_frame_url"], self.face)
+        self.assertEqual(restored["v_image_url"], self.face)
+
+    def test_legacy_photo_text_can_replace_start_frame_without_switching_to_multimodal(self):
+        self.source["request_data"] = {"v_type": "imgtxt", "v_image_url": self.face}
+        restored = self.restore()
+        self.assertEqual(restored["seedance25_scenario"], "first_frame")
+        self.assertEqual(restored["seedance25_first_frame_url"], self.viewer)
+
+    def test_legacy_multiphoto_uses_multimodal_not_one_frame(self):
+        self.source["request_data"] = {
+            "v_type": "imgtxt",
+            "reference_images": [self.face, self.fixed],
+        }
+        self.source["feed_references_visible"] = True
+        self.body["reference_images"] = [self.viewer, self.fixed]
+        restored = self.restore()
+        self.assertEqual(restored["seedance25_scenario"], "multimodal")
+        self.assertEqual(restored["reference_images"], [self.viewer, self.fixed])
+
+    def test_legacy_text_without_media_remains_text(self):
+        self.source["request_data"] = {"v_type": "text"}
+        self.body["reference_images"] = []
+        self.assertEqual(self.restore()["seedance25_scenario"], "text")
+
     def test_legacy_alias_keeps_order(self):
         self.source["request_data"]["reference_image_urls"] = self.source["request_data"].pop("reference_images")
         self.assertEqual(self.restore()["reference_images"], [self.viewer, self.fixed])
