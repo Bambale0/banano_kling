@@ -30,6 +30,32 @@ temporary signed URLs are never stored in the database. Local materialization
 is reserved for validation, transformations and provider adapters that require
 a filesystem path.
 
+## Current production state (2026-11-23)
+
+Production uses `MEDIA_STORAGE_BACKEND=s3` and `MEDIA_S3_KEEP_LOCAL_CACHE=0`.
+The canonical **public URL** is `https://neuromixbot.com/uploads/...`; backend, Telegram
+and payment-provider callbacks still use `https://tanyapi.chillcreative.ru`.
+The previously used `tanyapp.chillcreative.ru` is a **legacy compatibility
+origin only**, not the place where new Mini App/media links should be generated.
+
+During the domain incident, production's root-owned `.env` had retained the
+wrong `MINI_APP_URL`, `STATIC_BASE_URL` and
+`MEDIA_S3_PUBLIC_BASE_URL` values even while the running bot had the correct
+Mini App URL. Check **both** Compose-resolved configuration and the container
+after any restart/release. See the
+[domain and storage contract](agents/EXECUTION/neuromix-domains-s3-contract-20261123.md).
+
+S3 writes are working: 10 new media assets and an additional randomized sample
+of **40 historical** `feed` / `refs` files had matching remote sizes and
+SHA-256 metadata. This does **not** certify every historic copy. The host
+still has about 338 GiB of mostly **unmarked old local files** under
+`static/uploads`. The TTL cache-cleaner only reclaims **marked**
+materializations; old local files require a separate per-file verified
+reclamation pass with `scripts/reclaim_local_media.py`. It defaults to
+dry-run, requires an audit manifest and explicit bucket confirmation for
+destructive mode, and must not be scheduled for bulk removal until the full
+candidate set is checked and recovery is possible.
+
 ## Selectel preparation
 
 1. Create a dedicated production project and bucket in the selected pool.
