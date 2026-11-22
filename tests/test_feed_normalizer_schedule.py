@@ -89,9 +89,8 @@ class NormalizerScheduleTests(unittest.IsolatedAsyncioTestCase):
             return {"checked": 0, "updated": 0, "failed": 0}
 
         namespace = self._load(sleep=sleep, normalizer=normalizer)
-        with self.assertLogs(level="ERROR"):
-            with self.assertRaises(asyncio.CancelledError):
-                await namespace["_feed_normalizer_loop"]()
+        with self.assertLogs(level="ERROR"), self.assertRaises(asyncio.CancelledError):
+            await namespace["_feed_normalizer_loop"]()
         self.assertEqual(events, ["sleep", "run", "sleep", "run", "sleep"])
 
     def test_cleanup_remains_daily_without_reentering_normalizer(self):
