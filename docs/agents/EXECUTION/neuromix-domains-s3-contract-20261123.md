@@ -43,6 +43,8 @@ The application uses Selectel `uploads/<relative>` object keys with SHA-256 obje
 
 **Cache cleanup does not delete unmarked historical source files.** On 2026-11-23, production had approximately **338 GiB** under `static/uploads`, mainly `feed` and `refs`, despite S3 being enabled. This is not proof of S3 failure; fresh samples from each of `feed`, `refs/image`, `refs/video`, `wan3_prime`, and `trend-previews` had matching S3 object lengths and SHA-256 metadata. This was a **sample audit**, not a complete 338 GiB verification.
 
+Read-only reclamation preflight (2026-11-23): `scripts/reclaim_local_media.py --prefix feed --limit 120 --min-age-seconds 604800 --quiet` yielded **77 reclaimable / 43 skipped**; the same command with `--prefix refs` yielded **71 reclaimable / 49 skipped**. Both returned exit code 0; per-file JSONL audit manifests were saved under `data/migrations/` on the production host. **0 bytes were deleted**. The dry-run is not exhaustive and should not be treated as authorization for broad removal.
+
 Never perform broad `rm -rf static/uploads` or bulk delete merely because S3 is configured. First produce a per-file manifest with local size/SHA-256 and remote `HeadObject` size/SHA-256, confirm every candidate and active writer behavior, preserve recovery copies, then delete only the verified safe subset under an explicitly reviewed cleanup plan. Unknown/missing/mismatched S3 metadata is **not** proof and must be excluded from deletion. Also inspect `backups`, application temp files, and Docker usage separately.
 
 See [Selectel media runbook](../selectel-s3-media.md) for migration, verification and recovery.
