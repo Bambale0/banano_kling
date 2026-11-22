@@ -321,3 +321,55 @@ async def test_web_invoice_only_rejects_provider_identity_mismatch(monkeypatch):
         )
         assert response.status == 503
     assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "0.0000"
+
+
+@pytest.mark.asyncio
+async def test_web_invoice_only_repairs_late_provider_contract_without_double_credit(monkeypatch):
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-test-key")
+    monkeypatch.setattr(web_commerce, "_package", lambda _: (
+        10000, "110", "offer", "Test package",
+    ))
+    monkeypatch.setattr(lava_service, "create_invoice", AsyncMock(return_value={
+        "ok": True, "id": "invoice-late-contract-20261122",
+        "paymentUrl": "https://gate.lava.top/payment/synthetic-late",
+    }))
+    detail = {
+        "id": "invoice-late-contract-20261122", "status": "in_progress",
+        "amount": "100.00", "currency": "RUB",
+    }
+    monkeypatch.setattr(lava_service, "get_invoice", AsyncMock(return_value=detail))
+    owner, cookie = await account("web-late-contract-owner-20261122")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        created = await client.post(
+            "/mini-app/api/web-auth/web-payments/create",
+            json={
+                "request_key": "late-contract-request-20261122",
+                "package_id": "test", "email": "paid@example.com",
+            }, headers=auth(cookie),
+        )
+        assert created.status == 200
+        detail["contractId"] = "actual-provider-contract-20261122"
+        pending = await web_commerce.reconcile_pending(limit=20)
+        assert any(item["action"] == "pending" for item in pending)
+        async with db_backend.connect() as db:
+            row = await (await db.execute(
+                "SELECT contract_id FROM web_payment_orders WHERE order_id=?",
+                ((await created.json())["order_id"],),
+            )).fetchone()
+        assert row[0] == "actual-provider-contract-20261122"
+        detail["status"] = "completed"
+        callback = {
+            "eventType": "payment.success",
+            "contractId": "actual-provider-contract-20261122",
+            "amount": "100.00", "currency": "RUB", "status": "completed",
+        }
+        for _ in range(2):
+            response = await web_commerce.verified_webhook(
+                callback, "actual-provider-contract-20261122", "payment.success",
+            )
+            assert response.status == 200
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "110.0000"
