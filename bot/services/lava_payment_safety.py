@@ -400,6 +400,7 @@ async def _provider_status(
             break
     return last_status, invoice_id
 
+
 async def _notify_completed_payment(
     payments_module: ModuleType,
     request: web.Request,
