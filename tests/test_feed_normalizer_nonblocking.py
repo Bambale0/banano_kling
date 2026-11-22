@@ -6,7 +6,6 @@ import ast
 import asyncio
 import json
 import logging
-import os
 import sys
 import threading
 import time
@@ -90,8 +89,10 @@ class NormalizerIsolationTests(unittest.IsolatedAsyncioTestCase):
             "logger": logging.getLogger(__name__), "os": env, "time": time,
             "_row_public_result_urls": lambda row: [row["result_url"]],
         }
-        exec(compile(ast.Module(body=[node], type_ignores=[]),
-                     "bot/main.py", "exec"), namespace)  # noqa: S102
+        exec(  # noqa: S102
+            compile(ast.Module(body=[node], type_ignores=[]), "bot/main.py", "exec"),
+            namespace,
+        )
         self.normalize = namespace["_normalize_public_feed_storage"]
         self.normalize._next_id = 0
 
