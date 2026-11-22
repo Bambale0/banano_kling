@@ -29,7 +29,7 @@ tanyapi → feature/* | fix/* | agent/* → PR в tanyapi
 
 Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/api/*` проксируется к backend. Внешний доступ к порту `1888` не требуется. Проверенный production baseline от 2026-10-22 хранит файлы в `static/uploads`; код также поддерживает Selectel S3 без изменения `/uploads/...` URL. Фактический backend хранилища нужно подтверждать по `/health`, runtime env и логам, а не предполагать по коду.
 
-При восстановлении 2026-11-16 с компьютера заявителя воспроизведён разрыв TLS для имени `neuromixbot.com`, при исправном TLS на сервере и доступном альтернативном имени на том же IP. Временное восстановление использует существующий `tanyapp.chillcreative.ru` через `MINI_APP_URL`, `STATIC_BASE_URL`, `MEDIA_S3_PUBLIC_BASE_URL`; DNS и сертификаты не менялись. Пользователь требует сохранить именно канонический `neuromixbot.com`: резервный адрес не является окончательным решением инцидента. Оба frontend-vhost используют один каталог, поэтому обычный exact-SHA deploy обновляет оба адреса. Исторические `/uploads/` в ответах API приводятся к текущему origin приложения. Изменение `MINI_APP_URL` не переписывает ранее отправленные сообщения или отдельную настройку Main Mini App в BotFather. Подробности и фактический статус: [журнал восстановления](docs/agents/EXECUTION/telegram-domain-recovery-20261116.md).
+Инцидент 2026-11-16: при диагностике TLS временно использовался запасной `tanyapp.chillcreative.ru`; это **устаревшая обходная настройка**, не актуальный production-контракт. 2026-11-23 на production восстановлены `MINI_APP_URL=https://neuromixbot.com/mini-app/`, `STATIC_BASE_URL=https://neuromixbot.com` и `MEDIA_S3_PUBLIC_BASE_URL=https://neuromixbot.com`. Backend/API/webhook origin остаётся `https://tanyapi.chillcreative.ru`. Хранение медиа — Selectel S3, а `/uploads/` сохраняет тот же публичный URL-контракт. Старые `tanyapp`-ссылки поддерживаются только для обратной совместимости. Новые кнопки бота используют канонический URL, но ранее отправленные сообщения Telegram и отдельная настройка Main Mini App в BotFather не переписываются автоматически. Подробности: [production-карта доменов и S3](docs/agents/EXECUTION/neuromix-domains-s3-contract-20261123.md), [журнал TLS-инцидента](docs/agents/EXECUTION/telegram-domain-recovery-20261116.md).
 
 ## Основные возможности
 
@@ -64,7 +64,7 @@ Mini App загружает HTML/CSS/JS с frontend-домена, а `/mini-app/
 - приватные и временные uploads не получают годовой публичный кеш;
 - DEV использует отдельный checkout/media root и не должен писать в production `static/uploads`.
 
-Пошаговая миграция, проверка и rollback: [docs/selectel-s3-media.md](docs/selectel-s3-media.md).
+Пошаговая миграция, проверка и rollback: [docs/selectel-s3-media.md](docs/selectel-s3-media.md). Критично: `MEDIA_S3_KEEP_LOCAL_CACHE=0` **не очищает автоматически старые исходные файлы**; для освобождения места нужна проверка размера и SHA-256 каждого S3-объекта перед удалением локальной копии (см. [domain/S3 contract](docs/agents/EXECUTION/neuromix-domains-s3-contract-20261123.md)).
 
 ## Стек
 
