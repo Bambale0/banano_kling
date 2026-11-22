@@ -528,6 +528,14 @@ def is_existing_durable_feed_upload(url: str) -> bool:
         if not parsed.path.startswith(prefix) or parsed.path == prefix:
             return False
         relative = "feed/" + parsed.path[len(prefix):]
+        # Reject traversal, empty segments and URL-encoded path disguises
+        # before checking the canonical object key.
+        if (
+            "%" in relative
+            or "\\\\" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+        ):
+            return False
         # public_upload_url validates relative paths (including '..'). Do
         # not trust an arbitrary escaped/noncanonical URL with the same prefix.
         if urlparse(public_upload_url(relative)).path != parsed.path:
