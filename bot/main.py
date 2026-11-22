@@ -2771,67 +2771,114 @@ def _row_public_result_urls(row) -> list[str]:
 
 
 async def _normalize_public_feed_storage() -> dict[str, int]:
-    """Move every available public feed result into static/uploads/feed."""
+    """Normalize a bounded feed batch without holding DB locks over media I/O.
+
+    The former daily sweep read all public records and kept one write
+    transaction open through every provider download/S3 upload. It could
+    block Telegram /start and Mini App transactions for hours. Each SELECT
+    now completes before any media work and each successful UPDATE commits
+    individually using a compare-and-swap guard to avoid stale overwrites.
+    """
     stats = {"checked": 0, "updated": 0, "unchanged": 0, "failed": 0}
+    batch_limit = max(1, min(64, int(os.getenv("FEED_NORMALIZER_BATCH_LIMIT", "32"))))
+    started = time.monotonic()
+    last_id = getattr(_normalize_public_feed_storage, "_next_id", 0)
     try:
         from bot.services.feed_persist import persist_feed_result_urls
 
+        # A read-only, indexed keyset page. Close the connection before
+        # invoking any potentially slow or synchronous storage operations.
         async with db_backend.connect() as db:
             db.row_factory = db_backend.Row
-            cursor = await db.execute(
+            rows = await (await db.execute(
                 """
                 SELECT id, result_url, result_urls
                 FROM generation_tasks
-                WHERE is_public_feed = 1
+                WHERE id > ?
+                  AND is_public_feed = 1
                   AND status = 'completed'
                   AND (result_url IS NOT NULL OR result_urls IS NOT NULL)
-                """
-            )
-            rows = await cursor.fetchall()
+                ORDER BY id ASC
+                LIMIT ?
+                """,
+                (last_id, batch_limit),
+            )).fetchall()
 
-            for row in rows:
-                stats["checked"] += 1
-                result_urls = _row_public_result_urls(row)
-                if not result_urls:
-                    stats["unchanged"] += 1
-                    continue
+        if not rows:
+            # Resume at the beginning only after the previous pass reaches
+            # the end, so the same early rows cannot starve later records.
+            _normalize_public_feed_storage._next_id = 0
+            return stats
 
-                try:
-                    persisted = await persist_feed_result_urls(result_urls)
-                except Exception:
-                    logger.exception(
-                        "Failed to persist public feed storage for generation %s",
-                        row["id"],
-                    )
-                    stats["failed"] += 1
-                    continue
+        for row in rows:
+            if time.monotonic() - started >= 120:
+                break
+            row_id = int(row["id"])
+            _normalize_public_feed_storage._next_id = row_id
+            stats["checked"] += 1
+            result_urls = _row_public_result_urls(row)
+            if not result_urls:
+                stats["unchanged"] += 1
+                continue
 
-                if not persisted or persisted == result_urls:
-                    stats["unchanged"] += 1
-                    continue
-
-                await db.execute(
-                    """
-                    UPDATE generation_tasks
-                    SET result_url = ?,
-                        result_urls = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        persisted[0],
-                        json.dumps(persisted, ensure_ascii=False),
-                        row["id"],
-                    ),
+            try:
+                # persist_feed_result_urls includes synchronous image and S3
+                # work. A dedicated thread event loop protects Telegram's
+                # main asyncio loop without opening a DB transaction.
+                persisted = await asyncio.to_thread(
+                    asyncio.run, persist_feed_result_urls(result_urls)
                 )
-                stats["updated"] += 1
+            except Exception:
+                logger.exception(
+                    "Failed to persist public feed storage for generation %s",
+                    row_id,
+                )
+                stats["failed"] += 1
+                continue
 
-            await db.commit()
+            if not persisted or persisted == result_urls:
+                stats["unchanged"] += 1
+                continue
+
+            try:
+                async with db_backend.connect() as db:
+                    update = await db.execute(
+                        """
+                        UPDATE generation_tasks
+                        SET result_url = ?,
+                            result_urls = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                          AND is_public_feed = 1 AND status = 'completed'
+                          AND (result_url = ? OR (result_url IS NULL AND ? IS NULL))
+                          AND (result_urls = ? OR (result_urls IS NULL AND ? IS NULL))
+                        """,
+                        (
+                            persisted[0],
+                            json.dumps(persisted, ensure_ascii=False),
+                            row_id,
+                            row["result_url"], row["result_url"],
+                            row["result_urls"], row["result_urls"],
+                        ),
+                    )
+                    await db.commit()
+                    changed = update.rowcount == 1
+                if changed:
+                    stats["updated"] += 1
+                else:
+                    # Someone edited or withdrew the feed entry during
+                    # external I/O. Never overwrite their newer data.
+                    stats["unchanged"] += 1
+            except Exception:
+                logger.exception(
+                    "Failed to update normalized feed storage for generation %s",
+                    row_id,
+                )
+                stats["failed"] += 1
     except Exception:
         logger.exception("Failed to normalize public feed storage")
         stats["failed"] += 1
     return stats
-
 
 async def _cleanup_loop():
     """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
