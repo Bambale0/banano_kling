@@ -2850,15 +2850,15 @@ async def _normalize_public_feed_storage() -> dict[str, int]:
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id = ?
                           AND is_public_feed = 1 AND status = 'completed'
-                          AND (result_url = ? OR (result_url IS NULL AND ? IS NULL))
-                          AND (result_urls = ? OR (result_urls IS NULL AND ? IS NULL))
+                          AND result_url IS NOT DISTINCT FROM ?
+                          AND result_urls IS NOT DISTINCT FROM ?
                         """,
                         (
                             persisted[0],
                             json.dumps(persisted, ensure_ascii=False),
                             row_id,
-                            row["result_url"], row["result_url"],
-                            row["result_urls"], row["result_urls"],
+                            row["result_url"],
+                            row["result_urls"],
                         ),
                     )
                     await db.commit()
