@@ -146,3 +146,106 @@ async def test_in_progress_provider_status_retries_with_no_invoice_list_scan(mon
         retry_delays=(0.0, 0.0),
     ) == ("completed", None)
     assert calls == ["existing-invoice", "existing-invoice"]
+
+
+# In production bot.handlers installs lava_invoice_compat, replacing safety's
+# provider-status function. Exercise that actual callback implementation too.
+
+@pytest.mark.asyncio
+async def test_active_compat_uses_direct_invoice_before_catalog(monkeypatch):
+    from bot.services import lava_invoice_compat as compat
+
+    calls = []
+
+    async def no_list(_transaction):
+        pytest.fail("active compatibility handler must not scan invoice list")
+
+    async def direct(invoice_id):
+        calls.append(invoice_id)
+        return {"id": invoice_id, "status": "failed"}
+
+    monkeypatch.setattr(compat, "_list_verified_invoice", no_list)
+    monkeypatch.setattr(lava_service, "get_invoice", direct)
+
+    status, invoice_id = await compat._provider_status_compatible(
+        _transaction("real-invoice"), contract_id="real-invoice",
+        retry_delays=(0.0,),
+    )
+    assert (status, invoice_id) == ("failed", "real-invoice")
+    assert calls == ["real-invoice"]
+
+
+@pytest.mark.asyncio
+async def test_active_compat_falls_back_to_list_only_after_direct_404(monkeypatch):
+    from bot.services import lava_invoice_compat as compat
+
+    calls = []
+    scanned = []
+
+    async def missing(invoice_id):
+        calls.append(invoice_id)
+        return None
+
+    async def from_catalog(transaction):
+        scanned.append(transaction.payment_id)
+        return {"id": transaction.payment_id, "status": "completed"}
+
+    monkeypatch.setattr(compat, "_list_verified_invoice", from_catalog)
+    monkeypatch.setattr(lava_service, "get_invoice", missing)
+
+    assert await compat._provider_status_compatible(
+        _transaction("missing-details"), contract_id="missing-details",
+        retry_delays=(0.0,),
+    ) == ("completed", "missing-details")
+    assert calls == ["missing-details"]
+    assert scanned == ["missing-details"]
+
+
+@pytest.mark.asyncio
+async def test_active_compat_never_rescans_list_on_retries(monkeypatch):
+    from bot.services import lava_invoice_compat as compat
+
+    calls = []
+    scans = []
+
+    async def missing(invoice_id):
+        calls.append(invoice_id)
+        return None
+
+    async def not_in_catalog(transaction):
+        scans.append(transaction.payment_id)
+        return None
+
+    async def no_binding(_contract):
+        return None
+
+    monkeypatch.setattr(compat, "_list_verified_invoice", not_in_catalog)
+    monkeypatch.setattr(compat.safety, "_invoice_id_for_contract", no_binding)
+    monkeypatch.setattr(lava_service, "get_invoice", missing)
+
+    assert await compat._provider_status_compatible(
+        _transaction("missing-details"), contract_id="missing-details",
+        retry_delays=(0.0, 0.0),
+    ) == ("", None)
+    assert calls == ["missing-details", "missing-details"]
+    assert scans == ["missing-details"]
+
+
+@pytest.mark.asyncio
+async def test_active_compat_outage_does_not_scan_catalog_or_settle(monkeypatch):
+    from bot.services import lava_invoice_compat as compat
+
+    async def no_list(_transaction):
+        pytest.fail("HTTP 503 is not a missing invoice")
+
+    async def outage(_invoice_id):
+        raise LavaProviderUnavailable(503)
+
+    monkeypatch.setattr(compat, "_list_verified_invoice", no_list)
+    monkeypatch.setattr(lava_service, "get_invoice", outage)
+
+    with pytest.raises(LavaProviderUnavailable):
+        await compat._provider_status_compatible(
+            _transaction("real-invoice"), contract_id="real-invoice",
+            retry_delays=(0.0,),
+        )
