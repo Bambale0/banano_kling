@@ -67,7 +67,6 @@ async def test_missing_invoice_scans_historical_list_only_once_across_retries(mo
 
     async def missing(invoice_id):
         calls.append(invoice_id)
-        return None
 
     async def from_list(transaction):
         list_calls.append(transaction.payment_id)
