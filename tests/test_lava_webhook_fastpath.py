@@ -44,7 +44,6 @@ async def test_missing_direct_invoice_falls_back_to_verified_legacy_list(monkeyp
 
     async def missing(invoice_id):
         calls.append(invoice_id)
-        return None
 
     async def from_list(transaction):
         list_calls.append(transaction.payment_id)
@@ -72,10 +71,9 @@ async def test_missing_invoice_scans_historical_list_only_once_across_retries(mo
 
     async def from_list(transaction):
         list_calls.append(transaction.payment_id)
-        return None
 
     async def no_binding(_contract):
-        return None
+        pass
 
     monkeypatch.setattr(lava_service, "get_invoice", missing)
     monkeypatch.setattr(compat, "_list_verified_invoice", from_list)
