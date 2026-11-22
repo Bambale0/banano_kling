@@ -107,6 +107,17 @@ from bot.utils.user_facing_errors import make_user_friendly_generation_error, sa
 from bot.services.yookassa_service import yookassa_service
 
 CLEANUP_INTERVAL_SECONDS = 24 * 3600
+
+
+def _feed_normalizer_interval_seconds() -> int:
+    """Keep feed migration responsive without overlapping maintenance sweeps."""
+    raw = os.environ.get("FEED_NORMALIZER_INTERVAL_SECONDS", "900")
+    try:
+        seconds = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid feed normalization interval; using 900 seconds")
+        seconds = 900
+    return max(300, min(3600, seconds))
 UPLOAD_RETENTION_SECONDS = 24 * 3600
 
 
@@ -2880,14 +2891,31 @@ async def _normalize_public_feed_storage() -> dict[str, int]:
         stats["failed"] += 1
     return stats
 
+async def _feed_normalizer_loop() -> None:
+    """Migrate a small feed page per tick, separate from 24-hour retention.
+
+    The normalizer closes every database connection before external media I/O
+    and limits each pass to 32 rows by default. Keep retries serialized by
+    running only one background task, independent of the cleanup schedule.
+    """
+    interval = _feed_normalizer_interval_seconds()
+    await asyncio.sleep(interval)
+    while True:
+        try:
+            stats = await _normalize_public_feed_storage()
+            logger.info("Public feed normalization batch stats: %s", stats)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Feed normalization iteration failed")
+        await asyncio.sleep(interval)
+
+
 async def _cleanup_loop():
     """Фоновая задача, очищающая временные файлы и старые логи раз в 24 часа."""
     await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
     while True:
         try:
-            feed_storage_stats = await _normalize_public_feed_storage()
-            if feed_storage_stats["updated"] or feed_storage_stats["failed"]:
-                logger.info("Public feed storage normalization stats: %s", feed_storage_stats)
             public_feed_paths = await _public_feed_protected_upload_paths()
             await _remove_old_files(
                 "static/uploads",
@@ -3036,6 +3064,7 @@ async def on_startup(bot: Bot, dispatcher: Dispatcher | None = None):
         # aiogram.Bot does not expose an event loop attribute in some versions.
         # Use asyncio.create_task to schedule background tasks on the running loop.
         asyncio.create_task(_cleanup_loop())
+        asyncio.create_task(_feed_normalizer_loop())
         asyncio.create_task(_media_cache_cleanup_loop())
         asyncio.create_task(_yookassa_reconcile_loop(bot))
         asyncio.create_task(_lava_reconcile_loop(bot))
