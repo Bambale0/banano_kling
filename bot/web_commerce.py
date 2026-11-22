@@ -493,7 +493,7 @@ async def reconcile_pending(limit: int = 25) -> list[dict]:
                     await db.commit()
                 action = "failed"
             else:
-                if row[5] == "creating":
+                if row[5] == "creating" and verified_invoice is not None:
                     # A provider-verified id-only invoice may have reached
                     # storage before a transient detail API outage. Recover
                     # the contract binding without creating another invoice.
