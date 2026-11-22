@@ -495,6 +495,58 @@ def _remove_new_feed_files(urls: list[str]) -> None:
             logger.exception("Feed persist: failed to remove orphaned file %s", path)
 
 
+def canonical_existing_feed_upload(url: str) -> str | None:
+    """Keep verified feed S3/local links without redownloading their own files.
+
+    Historical feed URLs include two legacy domains that may return HTTP 403
+    despite the referenced object existing in S3. Trust only known hosts,
+    verify the exact object exists, and return the current canonical URL.
+    Missing/unknown assets still use the ordinary download-and-persist flow.
+    """
+    from bot.services.media_storage import public_upload_url, upload_exists
+
+    try:
+        parsed = urlparse(str(url or "").strip())
+        canonical = urlparse(public_upload_url("feed/__existing_probe__.jpg"))
+        allowed_hosts = {
+            canonical.hostname,
+            "tanyapp.chillcreative.ru",
+            "tanyapp.xn--e1aikcel5c5a.online",
+        }
+        if (
+            parsed.scheme != canonical.scheme
+            or parsed.hostname not in allowed_hosts
+            or parsed.username
+            or parsed.password
+            or parsed.port not in {None, 443}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        prefix = canonical.path.rsplit("/", 1)[0] + "/"
+        if not parsed.path.startswith(prefix) or parsed.path == prefix:
+            return None
+        relative = "feed/" + parsed.path[len(prefix):]
+        # Reject traversal, empty segments and URL-encoded path disguises
+        # before checking the canonical object key.
+        if (
+            "%" in relative
+            or "\\\\" in relative
+            or any(part in {"", ".", ".."} for part in relative.split("/"))
+        ):
+            return None
+        # public_upload_url validates relative paths (including '..'). Do
+        # not trust an arbitrary escaped/noncanonical URL with the same prefix.
+        if urlparse(public_upload_url(relative)).path != parsed.path:
+            return None
+        if not upload_exists(relative):
+            return None
+        return public_upload_url(relative)
+    except (ValueError, OSError):
+        return None
+
+
 def _is_external_http_url(url: str) -> bool:
     try:
         parsed = urlparse(str(url or ""))
@@ -524,6 +576,13 @@ async def persist_feed_result_urls(
     persisted: list[str] = []
     created_urls: list[str] = []
     for url in result_urls:
+        # A verified existing feed object is already durable. Avoid copying
+        # it to another UUID and repeatedly filling S3 on maintenance runs.
+        # HEAD is synchronous; isolate it from the Telegram event loop.
+        canonical_url = await asyncio.to_thread(canonical_existing_feed_upload, url)
+        if canonical_url:
+            persisted.append(canonical_url)
+            continue
         local = _copy_local_upload_to_feed(url)
         if local:
             persisted.append(local)
