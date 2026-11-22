@@ -358,22 +358,38 @@ async def _provider_status(
     contract_id: str | None = None,
     retry_delays: Iterable[float] = (0.0, 0.75, 1.5),
 ) -> tuple[str, str | None]:
+    """Confirm invoice status directly before scanning the historical invoice list.
+
+    A transaction's payment_id is generally already accepted by
+    GET /api/v2/invoices/{id}. Paginating the whole account on every webhook
+    can exceed Lava's 10-second acknowledgement deadline. Only a confirmed
+    missing invoice (HTTP 404 mapped to None) warrants legacy discovery.
+    Authentication failures and provider outages still fail closed.
+    """
     payment_id = str(getattr(transaction, "payment_id", "") or "").strip()
     contract = str(contract_id or "").strip()
-
     invoice_id = await _invoice_id_for_contract(contract or payment_id)
-    if not invoice_id and contract:
-        invoice_id = await _discover_invoice_id_by_contract(contract)
 
     lookup_id = invoice_id or payment_id or contract
     if not lookup_id:
         return "", None
 
     last_status = ""
+    discovery_attempted = bool(invoice_id)
     for delay in retry_delays:
         if delay:
             await asyncio.sleep(delay)
         invoice = await lava_service.get_invoice(lookup_id)
+        if invoice is None and contract and not discovery_attempted:
+            # A true 404 means the legacy payment_id may represent a contract
+            # instead of an invoice. Attempt the expensive list fallback once.
+            discovery_attempted = True
+            discovered = await _discover_invoice_id_by_contract(contract)
+            if discovered:
+                invoice_id = discovered
+                if discovered != lookup_id:
+                    lookup_id = discovered
+                    invoice = await lava_service.get_invoice(lookup_id)
         if not invoice:
             continue
         last_status = (
@@ -383,7 +399,6 @@ async def _provider_status(
         if last_status not in _PENDING_STATUSES:
             break
     return last_status, invoice_id
-
 
 async def _notify_completed_payment(
     payments_module: ModuleType,
