@@ -174,3 +174,202 @@ async def test_payment_recovery_after_invoice_lookup_failure(monkeypatch):
         assert any(x["action"] == "credited" for x in await web_commerce.reconcile_pending())
         assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "100.0000"
 
+
+
+@pytest.mark.asyncio
+async def test_web_checkout_accepts_invoice_only_response_and_credits_exactly_once(monkeypatch):
+    """Real Lava v3 invoices can contain id/paymentUrl with no contractId."""
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-test-key")
+    monkeypatch.setattr(web_commerce, "_package", lambda _: (
+        10000, "110", "offer", "Test package",
+    ))
+    creation = AsyncMock(return_value={
+        "ok": True, "id": "invoice-only-20261122",
+        "paymentUrl": "https://gate.lava.top/payment/synthetic",
+    })
+    detail = {
+        "id": "invoice-only-20261122", "status": "in_progress",
+        "amount": "100.00", "currency": "RUB",
+    }
+    monkeypatch.setattr(lava_service, "create_invoice", creation)
+    monkeypatch.setattr(lava_service, "get_invoice", AsyncMock(return_value=detail))
+
+    owner, cookie = await account("web-invoice-only-owner-20261122")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        result = await client.post(
+            "/mini-app/api/web-auth/web-payments/create",
+            json={
+                "request_key": "invoice-only-request-20261122",
+                "package_id": "test", "email": "paid@example.com",
+            },
+            headers=auth(cookie),
+        )
+        payload = await result.json()
+        assert result.status == 200, payload
+        async with db_backend.connect() as db:
+            saved = await (await db.execute(
+                "SELECT invoice_id,contract_id,status FROM web_payment_orders "
+                "WHERE order_id=?", (payload["order_id"],)
+            )).fetchone()
+        assert tuple(saved) == (
+            "invoice-only-20261122", "invoice-only-20261122", "pending",
+        )
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "0.0000"
+
+        detail["status"] = "completed"
+        event = {
+            "eventType": "payment.success",
+            "contractId": "invoice-only-20261122", "amount": "100.00",
+            "currency": "RUB", "status": "completed",
+        }
+        for _ in range(2):
+            response = await web_commerce.verified_webhook(
+                event, "invoice-only-20261122", "payment.success",
+            )
+            assert response.status == 200
+        assert creation.await_count == 1
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "110.0000"
+
+
+@pytest.mark.asyncio
+async def test_web_invoice_only_outage_persists_identity_for_idempotent_reconciliation(monkeypatch):
+    from bot.services.lava_service import LavaProviderUnavailable
+
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-test-key")
+    monkeypatch.setattr(web_commerce, "_package", lambda _: (
+        9900, "100", "offer", "Test package",
+    ))
+    create = AsyncMock(return_value={
+        "ok": True, "id": "invoice-only-recovery-20261122",
+        "paymentUrl": "https://gate.lava.top/payment/synthetic-recovery",
+    })
+    lookup = AsyncMock(side_effect=LavaProviderUnavailable(503))
+    monkeypatch.setattr(lava_service, "create_invoice", create)
+    monkeypatch.setattr(lava_service, "get_invoice", lookup)
+
+    owner, cookie = await account("web-invoice-only-recovery-20261122")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    endpoint = "/mini-app/api/web-auth/web-payments/create"
+    body = {
+        "request_key": "invoice-only-recovery-20261122",
+        "package_id": "test", "email": "paid@example.com",
+    }
+    async with TestClient(TestServer(app)) as client:
+        result = await client.post(endpoint, json=body, headers=auth(cookie))
+        assert result.status == 503
+        result_data = await result.json()
+        order_id = result_data["order_id"]
+        async with db_backend.connect() as db:
+            stored = await (await db.execute(
+                "SELECT invoice_id,contract_id,status FROM web_payment_orders "
+                "WHERE order_id=?", (order_id,)
+            )).fetchone()
+        assert tuple(stored) == ("invoice-only-recovery-20261122", None, "creating")
+        retry = await client.post(endpoint, json=body, headers=auth(cookie))
+        assert retry.status == 202
+        assert create.await_count == 1
+
+        lookup.side_effect = None
+        lookup.return_value = {
+            "ok": True, "id": "invoice-only-recovery-20261122",
+            "status": "in_progress", "amount": "99.00", "currency": "RUB",
+        }
+        reconciled = await web_commerce.reconcile_pending()
+        assert any(x["order_id"] == order_id and x["action"] == "invoice_confirmed"
+                   for x in reconciled)
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "0.0000"
+        lookup.return_value["status"] = "completed"
+        assert any(x["order_id"] == order_id and x["action"] == "credited"
+                   for x in await web_commerce.reconcile_pending())
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "100.0000"
+        assert create.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_web_invoice_only_rejects_provider_identity_mismatch(monkeypatch):
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-test-key")
+    monkeypatch.setattr(web_commerce, "_package", lambda _: (
+        10000, "110", "offer", "Test package",
+    ))
+    monkeypatch.setattr(lava_service, "create_invoice", AsyncMock(return_value={
+        "ok": True, "id": "expected-invoice-only",
+        "paymentUrl": "https://gate.lava.top/payment/expected",
+    }))
+    monkeypatch.setattr(lava_service, "get_invoice", AsyncMock(return_value={
+        "ok": True, "id": "DIFFERENT-INVOICE", "status": "completed",
+        "amount": "100.00", "currency": "RUB",
+    }))
+    owner, cookie = await account("web-invoice-only-mismatch-20261122")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post(
+            "/mini-app/api/web-auth/web-payments/create",
+            json={
+                "request_key": "invoice-only-mismatch-20261122",
+                "package_id": "test", "email": "paid@example.com",
+            }, headers=auth(cookie),
+        )
+        assert response.status == 503
+    assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "0.0000"
+
+
+@pytest.mark.asyncio
+async def test_web_invoice_only_repairs_late_provider_contract_without_double_credit(monkeypatch):
+    monkeypatch.setenv("WEB_AUTH_PUBLIC_ORIGIN", "https://neuromixbot.com")
+    monkeypatch.setattr(web_commerce, "_enabled", lambda: True)
+    monkeypatch.setattr(lava_service, "api_key", "synthetic-test-key")
+    monkeypatch.setattr(web_commerce, "_package", lambda _: (
+        10000, "110", "offer", "Test package",
+    ))
+    monkeypatch.setattr(lava_service, "create_invoice", AsyncMock(return_value={
+        "ok": True, "id": "invoice-late-contract-20261122",
+        "paymentUrl": "https://gate.lava.top/payment/synthetic-late",
+    }))
+    detail = {
+        "id": "invoice-late-contract-20261122", "status": "in_progress",
+        "amount": "100.00", "currency": "RUB",
+    }
+    monkeypatch.setattr(lava_service, "get_invoice", AsyncMock(return_value=detail))
+    owner, cookie = await account("web-late-contract-owner-20261122")
+    app = web.Application()
+    web_auth.setup_web_auth_routes(app, "/mini-app")
+    async with TestClient(TestServer(app)) as client:
+        created = await client.post(
+            "/mini-app/api/web-auth/web-payments/create",
+            json={
+                "request_key": "late-contract-request-20261122",
+                "package_id": "test", "email": "paid@example.com",
+            }, headers=auth(cookie),
+        )
+        assert created.status == 200
+        detail["contractId"] = "actual-provider-contract-20261122"
+        pending = await web_commerce.reconcile_pending(limit=20)
+        assert any(item["action"] == "pending" for item in pending)
+        async with db_backend.connect() as db:
+            row = await (await db.execute(
+                "SELECT contract_id FROM web_payment_orders WHERE order_id=?",
+                ((await created.json())["order_id"],),
+            )).fetchone()
+        assert row[0] == "actual-provider-contract-20261122"
+        detail["status"] = "completed"
+        callback = {
+            "eventType": "payment.success",
+            "contractId": "actual-provider-contract-20261122",
+            "amount": "100.00", "currency": "RUB", "status": "completed",
+        }
+        for _ in range(2):
+            response = await web_commerce.verified_webhook(
+                callback, "actual-provider-contract-20261122", "payment.success",
+            )
+            assert response.status == 200
+        assert (await WalletService("live").snapshot(owner))["balance"]["available"] == "110.0000"

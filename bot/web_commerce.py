@@ -318,7 +318,7 @@ async def create_payment(request: web.Request) -> web.Response:
     contract = lava_service.extract_contract_id(invoice)
     checkout_url = str(lava_service.extract_payment_url(invoice) or "")
     url = urlsplit(checkout_url)
-    if (not invoice_id or not contract or url.scheme != "https" or not url.hostname
+    if (not invoice_id or url.scheme != "https" or not url.hostname
             or url.username or url.password or len(checkout_url) > 2048):
         logger.error("Invalid web invoice binding order_id=%s", candidate)
         return _json({"ok": False, "order_id": candidate,
@@ -335,19 +335,33 @@ async def create_payment(request: web.Request) -> web.Response:
         await db.commit()
     try:
         provider_invoice = await lava_service.get_invoice(invoice_id)
-        if (not isinstance(provider_invoice, dict)
+        provider_id = (
+            lava_service.extract_invoice_id(provider_invoice)
+            if isinstance(provider_invoice, dict) else None
+        )
+        provider_contract = (
+            lava_service.extract_contract_id(provider_invoice)
+            if isinstance(provider_invoice, dict) else None
+        )
+        # The create reply may legitimately omit contractId. The
+        # independently fetched invoice must still prove its ID, RUB amount
+        # and currency before an id-only contract fallback can be stored.
+        if (not provider_id or provider_id != invoice_id
+                or (contract and provider_contract and contract != provider_contract)
                 or not _external_invoice(provider_invoice, row)):
-            logger.error("Web invoice amount not confirmed order_id=%s", candidate)
+            logger.error("Web invoice identity/amount not confirmed order_id=%s", candidate)
             return _json({"ok": False, "order_id": candidate,
-                          "error": "Провайдер не подтвердил сумму счёта."}, 503)
+                          "error": "Провайдер не подтвердил параметры счёта."}, 503)
     except LavaProviderUnavailable:
         return _json({"ok": False, "order_id": candidate,
                       "error": "Не удалось проверить сумму счёта."}, 503)
+    confirmed_contract = contract or provider_contract or invoice_id
     async with db_backend.connect() as db:
         await db.execute(
-            """UPDATE web_payment_orders SET status='pending',updated_at_epoch=?
-               WHERE order_id=? AND status='creating'""",
-            (int(time.time()), candidate),
+            """UPDATE web_payment_orders SET status='pending',contract_id=?,
+                      updated_at_epoch=?
+               WHERE order_id=? AND status='creating' AND invoice_id=?""",
+            (confirmed_contract, int(time.time()), candidate, invoice_id),
         )
         await db.commit()
     return _json(_row_public(await _get_order(candidate, account)))
@@ -391,9 +405,13 @@ async def _real_invoice_status(order) -> tuple[str, dict | None]:
     extracted_contract = lava_service.extract_contract_id(invoice)
     if not extracted_id and not extracted_contract:
         raise ValueError("Lava did not prove the invoice identity")
-    if (extracted_id and extracted_id != order[6]) or (
-        extracted_contract and extracted_contract != order[7]
-    ):
+    if ((extracted_id and extracted_id != order[6])
+            or (not extracted_id and not (order[7] and extracted_contract == order[7]))
+            or (extracted_contract and order[7] and extracted_contract != order[7]
+                and not (order[7] == order[6] and extracted_id == order[6]))):
+        # The id-only checkout initially stores invoice_id as a fallback
+        # contract. A later authenticated invoice GET may disclose the real
+        # contract ID. Such a correction is safe only with an exact ID match.
         raise ValueError("Lava invoice binding mismatch")
     if not _external_invoice(invoice, order):
         raise ValueError("Lava invoice price mismatch")
@@ -465,7 +483,20 @@ async def reconcile_pending(limit: int = 25) -> list[dict]:
     outcomes = []
     for row in rows:
         try:
-            status, _invoice = await _real_invoice_status(row)
+            status, verified_invoice = await _real_invoice_status(row)
+            # Replace only a proven invoice-ID fallback, not an explicitly
+            # provider-issued contract ID. This enables later real webhooks
+            # without recreating an invoice or touching account balances.
+            if verified_invoice and row[7] == row[6]:
+                actual_contract = lava_service.extract_contract_id(verified_invoice)
+                if actual_contract and actual_contract != row[7]:
+                    async with db_backend.connect() as db:
+                        await db.execute(
+                            """UPDATE web_payment_orders SET contract_id=?,updated_at_epoch=?
+                               WHERE order_id=? AND invoice_id=? AND contract_id=?""",
+                            (actual_contract, int(time.time()), row[0], row[6], row[7]),
+                        )
+                        await db.commit()
             if status in _SUCCESS:
                 await _settle(row)
                 action = "credited"
@@ -479,12 +510,21 @@ async def reconcile_pending(limit: int = 25) -> list[dict]:
                     await db.commit()
                 action = "failed"
             else:
-                if row[5] == "creating":
+                if row[5] == "creating" and verified_invoice is not None:
+                    # A provider-verified id-only invoice may have reached
+                    # storage before a transient detail API outage. Recover
+                    # the contract binding without creating another invoice.
+                    verified_contract = (
+                        lava_service.extract_contract_id(verified_invoice)
+                        or row[6]
+                    )
                     async with db_backend.connect() as db:
                         await db.execute(
-                            """UPDATE web_payment_orders SET status='pending',updated_at_epoch=?
-                               WHERE order_id=? AND status='creating'""",
-                            (int(time.time()), row[0]),
+                            """UPDATE web_payment_orders SET status='pending',
+                                      contract_id=COALESCE(contract_id, ?),
+                                      updated_at_epoch=?
+                               WHERE order_id=? AND status='creating' AND invoice_id=?""",
+                            (verified_contract, int(time.time()), row[0], row[6]),
                         )
                         await db.commit()
                     action = "invoice_confirmed"
