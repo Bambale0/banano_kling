@@ -11,17 +11,18 @@ That real callback required **10,597.5 ms**, exceeding Lava's documented 10-seco
 
 ## Minimal code fix
 
-- `bot/services/lava_payment_safety.py::_provider_status`: prefer direct invoice GET using the existing stored payment ID or known bound invoice ID.
-- Only on a confirmed HTTP 404 (represented as `None`) attempt the expensive historical catalog discovery, at most once.
-- Preserve existing verified provider status, allowed payment amounts/currencies, idempotent settlement and failure semantics.
-- `tests/test_lava_webhook_fastpath.py`: fast path, 404 fallback, known binding, outage propagation, pending status retry.
+- **Active production path:** `bot/handlers/__init__.py` installs `lava_invoice_compat._provider_status_compatible`, replacing the base safety helper. The incident was reproduced on that active method with a failing test before the fix.
+- `bot/services/lava_invoice_compat.py::_provider_status_compatible`: prefer direct provider GET using the existing stored payment/invoice ID; invoke the receipt-verified account catalog only after all direct lookups returned 404, at most once across retries.
+- `bot/services/lava_payment_safety.py::_provider_status`: apply the equivalent direct lookup before expensive legacy discovery to preserve the standalone safety path.
+- Preserve existing amount/currency checks, provider outage fail-closed behavior and atomic/idempotent settlement.
+- `tests/test_lava_webhook_fastpath.py`: nine focused regression cases cover both the safety helper and the installed compatibility handler.
 
 ## Verification
 
 - Read-only Lava API probe: 47 pending transactions, all `in_progress` at audit time; **no credit or status mutation**.
 - Production Docker restarted on existing SHA and reported `running/healthy`; Telegram webhook continued receiving HTTP 200.
 - New real Lava failed-payment callback reached provider-status verification and HTTP 200, but took >10 seconds *before this code fix*.
-- Source function AST syntax and five isolated async scenarios were executed and passed outside production application imports. Full repository CI and post-deploy timing still required.
+- The legacy helper passed five isolated async scenarios. The actual installed compatibility handler reproduced a failing pre-fix test, then passed five isolated async scenarios on the patched function. Full repository CI and deployed-latency verification are still required. Full repository CI and post-deploy timing still required.
 - No external paid invoice was created for testing.
 - The unrelated 12 web-payment orders stranded at `creating` with no invoice binding have **not** been replayed.
 
