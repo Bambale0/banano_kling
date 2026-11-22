@@ -406,8 +406,12 @@ async def _real_invoice_status(order) -> tuple[str, dict | None]:
     if not extracted_id and not extracted_contract:
         raise ValueError("Lava did not prove the invoice identity")
     if ((extracted_id and extracted_id != order[6])
-            or (extracted_contract and order[7] and extracted_contract != order[7])
-            or (not extracted_id and not (order[7] and extracted_contract == order[7]))):
+            or (not extracted_id and not (order[7] and extracted_contract == order[7]))
+            or (extracted_contract and order[7] and extracted_contract != order[7]
+                and not (order[7] == order[6] and extracted_id == order[6]))):
+        # The id-only checkout initially stores invoice_id as a fallback
+        # contract. A later authenticated invoice GET may disclose the real
+        # contract ID. Such a correction is safe only with an exact ID match.
         raise ValueError("Lava invoice binding mismatch")
     if not _external_invoice(invoice, order):
         raise ValueError("Lava invoice price mismatch")
@@ -480,6 +484,19 @@ async def reconcile_pending(limit: int = 25) -> list[dict]:
     for row in rows:
         try:
             status, verified_invoice = await _real_invoice_status(row)
+            # Replace only a proven invoice-ID fallback, not an explicitly
+            # provider-issued contract ID. This enables later real webhooks
+            # without recreating an invoice or touching account balances.
+            if verified_invoice and row[7] == row[6]:
+                actual_contract = lava_service.extract_contract_id(verified_invoice)
+                if actual_contract and actual_contract != row[7]:
+                    async with db_backend.connect() as db:
+                        await db.execute(
+                            """UPDATE web_payment_orders SET contract_id=?,updated_at_epoch=?
+                               WHERE order_id=? AND invoice_id=? AND contract_id=?""",
+                            (actual_contract, int(time.time()), row[0], row[6], row[7]),
+                        )
+                        await db.commit()
             if status in _SUCCESS:
                 await _settle(row)
                 action = "credited"
