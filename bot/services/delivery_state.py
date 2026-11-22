@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 
 TASK_DELIVERY_STATUSES = frozenset(
     {
@@ -56,6 +58,28 @@ RETRYABLE_TASK_DELIVERY_STATUSES = frozenset(
 # updates. Twenty metadata transitions allow several actual send attempts,
 # while making endless retries impossible even for legacy/poller handlers.
 MAX_DELIVERY_ATTEMPTS = 20
+
+
+def uncertain_retry_seconds(task_id: str, attempt: int) -> int:
+    """Paced at-least-once retry after an ambiguous Telegram send.
+
+    Telegram sends have no idempotency key; a retry after a lost response may
+    create a duplicate. Only explicitly opted-in recovery paths should call
+    this helper, never a second send in the same attempt.
+    """
+    try:
+        base = max(15, min(600, int(os.getenv("TELEGRAM_UNCERTAIN_RETRY_BASE_SECONDS", "60"))))
+    except (TypeError, ValueError):
+        base = 60
+    try:
+        ceiling = max(base, min(86400, int(os.getenv("TELEGRAM_UNCERTAIN_RETRY_MAX_SECONDS", "3600"))))
+    except (TypeError, ValueError):
+        ceiling = max(base, 3600)
+    exponent = min(16, max(0, int(attempt) - 1))
+    delay = min(ceiling, base * (2 ** exponent))
+    digest = hashlib.blake2s(f"{task_id}:{attempt}".encode(), digest_size=2).digest()
+    jitter = 0.85 + 0.15 * int.from_bytes(digest, "big") / 65535
+    return max(10, int(delay * jitter))
 
 
 def telegram_media_too_large(error: Exception | str | None) -> bool:
@@ -163,4 +187,7 @@ async def tracked_telegram_send(progress: dict, primary: bool, send, *args, **kw
     progress["_telegram_send_inflight"] = False
     if primary:
         progress["_telegram_primary_delivered"] = True
+        message_id = getattr(response, "message_id", None)
+        if isinstance(message_id, int) and not isinstance(message_id, bool):
+            progress["_telegram_primary_message_id"] = message_id
     return response

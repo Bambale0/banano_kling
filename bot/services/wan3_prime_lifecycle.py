@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from bot import database
 from bot import db as db_backend
 from bot.services import preset_manager as preset_module
+from bot.services.delivery_state import uncertain_retry_seconds
 from bot.services.generation_origin import generation_origin_from_context
 from bot.services.wan3_billing import settlement_amounts
 from bot.services.wan3_models import wan3_model_spec, wan3_service_for_model
@@ -981,6 +982,22 @@ class Wan3PrimeLifecycle:
                 await db.rollback()
                 return False
             metadata = json.loads(task["request_data"] or "{}")
+            if outcome.status == "uncertain":
+                # A lost Telegram response is not proof of delivery. Schedule
+                # another at-least-once attempt, fenced by the existing lease.
+                uncertain_attempt = int(metadata.get("delivery_uncertain_attempts") or 0) + 1
+                retry_after = uncertain_retry_seconds(
+                    str(row["internal_task_id"]), uncertain_attempt,
+                )
+                retry_at = (
+                    datetime.now(UTC) + timedelta(seconds=retry_after)
+                ).replace(tzinfo=None).isoformat(sep=" ")
+                await db.execute(
+                    "UPDATE wan3_prime_intents SET next_attempt_at = ? "
+                    "WHERE internal_task_id = ? AND delivery_status = 'uncertain'",
+                    (retry_at, row["internal_task_id"]),
+                )
+                metadata["delivery_uncertain_attempts"] = uncertain_attempt
             metadata["delivery_status"] = outcome.status
             metadata["delivery_error"] = outcome.error
             metadata["delivery_attempts"] = int(metadata.get("delivery_attempts") or 0) + 1
@@ -1026,7 +1043,7 @@ class Wan3PrimeLifecycle:
                 WHERE status IN ('completed', 'failed')
                   AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
                   AND (
-                    (delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent')
+                    (delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent', 'uncertain')
                      AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
                     OR (delivery_status = 'unavailable' AND EXISTS (
                         SELECT 1 FROM users WHERE users.id = wan3_prime_intents.user_id
@@ -1050,7 +1067,15 @@ class Wan3PrimeLifecycle:
                 )
             except (TypeError, ValueError):
                 task_metadata = {}
-            if task_metadata.get("origin_platform") == "vk":
+            if (
+                row["delivery_status"] == "uncertain"
+                and isinstance(task_metadata.get("delivery_message_id"), int)
+            ):
+                # Repair an inconsistent marker without resending a receipt.
+                outcome = DeliveryOutcome(
+                    "delivered", message_id=task_metadata["delivery_message_id"],
+                )
+            elif task_metadata.get("origin_platform") == "vk":
                 if row["status"] == "completed" and row["result_url"]:
                     await database.complete_task_in_app(
                         str(row["internal_task_id"]), str(row["result_url"])
@@ -1089,7 +1114,7 @@ class Wan3PrimeLifecycle:
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET delivery_status = 'delivering', lease_until = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE internal_task_id = ? AND status IN ('completed', 'failed') "
-                "AND delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent', 'unavailable') "
+                "AND delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent', 'unavailable', 'uncertain') "
                 "AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)",
                 (lease_until, internal_task_id),
             )
