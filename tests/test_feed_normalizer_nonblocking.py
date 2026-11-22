@@ -149,15 +149,14 @@ class NormalizerIsolationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.state["write_sql"]), 1)
         sql = self.state["write_sql"][0]
         for safety in ("is_public_feed = 1", "status = 'completed'",
-                       "result_url = ? OR (result_url IS NULL AND ? IS NULL)",
-                       "result_urls = ? OR (result_urls IS NULL AND ? IS NULL)"):
+                       "result_url IS NOT DISTINCT FROM ?",
+                       "result_urls IS NOT DISTINCT FROM ?"):
             self.assertIn(safety, sql)
         params = self.state["write_params"][0]
         self.assertEqual(params[2], 1)
         self.assertEqual(params[3:], (
             self.state["rows"][0]["result_url"],
-            self.state["rows"][0]["result_url"],
-            None, None,
+            None,
         ))
 
     async def test_network_failure_does_not_leave_a_open_transaction(self):
