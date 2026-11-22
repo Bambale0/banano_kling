@@ -12,12 +12,12 @@ Production logs Nov 21-22 repeatedly showed `Invalid web invoice binding` right 
 - Persist the provider invoice ID immediately while still `creating`, so a transient detail lookup failure retains a durable recovery handle and repeat requests reuse the same local order.
 - Verify authenticated provider GET returns the **same** invoice ID, exact RUB amount and currency before enabling the checkout URL. Reject mismatched identity or any conflicting provider-supplied `contractId`.
 - Derive a fallback `contract_id = invoice_id` only after independent verification; prefer provider-supplied contract ID when available.
-- Reconciliation safely promotes a `creating` record with a verified provider invoice, persisting a later binding. No state transition when detail lookup yields no invoice.
+- Reconciliation safely promotes a `creating` record with a verified provider invoice, persisting a later binding. For an already pending invoice-ID fallback it can replace that placeholder with an independently verified later contract ID, using a compare-and-swap SQL update. No state transition when detail lookup yields no invoice.
 - All wallet settlements remain idempotent by `web:topup:<order_id>`. No edits to credits, prices, existing invoices, historical rows, or payment method priority.
 
 ## Regression verification
 
-New tests in `tests/test_web_commerce_settlement.py`: invoice-only checkout and duplicate callback, provider API outage after durable binding and no duplicate invoice, provider identity mismatch and no credits. Existing contractful checkout + amount-mismatch + outage tests remain in place.
+New tests in `tests/test_web_commerce_settlement.py`: invoice-only checkout and duplicate callback, provider API outage after durable binding and no duplicate invoice, provider identity mismatch and no credits, and a late provider contract becoming available after an invoice-only create. Existing contractful checkout + amount-mismatch + outage tests remain in place.
 
 ## Release requirements
 
