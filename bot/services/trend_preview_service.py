@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 from bot.services.media_input_utils import resolve_local_upload_path
 
@@ -82,8 +83,8 @@ def _persist_derived(path: Path, *, content_type: str) -> str:
 
 def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_suffix(".tmp.mp4")
-    tmp_path.unlink(missing_ok=True)
+    # A shared deterministic output path must never share a mutable ffmpeg temp file.
+    tmp_path = output_path.with_name(f".{output_path.stem}.{uuid4().hex}.tmp.mp4")
 
     max_width = _safe_int(TREND_PREVIEW_MAX_WIDTH, minimum=240, maximum=960)
     fps = _safe_int(TREND_PREVIEW_FPS, minimum=8, maximum=24)
@@ -130,14 +131,16 @@ def _run_ffmpeg_preview(source: Path, output_path: Path) -> None:
         str(crf),
         str(tmp_path),
     ]
-    subprocess.run(command, check=True, timeout=120)
-    tmp_path.replace(output_path)
+    try:
+        subprocess.run(command, check=True, timeout=120)
+        tmp_path.replace(output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _run_ffmpeg_poster(source: Path, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = output_path.with_suffix(".tmp.jpg")
-    tmp_path.unlink(missing_ok=True)
+    tmp_path = output_path.with_name(f".{output_path.stem}.{uuid4().hex}.tmp.jpg")
 
     max_width = _safe_int(TREND_PREVIEW_MAX_WIDTH, minimum=240, maximum=960)
     seek_seconds = max(0.0, min(3.0, float(TREND_PREVIEW_POSTER_SECONDS)))
@@ -161,8 +164,11 @@ def _run_ffmpeg_poster(source: Path, output_path: Path) -> None:
         "4",
         str(tmp_path),
     ]
-    subprocess.run(command, check=True, timeout=30)
-    tmp_path.replace(output_path)
+    try:
+        subprocess.run(command, check=True, timeout=30)
+        tmp_path.replace(output_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def cached_trend_preview_assets(preview_url: str | None) -> dict[str, str | None]:
@@ -230,7 +236,7 @@ async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str 
                 source,
                 preview_url,
             )
-            output_path.unlink(missing_ok=True)
+            # Do not unlink output_path: a concurrent renderer may have published it.
 
     if not poster_path.exists() or poster_path.stat().st_size <= 0:
         try:
@@ -241,7 +247,7 @@ async def ensure_trend_preview_assets(preview_url: str | None) -> dict[str, str 
                 source,
                 preview_url,
             )
-            poster_path.unlink(missing_ok=True)
+            # Do not unlink poster_path: a concurrent renderer may have published it.
 
     if output_path.exists() and output_path.stat().st_size > 0:
         result["preview_url"] = await asyncio.to_thread(
