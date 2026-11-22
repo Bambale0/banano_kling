@@ -287,23 +287,32 @@ async def _provider_status_compatible(
 
     last_status = ""
     resolved_invoice_id: str | None = None
+    catalog_attempted = False
 
     for delay in retry_delays:
         if delay:
             await asyncio.sleep(delay)
 
-        # Prefer verified list lookup for recent local invoices. The provider's
-        # detail endpoint sometimes answers 404 for valid contract IDs.
-        invoice = await _list_verified_invoice(transaction)
-        # Keep the successful *lookup identifier*, not the last item in the
-        # candidate-building loop. A provider list hit always uses payment_id.
-        resolved_lookup_id = payment_id if invoice is not None else None
-        if invoice is None:
-            for candidate in candidates:
-                invoice = await lava_service.get_invoice(candidate)
-                if invoice:
-                    resolved_lookup_id = candidate
-                    break
+        # Use the immutable local invoice ID for direct provider verification
+        # before querying the account-wide invoice catalog. A full paginated
+        # scan previously delayed even ordinary webhooks beyond Lava's 10s
+        # acknowledgement deadline. Provider errors propagate fail-closed.
+        invoice = None
+        resolved_lookup_id = None
+        for candidate in candidates:
+            invoice = await lava_service.get_invoice(candidate)
+            if invoice:
+                resolved_lookup_id = candidate
+                break
+
+        if invoice is None and not catalog_attempted:
+            # Some historic contract IDs return 404 on the detail endpoint.
+            # Fall back to the receipt-verified list at most once; a missing
+            # provider status must never authorize settlement.
+            catalog_attempted = True
+            invoice = await _list_verified_invoice(transaction)
+            if invoice is not None:
+                resolved_lookup_id = payment_id
         if not invoice:
             continue
 
