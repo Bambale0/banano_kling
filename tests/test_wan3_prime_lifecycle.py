@@ -126,6 +126,44 @@ def test_documented_rejection_can_be_refunded(result):
     assert task_id is None
 
 
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"error": "api_error", "status_code": 503, "success": False,
+          "definitive_pre_submission_failure": True}, "api_error"),
+        ({"error": "api_error", "status_code": 503, "success": False},
+         "upstream_submission_unknown"),
+    ],
+)
+def test_native_preflight_marker_distinguishes_refund_from_uncertain_upstream(result, expected):
+    outcome, task_id, _ = Wan3PrimeLifecycle._classify_create_result(None, result)
+    assert outcome == expected
+    assert task_id is None
+
+
+@pytest.mark.asyncio
+async def test_native_preflight_failure_refunds_real_reservation_once():
+    actor = await user_actor(credits=40)
+    provider = Provider()
+    provider.create_result = {
+        "success": False,
+        "error": "api_error",
+        "status_code": 503,
+        "definitive_pre_submission_failure": True,
+        "message": "Provider route persistence failed before submission",
+    }
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(), preset_manager=Prices({"720p": 2}), transport=provider,
+    )
+    quote = await lifecycle.quote(actor, body(duration=5))
+    first = await lifecycle.launch(actor, body(duration=5), quote, "preflight-fail")
+    second = await lifecycle.launch(actor, body(duration=5), quote, "preflight-fail")
+    assert first["status"] == "failed"
+    assert second["status"] == "failed"
+    assert provider.creates == 1
+    assert await balance(actor.user_id) == 40
+
+
 def test_provider_acknowledgement_preserves_task_id():
     outcome, task_id, _ = Wan3PrimeLifecycle._classify_create_result(
         None, {"task_id": "synthetic-task", "success": True}

@@ -97,6 +97,8 @@ class Wan3PrimeRecipe:
     audio: bool = True
     seed: int | None = None
     nsfw_checker: bool = False
+    # Stable, server-issued provider idempotency key; never accepted from client JSON.
+    provider_submission_id: str = field(default="", repr=False, compare=False)
     # Internal-only frozen provider input. Never populated from client JSON.
     prepared_input: dict[str, Any] = field(default_factory=dict, repr=False)
     client_request: dict[str, Any] = field(default_factory=dict, repr=False)
@@ -113,6 +115,7 @@ class Wan3PrimeRecipe:
 
     def safe_summary(self) -> dict[str, Any]:
         data = asdict(self)
+        data.pop("provider_submission_id", None)
         data["media"] = {
             key: [
                 {
@@ -157,6 +160,7 @@ class Wan3PrimeRecipe:
         payload = self.safe_summary()
         # Idempotency describes the original user operation, not later admin template edits.
         payload.pop("prepared_input", None)
+        payload.pop("provider_submission_id", None)
         if self.model == WAN3_MODEL_KEY:
             payload.pop("model", None)  # Preserve every legacy Prime fingerprint.
         payload["provider_args"] = self.raw_provider_args()
