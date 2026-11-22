@@ -38,7 +38,6 @@ async def test_reconciles_verified_completed_from_list_after_detail_404(monkeypa
     async def broken_detail(identifier):
         detail_calls.append(identifier)
         # Only a confirmed 404 should activate the slower verified list.
-        return None
 
     monkeypatch.setattr(lava_service, "_request", provider)
     monkeypatch.setattr(lava_service, "get_invoice", broken_detail)
@@ -144,7 +143,6 @@ async def test_verified_list_keeps_invoice_id_when_webhook_contract_differs(monk
 
     async def no_detail(identifier):
         detail_calls.append(identifier)
-        return None
 
     monkeypatch.setattr(lava_service, "_request", provider)
     monkeypatch.setattr(lava_service, "get_invoice", no_detail)
