@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 
 from bot.services import lava_invoice_compat as compat
 from bot.services import lava_payment_safety as safety
-from bot.services.lava_service import LavaService, lava_service
+from bot.services.lava_service import LavaProviderUnavailable, LavaService, lava_service
 
 
 @pytest.mark.asyncio
@@ -102,6 +103,84 @@ async def test_lookup_discovers_invoice_id_before_retrying(monkeypatch):
 
     assert result is transaction
     assert calls == [("contract-1", None), ("contract-1", None)]
+
+
+
+@pytest.mark.asyncio
+async def test_slow_unmapped_webhook_returns_retryable_before_discovery_finishes(monkeypatch):
+    """A slow vendor catalog cannot consume the provider's 10s ACK deadline."""
+    release = asyncio.Event()
+    started = asyncio.Event()
+    binding = {}
+    calls = []
+    discovery_calls = []
+
+    async def lookup(*, contract_id, order_id):
+        calls.append((contract_id, order_id))
+        if binding.get(contract_id):
+            return SimpleNamespace(order_id="verified-order", payment_id="invoice-1")
+        return None
+
+    async def discover(contract_id):
+        discovery_calls.append(contract_id)
+        started.set()
+        await release.wait()
+        binding[contract_id] = "invoice-1"
+        return "invoice-1"
+
+    monkeypatch.setattr(compat, "_WEBHOOK_DISCOVERY_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(safety, "_discover_invoice_id_by_contract", discover)
+    wrapped = compat._make_lookup_with_discovery(lookup)
+    contract = "synthetic-delayed-contract"
+    try:
+        with pytest.raises(LavaProviderUnavailable):
+            await wrapped(contract_id=contract, order_id=None)
+        assert started.is_set()
+        pending = compat._webhook_discovery_inflight[contract]
+        assert not pending.done(), "Do not cancel a discovery that may save a valid mapping"
+        assert calls == [(contract, None)]
+        release.set()
+        assert await asyncio.wait_for(pending, 1.0) == "invoice-1"
+        transaction = await wrapped(contract_id=contract, order_id=None)
+        assert transaction.order_id == "verified-order"
+        assert discovery_calls == [contract]
+    finally:
+        release.set()
+        pending = compat._webhook_discovery_inflight.get(contract)
+        if pending is not None:
+            await asyncio.wait_for(pending, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_unknown_contract_webhooks_share_one_bounded_discovery(monkeypatch):
+    """No parallel account-wide scans, no fabricated order or invoice credit."""
+    release = asyncio.Event()
+    attempts = []
+
+    async def lookup(*, contract_id, order_id):
+        return None
+
+    async def discover(contract_id):
+        attempts.append(contract_id)
+        await release.wait()
+        return None
+
+    monkeypatch.setattr(compat, "_WEBHOOK_DISCOVERY_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(safety, "_discover_invoice_id_by_contract", discover)
+    wrapped = compat._make_lookup_with_discovery(lookup)
+    contract = "synthetic-unknown-contract"
+    try:
+        failures = await asyncio.gather(
+            *(wrapped(contract_id=contract, order_id=None) for _ in range(4)),
+            return_exceptions=True,
+        )
+        assert all(isinstance(item, LavaProviderUnavailable) for item in failures)
+        assert attempts == [contract]
+    finally:
+        release.set()
+        pending = compat._webhook_discovery_inflight.get(contract)
+        if pending is not None:
+            await asyncio.wait_for(pending, 1.0)
 
 
 @pytest.mark.asyncio
