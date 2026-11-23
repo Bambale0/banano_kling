@@ -182,6 +182,39 @@ async def test_concurrent_unknown_contract_webhooks_share_one_bounded_discovery(
             await asyncio.wait_for(pending, 1.0)
 
 
+
+@pytest.mark.asyncio
+async def test_webhook_discovery_capacity_is_fail_closed(monkeypatch):
+    """Unrelated orphan contracts cannot spawn unbounded catalog requests."""
+    release = asyncio.Event()
+    attempted = []
+
+    async def lookup(*, contract_id, order_id):
+        return None
+
+    async def discover(contract_id):
+        attempted.append(contract_id)
+        await release.wait()
+
+    monkeypatch.setattr(compat, "_WEBHOOK_DISCOVERY_WAIT_SECONDS", 0.01)
+    monkeypatch.setattr(compat, "_MAX_WEBHOOK_DISCOVERIES", 1)
+    monkeypatch.setattr(safety, "_discover_invoice_id_by_contract", discover)
+    wrapped = compat._make_lookup_with_discovery(lookup)
+    first = "synthetic-capacity-one"
+    second = "synthetic-capacity-two"
+    try:
+        with pytest.raises(LavaProviderUnavailable):
+            await wrapped(contract_id=first, order_id=None)
+        with pytest.raises(LavaProviderUnavailable):
+            await wrapped(contract_id=second, order_id=None)
+        assert attempted == [first]
+    finally:
+        release.set()
+        pending = compat._webhook_discovery_inflight.get(first)
+        if pending is not None:
+            await asyncio.wait_for(pending, 1.0)
+
+
 @pytest.mark.asyncio
 async def test_provider_status_queries_invoice_id_before_webhook_contract(monkeypatch):
     requested = []
