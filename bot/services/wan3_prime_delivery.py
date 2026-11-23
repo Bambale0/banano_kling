@@ -9,10 +9,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramEntityTooLarge,
+    TelegramRetryAfter,
+)
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.services.delivery_state import terminal_telegram_delivery_reason
+from bot.services.delivery_state import (
+    telegram_media_too_large,
+    terminal_telegram_delivery_reason,
+)
 
 
 @dataclass(frozen=True)
@@ -28,6 +35,34 @@ def delivery_timeout() -> int:
         return max(10, min(300, int(os.getenv("WAN3_DELIVERY_TIMEOUT_SECONDS", "90"))))
     except ValueError:
         return 90
+
+
+def max_inline_video_bytes() -> int:
+    """Conservative Telegram Bot API size threshold; configurable in environment."""
+    try:
+        return max(1, int(os.getenv("WAN3_TELEGRAM_MAX_INLINE_VIDEO_BYTES", "48000000")))
+    except ValueError:
+        return 48_000_000
+
+
+def _explicit_media_too_large(exc: Exception) -> bool:
+    # TelegramEntityTooLarge inherits TelegramNetworkError, not TelegramBadRequest.
+    # An explicit size rejection is safe to follow with a link; a timeout is not.
+    return isinstance(exc, TelegramEntityTooLarge) or telegram_media_too_large(exc)
+
+
+def _managed_result_file(record: dict[str, Any]) -> tuple[Path, int] | None:
+    """Only use retained results inside Wan's own managed directory."""
+    path = record.get("result_path")
+    if not path:
+        return None
+    try:
+        local = Path(str(path)).resolve()
+        local.relative_to(Path("static/uploads/wan3_prime/results").resolve())
+        size = local.stat().st_size if local.is_file() else 0
+        return (local, size) if size > 0 else None
+    except (OSError, ValueError):
+        return None
 
 
 def _failure(exc: Exception) -> DeliveryOutcome:
@@ -61,6 +96,30 @@ def _markup(task_id: str, url: str | None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+async def _send_download_link(
+    bot: Any, telegram_id: int, caption: str, markup: InlineKeyboardMarkup,
+    url: str, timeout: int, *, oversized: bool,
+) -> DeliveryOutcome:
+    if urlsplit(url).scheme not in {"http", "https"}:
+        return DeliveryOutcome("pending", error="durable_result_unavailable")
+    explanation = (
+        "Файл слишком большой для отправки в Telegram — скачайте оригинал по кнопке ниже."
+        if oversized else
+        "Пока файл не удалось отправить в чат — оригинал доступен по кнопке ниже."
+    )
+    try:
+        sent = await asyncio.wait_for(
+            bot.send_message(
+                telegram_id, caption + "\n\n" + explanation,
+                parse_mode="HTML", reply_markup=markup,
+            ),
+            timeout=timeout,
+        )
+        return _receipt(sent, "link_sent")
+    except Exception as exc:  # noqa: BLE001 - ambiguous responses stay uncertain
+        return _failure(exc)
+
+
 async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcome:
     from bot.services.wan3_models import wan3_model_spec
 
@@ -80,6 +139,9 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
         except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
             return _failure(exc)
 
+    if record.get("delivery_status") == "link_sent":
+        return DeliveryOutcome("link_sent", error="download_link_already_sent")
+
     caption = (f"✅ <b>{label} — готово</b>\n"
                f"🆔 <code>{html.escape(task_id)}</code>\n"
                f"Списано: <b>{float(record.get('charged_credits') or 0):g}🍌</b>")
@@ -91,12 +153,22 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
         caption += f"\nДлительность: <b>{float(seconds):g} с</b>"
     markup = _markup(task_id, url)
     kwargs = {"caption": caption, "parse_mode": "HTML", "reply_markup": markup}
+    durable = _managed_result_file(record)
+    # Preflight available local data; S3-only data is protected by the rejection fallback.
+    if durable and durable[1] > max_inline_video_bytes():
+        return await _send_download_link(
+            bot, telegram_id, caption, markup, url, timeout, oversized=True,
+        )
     if urlsplit(url).scheme in {"http", "https"}:
         try:
             sent = await asyncio.wait_for(bot.send_video(telegram_id, video=url,
                 supports_streaming=True, **kwargs), timeout=timeout)
             return _receipt(sent)
         except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
+            if _explicit_media_too_large(exc):
+                return await _send_download_link(
+                    bot, telegram_id, caption, markup, url, timeout, oversized=True,
+                )
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest):
                 return outcome
@@ -104,18 +176,17 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
                 return outcome
 
     # Send only the durable file belonging to this task's managed result root.
-    try:
-        local = Path(str(record.get("result_path") or "")).resolve()
-        local.relative_to(Path("static/uploads/wan3_prime/results").resolve())
-        usable = local.is_file() and local.stat().st_size > 0
-    except (OSError, ValueError):
-        usable = False
-    if usable:
+    if durable:
+        local, _size = durable
         try:
             sent = await asyncio.wait_for(bot.send_video(telegram_id,
                 video=FSInputFile(local), supports_streaming=True, **kwargs), timeout=timeout)
             return _receipt(sent)
         except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
+            if _explicit_media_too_large(exc):
+                return await _send_download_link(
+                    bot, telegram_id, caption, markup, url, timeout, oversized=True,
+                )
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest) or outcome.status == "unavailable":
                 return outcome
@@ -125,18 +196,14 @@ async def deliver_wan_result(bot: Any, record: dict[str, Any]) -> DeliveryOutcom
                 document=FSInputFile(local), **kwargs), timeout=timeout)
             return _receipt(sent)
         except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
+            if _explicit_media_too_large(exc):
+                return await _send_download_link(
+                    bot, telegram_id, caption, markup, url, timeout, oversized=True,
+                )
             outcome = _failure(exc)
             if not isinstance(exc, TelegramBadRequest) or outcome.status == "unavailable":
                 return outcome
 
-    if record.get("delivery_status") == "link_sent":
-        return DeliveryOutcome("link_sent", error="media_delivery_pending")
-    if urlsplit(url).scheme not in {"http", "https"}:
-        return DeliveryOutcome("pending", error="durable_result_unavailable")
-    try:
-        sent = await asyncio.wait_for(bot.send_message(telegram_id,
-            caption + "\n\nВидео готово. Пока файл не удалось отправить в чат — оригинал доступен по кнопке ниже.",
-            parse_mode="HTML", reply_markup=markup), timeout=timeout)
-        return _receipt(sent, "link_sent")
-    except Exception as exc:  # noqa: BLE001 - classify uncertain Telegram outcomes without replay
-        return _failure(exc)
+    return await _send_download_link(
+        bot, telegram_id, caption, markup, url, timeout, oversized=False,
+    )

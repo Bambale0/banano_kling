@@ -960,7 +960,7 @@ class Wan3PrimeLifecycle:
     async def _finish_delivery(self, row, lease: str, outcome) -> bool:
         """Commit the Telegram receipt and public history marker together, fenced by lease."""
         retry_at = None
-        if outcome.status in {"pending", "link_sent"}:
+        if outcome.status == "pending":
             retry_at = (datetime.now(UTC) + timedelta(seconds=outcome.retry_after)).replace(tzinfo=None).isoformat(sep=" ")
         async with db_backend.connect(_database_path()) as db:
             db.row_factory = db_backend.Row
@@ -1026,7 +1026,7 @@ class Wan3PrimeLifecycle:
                 WHERE status IN ('completed', 'failed')
                   AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)
                   AND (
-                    (delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent')
+                    (delivery_status IN ('result_ready', 'failure_ready', 'pending')
                      AND (next_attempt_at IS NULL OR next_attempt_at <= CURRENT_TIMESTAMP))
                     OR (delivery_status = 'unavailable' AND EXISTS (
                         SELECT 1 FROM users WHERE users.id = wan3_prime_intents.user_id
@@ -1089,7 +1089,7 @@ class Wan3PrimeLifecycle:
             updated = await db.execute(
                 "UPDATE wan3_prime_intents SET delivery_status = 'delivering', lease_until = ?, updated_at = CURRENT_TIMESTAMP "
                 "WHERE internal_task_id = ? AND status IN ('completed', 'failed') "
-                "AND delivery_status IN ('result_ready', 'failure_ready', 'pending', 'link_sent', 'unavailable') "
+                "AND delivery_status IN ('result_ready', 'failure_ready', 'pending', 'unavailable') "
                 "AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)",
                 (lease_until, internal_task_id),
             )
