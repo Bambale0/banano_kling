@@ -8,7 +8,10 @@ import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge
 from aiogram.methods import SendVideo
 
+from bot import database
 from bot.services.wan3_prime_delivery import deliver_wan_result
+from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycle
+from tests.test_wan3_prime_lifecycle import Prices, Probe, Provider, body, user_actor
 
 
 def _record(**overrides):
@@ -129,10 +132,6 @@ async def test_existing_link_receipt_does_not_resend_video_or_link():
 @pytest.mark.asyncio
 async def test_confirmed_link_is_not_retried_by_recovery_poller():
     """Delivery receipt is terminal: never repeat media or charge again."""
-    from bot import database
-    from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycle
-    from tests.test_wan3_prime_lifecycle import Prices, Probe, Provider, body, user_actor
-
     actor = await user_actor(credits=50)
     provider = Provider()
     lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
