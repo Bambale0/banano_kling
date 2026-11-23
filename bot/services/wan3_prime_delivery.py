@@ -9,10 +9,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from aiogram.exceptions import TelegramBadRequest, TelegramEntityTooLarge, TelegramRetryAfter
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramEntityTooLarge,
+    TelegramRetryAfter,
+)
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.services.delivery_state import terminal_telegram_delivery_reason, telegram_media_too_large
+from bot.services.delivery_state import (
+    telegram_media_too_large,
+    terminal_telegram_delivery_reason,
+)
 
 
 @dataclass(frozen=True)
