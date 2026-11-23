@@ -8,6 +8,7 @@ import os
 import random
 import sys
 import time
+import weakref
 from pathlib import Path
 from logging.handlers import TimedRotatingFileHandler
 from typing import Any, Awaitable, Callable, Mapping
@@ -441,7 +442,11 @@ logger = logging.getLogger(__name__)
 ensure_memory_tracing()
 
 class FallbackFSMStorage(BaseStorage):
-    """Keep handlers responsive if Redis FSM storage fails after startup."""
+    """Keep handlers responsive if Redis FSM storage fails after startup.
+
+    A failure is scoped to its StorageKey. A global lock or global memory
+    fallback would delay unrelated users and hide their valid Redis state.
+    """
 
     def __init__(
         self, primary: BaseStorage, fallback: BaseStorage,
@@ -450,65 +455,121 @@ class FallbackFSMStorage(BaseStorage):
         self._primary = primary
         self._fallback = fallback
         self._fallback_active = False
-        self._recovery_interval = max(0.0, config.REDIS_RECOVERY_INTERVAL_SECONDS if recovery_interval_seconds is None else recovery_interval_seconds)
+        self._recovery_interval = max(
+            0.0,
+            config.REDIS_RECOVERY_INTERVAL_SECONDS
+            if recovery_interval_seconds is None else recovery_interval_seconds,
+        )
         self._next_recovery_at = 0.0
+        self._fallback_keys: set[StorageKey] = set()
         self._dirty_states: set[StorageKey] = set()
         self._dirty_data: set[StorageKey] = set()
         self._replaced_data: set[StorageKey] = set()
-        self._recovered_keys: set[StorageKey] = set()
-        self._operation_lock = asyncio.Lock()
+        # Weak references keep locks alive only while requests use them.
+        self._key_locks: weakref.WeakValueDictionary[StorageKey, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._recovery_lock = asyncio.Lock()
 
-    async def _recover(self, key: StorageKey) -> None:
+    def _key_lock(self, key: StorageKey) -> asyncio.Lock:
+        lock = self._key_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._key_locks[key] = lock
+        return lock
+
+    async def _recover(self, probe_key: StorageKey) -> None:
         self._next_recovery_at = time.monotonic() + self._recovery_interval
+        recovered = 0
         try:
-            # Probe before replaying. Serialize recovery with fallback writes so
-            # a concurrent handler cannot lose its newest state or data.
-            await self._primary.get_state(key)
-            for dirty_key in list(self._dirty_data | self._dirty_states):
-                if dirty_key in self._dirty_data:
-                    write = self._primary.set_data if dirty_key in self._replaced_data else self._primary.update_data
-                    await write(dirty_key, await self._fallback.get_data(dirty_key))
-                if dirty_key in self._dirty_states:
-                    await self._primary.set_state(dirty_key, await self._fallback.get_state(dirty_key))
-                # Retire each fully migrated key before the aggregate deadline.
-                # Keep its memory snapshot readable until the whole queue drains.
-                self._dirty_data.discard(dirty_key)
-                self._dirty_states.discard(dirty_key)
-                self._replaced_data.discard(dirty_key)
-                self._recovered_keys.add(dirty_key)
+            # One probe guards replaying in-memory changes onto a dead Redis.
+            await self._primary.get_state(probe_key)
+            for dirty_key in list(self._fallback_keys):
+                # Never restore a snapshot while the same user's handler
+                # mutates it. Healthy users do not acquire this lock.
+                async with self._key_lock(dirty_key):
+                    if dirty_key not in self._fallback_keys:
+                        continue
+                    if dirty_key in self._dirty_data:
+                        write = (
+                            self._primary.set_data
+                            if dirty_key in self._replaced_data
+                            else self._primary.update_data
+                        )
+                        await write(
+                            dirty_key, await self._fallback.get_data(dirty_key)
+                        )
+                    if dirty_key in self._dirty_states:
+                        await self._primary.set_state(
+                            dirty_key, await self._fallback.get_state(dirty_key)
+                        )
+                    # Once replayed, switch THIS key to Redis. Other keys
+                    # continue using their fallback until they recover.
+                    await self._fallback.set_state(dirty_key, None)
+                    await self._fallback.set_data(dirty_key, {})
+                    self._dirty_data.discard(dirty_key)
+                    self._dirty_states.discard(dirty_key)
+                    self._replaced_data.discard(dirty_key)
+                    self._fallback_keys.discard(dirty_key)
+                    recovered += 1
         except Exception as exc:
-            logger.warning("FSM Redis recovery deferred: error_type=%s", type(exc).__name__)
+            logger.warning(
+                "FSM Redis recovery deferred: error_type=%s remaining_keys=%s",
+                type(exc).__name__, len(self._fallback_keys),
+            )
+        finally:
+            self._fallback_active = bool(self._fallback_keys)
+        if recovered:
+            logger.info(
+                "FSM Redis storage recovered: migrated_keys=%s remaining_keys=%s",
+                recovered, len(self._fallback_keys),
+            )
+
+    async def _maybe_recover(self, probe_key: StorageKey) -> None:
+        if (
+            not self._fallback_keys
+            or time.monotonic() < self._next_recovery_at
+            or self._recovery_lock.locked()
+        ):
             return
-        recovered = self._recovered_keys
-        for dirty_key in recovered:
-            await self._fallback.set_state(dirty_key, None)
-            await self._fallback.set_data(dirty_key, {})
-        self._dirty_data.clear()
-        self._replaced_data.clear()
-        self._dirty_states.clear()
-        self._fallback_active = False
-        logger.info("FSM Redis storage recovered: migrated_keys=%s", len(recovered))
-        self._recovered_keys.clear()
+        async with self._recovery_lock:
+            if not self._fallback_keys or time.monotonic() < self._next_recovery_at:
+                return
+            try:
+                async with asyncio.timeout(
+                    max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)
+                ):
+                    await self._recover(probe_key)
+            except TimeoutError:
+                logger.warning(
+                    "FSM Redis recovery timed out; retaining temporary changes: "
+                    "remaining_keys=%s", len(self._fallback_keys),
+                )
 
     async def _call(self, method_name: str, *args, **kwargs):
         key = kwargs.get("key") or kwargs["storage_key"]
-        async with self._operation_lock:
-            if self._fallback_active and time.monotonic() >= self._next_recovery_at:
+        # Recovery is opportunistic, single-flight and strictly bounded.
+        # Other users can continue through their independent state lock.
+        await self._maybe_recover(key)
+        async with self._key_lock(key):
+            if key not in self._fallback_keys:
                 try:
-                    async with asyncio.timeout(max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)):
-                        await self._recover(key)
-                except TimeoutError:
-                    logger.warning("FSM Redis recovery timed out; retaining temporary changes")
-            if not self._fallback_active:
-                try:
-                    async with asyncio.timeout(max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)):
+                    async with asyncio.timeout(
+                        max(0.01, config.REDIS_OPERATION_TIMEOUT_SECONDS)
+                    ):
                         return await getattr(self._primary, method_name)(*args, **kwargs)
+                except asyncio.CancelledError:
+                    raise
                 except Exception as exc:
+                    if not self._fallback_active:
+                        self._next_recovery_at = (
+                            time.monotonic() + self._recovery_interval
+                        )
+                    self._fallback_keys.add(key)
                     self._fallback_active = True
-                    self._next_recovery_at = time.monotonic() + self._recovery_interval
                     logger.warning(
-                        "FSM Redis storage unavailable; using temporary memory: error_type=%s",
-                        type(exc).__name__,
+                        "FSM Redis storage unavailable; using temporary memory: "
+                        "error_type=%s", type(exc).__name__,
                     )
 
             result = await getattr(self._fallback, method_name)(*args, **kwargs)
@@ -680,16 +741,15 @@ class AccessGuardMiddleware(BaseMiddleware):
                     "🛠 Бот временно на техническом обслуживании. Попробуйте позже.",
                 )
                 return None
-            if is_subscription_check_callback:
-                return await handler(event, data)
-            # Authentication is a narrow identity-proof action, not product use.
-            # Keep bans and maintenance enforcement, but subscription must not
-            # make the website login button unusable for a new Telegram user.
-            if is_browser_approval:
-                return await handler(event, data)
-            if is_admin_management_event:
-                return await handler(event, data)
-            if await is_channel_subscription_required():
+            # Authentication and subscription confirmation bypass only the
+            # subscription check, never bans or maintenance. Run handlers
+            # OUTSIDE the access-check try block to prevent double execution.
+            bypass_subscription = (
+                is_subscription_check_callback
+                or is_browser_approval
+                or is_admin_management_event
+            )
+            if not bypass_subscription and await is_channel_subscription_required():
                 bot = data.get("bot") or getattr(event, "bot", None)
                 if not bot:
                     logger.warning("Access guard has no bot instance for subscription check")
@@ -3204,11 +3264,30 @@ async def handle_telegram_webhook(
 
         # Создаём объект Update
         update = Update(**update_data)
+        received_at = time.monotonic()
 
         async def _process_update():
             try:
                 async with _TELEGRAM_WEBHOOK_SEMAPHORE:
-                    await dp.feed_update(bot, update)
+                    queue_wait_ms = (time.monotonic() - received_at) * 1000
+                    if queue_wait_ms >= config.TELEGRAM_WEBHOOK_QUEUE_WARN_MS:
+                        logger.warning(
+                            "Telegram webhook queue slow: update_id=%s queue_wait_ms=%.1f "
+                            "in_flight=%s",
+                            update.update_id, queue_wait_ms, len(_TELEGRAM_WEBHOOK_TASKS),
+                        )
+                    handler_started = time.monotonic()
+                    try:
+                        await dp.feed_update(bot, update)
+                    finally:
+                        handler_ms = (time.monotonic() - handler_started) * 1000
+                        if handler_ms >= config.TELEGRAM_HANDLER_SLOW_WARN_MS:
+                            logger.warning(
+                                "Telegram update processing slow: update_id=%s "
+                                "queue_wait_ms=%.1f handler_ms=%.1f in_flight=%s",
+                                update.update_id, queue_wait_ms, handler_ms,
+                                len(_TELEGRAM_WEBHOOK_TASKS),
+                            )
             except TelegramBadRequest as e:
                 error_msg = str(e).lower()
                 if _is_terminal_telegram_delivery_error(e):

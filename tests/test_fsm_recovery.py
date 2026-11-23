@@ -98,3 +98,93 @@ async def test_recovery_makes_incremental_progress_when_backlog_exceeds_timeout(
     # This is the destination backend's public seam: the backlog actually drains.
     for key in keys:
         assert await primary.get_data(key) == {'prompt': str(key.user_id)}
+
+
+@pytest.mark.asyncio
+async def test_one_user_redis_failure_does_not_hide_healthy_users_state(monkeypatch):
+    from bot.config import config
+
+    monkeypatch.setattr(config, "REDIS_OPERATION_TIMEOUT_SECONDS", 0.05)
+    primary = MemoryStorage()
+    affected = StorageKey(bot_id=1, chat_id=99, user_id=99)
+    healthy = StorageKey(bot_id=1, chat_id=100, user_id=100)
+    await primary.set_state(healthy, "editing")
+    real_get_state = primary.get_state
+
+    async def single_user_failure(key):
+        if key == affected:
+            raise ConnectionError("per-user backend failure")
+        return await real_get_state(key)
+
+    monkeypatch.setattr(primary, "get_state", single_user_failure)
+    storage = FallbackFSMStorage(primary, MemoryStorage(), recovery_interval_seconds=60)
+    assert await storage.get_state(affected) is None
+    assert await storage.get_state(healthy) == "editing"
+
+
+@pytest.mark.asyncio
+async def test_slow_primary_for_one_user_does_not_queue_another_user(monkeypatch):
+    import asyncio
+
+    from bot.config import config
+
+    monkeypatch.setattr(config, "REDIS_OPERATION_TIMEOUT_SECONDS", 0.3)
+    primary = MemoryStorage()
+    slow = StorageKey(bot_id=1, chat_id=110, user_id=110)
+    fast = StorageKey(bot_id=1, chat_id=111, user_id=111)
+    await primary.set_state(fast, "ready")
+    started = asyncio.Event()
+    release = asyncio.Event()
+    real_get_state = primary.get_state
+
+    async def slow_get_state(key):
+        if key == slow:
+            started.set()
+            await release.wait()
+        return await real_get_state(key)
+
+    monkeypatch.setattr(primary, "get_state", slow_get_state)
+    storage = FallbackFSMStorage(primary, MemoryStorage())
+    slow_task = asyncio.create_task(storage.get_state(slow))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=0.15)
+        assert await asyncio.wait_for(storage.get_state(fast), timeout=0.1) == "ready"
+    finally:
+        release.set()
+        await asyncio.wait_for(slow_task, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_recovery_of_one_user_does_not_block_unaffected_user(monkeypatch):
+    import asyncio
+
+    from bot.config import config
+
+    monkeypatch.setattr(config, "REDIS_OPERATION_TIMEOUT_SECONDS", 0.4)
+    primary = MemoryStorage()
+    affected = StorageKey(bot_id=1, chat_id=210, user_id=210)
+    healthy = StorageKey(bot_id=1, chat_id=211, user_id=211)
+    await primary.set_state(healthy, "saved")
+    real_set_state = primary.set_state
+    monkeypatch.setattr(primary, "set_state", AsyncMock(side_effect=ConnectionError("offline")))
+    storage = FallbackFSMStorage(primary, MemoryStorage(), recovery_interval_seconds=0)
+    await storage.set_state(affected, "temporary")
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def recovering_set_state(key, state):
+        if key == affected:
+            entered.set()
+            await release.wait()
+        await real_set_state(key, state)
+
+    monkeypatch.setattr(primary, "set_state", recovering_set_state)
+    recovering = asyncio.create_task(storage.get_state(affected))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=0.25)
+        assert await asyncio.wait_for(storage.get_state(healthy), timeout=0.1) == "saved"
+    finally:
+        release.set()
+        assert await asyncio.wait_for(recovering, timeout=0.5) == "temporary"
+    assert await primary.get_state(affected) == "temporary"
