@@ -47,7 +47,7 @@ def _finish_webhook_discovery(contract_id: str, task: asyncio.Task[str | None]) 
         task.result()
     except asyncio.CancelledError:
         logger.info("Lava contract discovery stopped during shutdown")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - consume detached discovery failures safely
         # Never log the raw contract, provider response, or account identifiers.
         logger.warning("Lava contract discovery failed code=%s", type(exc).__name__)
 
