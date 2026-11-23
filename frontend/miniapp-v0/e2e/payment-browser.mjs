@@ -199,7 +199,17 @@ try {
     assert.equal(paymentRequests, 1, 'Package selection must not create a new invoice')
     // The existing authenticated bootstrap refresh provides the confirmed wallet.
     creditedBalance = 51
+    // A focus refresh can race a later browser navigation in WebKit.
+    // Wait for the actual settled API response rather than assuming the
+    // wallet UI finishing its render also drained pending fetch callbacks.
+    const fundedRefresh = page.waitForResponse(response =>
+      new URL(response.url()).pathname === '/mini-app/api/bootstrap'
+      && response.request().method() === 'POST'
+      && response.status() === 200,
+    )
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    assert.equal((await (await fundedRefresh).json()).credits, 51,
+      'Funded wallet refresh must complete before leaving checkout')
     await page.getByRole('button', { name: 'Вернуться к видео' }).click()
     assert.equal(await prompt.inputValue(), 'Синтетический текст повтора для проверки оплаты')
     assert.equal(await offer.count(), 0, 'After confirmed funds, no top-up call-to-action is needed')
