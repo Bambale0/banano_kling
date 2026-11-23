@@ -30,6 +30,57 @@ _lava_list_lock = asyncio.Lock()
 _lava_list_cache: dict[str, dict[str, Any]] = {}
 _lava_list_cache_until = 0.0
 
+# The provider expects an acknowledgement within ten seconds. An orphaned
+# contract may need the historical invoice list (up to ten sequential pages),
+# so let its bounded lookup continue after returning a retryable 503.
+_WEBHOOK_DISCOVERY_WAIT_SECONDS = 6.0
+_WEBHOOK_DISCOVERY_TASK_SECONDS = 30.0
+_MAX_WEBHOOK_DISCOVERIES = 8
+_webhook_discovery_lock = asyncio.Lock()
+_webhook_discovery_inflight: dict[str, asyncio.Task[str | None]] = {}
+
+
+def _finish_webhook_discovery(contract_id: str, task: asyncio.Task[str | None]) -> None:
+    if _webhook_discovery_inflight.get(contract_id) is task:
+        _webhook_discovery_inflight.pop(contract_id, None)
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        logger.info("Lava contract discovery stopped during shutdown")
+    except Exception as exc:  # noqa: BLE001 - consume detached discovery failures safely
+        # Never log the raw contract, provider response, or account identifiers.
+        logger.warning("Lava contract discovery failed code=%s", type(exc).__name__)
+
+
+async def _discover_invoice_for_webhook(contract_id: str) -> str | None:
+    async with _webhook_discovery_lock:
+        task = _webhook_discovery_inflight.get(contract_id)
+        if task is None:
+            if len(_webhook_discovery_inflight) >= _MAX_WEBHOOK_DISCOVERIES:
+                logger.warning("Lava contract discovery concurrency limit reached")
+                raise LavaProviderUnavailable(None)
+            task = asyncio.create_task(
+                asyncio.wait_for(
+                    safety._discover_invoice_id_by_contract(contract_id),
+                    timeout=_WEBHOOK_DISCOVERY_TASK_SECONDS,
+                ),
+                name="lava-orphan-contract-discovery",
+            )
+            _webhook_discovery_inflight[contract_id] = task
+            task.add_done_callback(
+                lambda finished: _finish_webhook_discovery(contract_id, finished)
+            )
+
+    try:
+        # Shield leaves provider verification and its persisted binding intact.
+        # The next authenticated callback rechecks local state before settlement.
+        return await asyncio.wait_for(
+            asyncio.shield(task), timeout=_WEBHOOK_DISCOVERY_WAIT_SECONDS
+        )
+    except TimeoutError as exc:
+        logger.warning("Lava contract discovery exceeds webhook ACK budget")
+        raise LavaProviderUnavailable(None) from exc
+
 
 def _clear_lava_invoice_list_cache() -> None:
     """Test/operator reset; never changes payment records."""
@@ -251,7 +302,7 @@ def _make_lookup_with_discovery(
         # New invoice creation responses may not expose contractId. Resolve the
         # relation when the first webhook arrives, then retry the local lookup by
         # the invoice ID stored in transactions.payment_id.
-        invoice_id = await safety._discover_invoice_id_by_contract(contract_id)
+        invoice_id = await _discover_invoice_for_webhook(contract_id)
         if not invoice_id:
             return None
 
