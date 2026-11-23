@@ -26,7 +26,6 @@ from bot.promo_message import (
 )
 
 
-
 @pytest.mark.parametrize(
     "message,expected_kind,expected_code",
     [
