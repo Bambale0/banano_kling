@@ -19,10 +19,34 @@ from bot.promo_message import (
     DeliveryPartError,
     PromoMessageValidationError,
     build_message_snapshot,
+    classify_delivery_error,
     deliver_message_snapshot,
     normalize_message,
     validate_snapshot,
 )
+
+
+
+@pytest.mark.parametrize(
+    "message,expected_kind,expected_code",
+    [
+        ("Bad Request: chat not found", "blocked", "TelegramBadRequest.chat_not_found"),
+        ("Bad Request: user is deactivated", "blocked", "TelegramBadRequest.user_deactivated"),
+        ("Bad Request: bot was blocked by the user", "blocked", "TelegramBadRequest.bot_blocked"),
+        ("Bad Request: can't parse entities: secret-token", "terminal", "TelegramBadRequest.invalid_entities"),
+        ("Bad Request: message text is empty", "terminal", "TelegramBadRequest.empty_message"),
+        ("Bad Request: wrong file identifier/HTTP URL specified: secret-token", "terminal", "TelegramBadRequest.invalid_media"),
+        ("Bad Request: inline keyboard expected", "terminal", "TelegramBadRequest.invalid_reply_markup"),
+        ("Bad Request: unsupported request https://secret-token.example", "terminal", "TelegramBadRequest.unclassified"),
+    ],
+)
+def test_telegram_bad_request_safe_bounded_reason(message, expected_kind, expected_code):
+    error = TelegramBadRequest(method=SendMessage(chat_id=1, text="x"), message=message)
+    classified = classify_delivery_error(error)
+    assert classified.kind == expected_kind
+    assert classified.error_code == expected_code
+    assert "secret-token" not in classified.error_code
+    assert "https:" not in classified.error_code
 
 
 @pytest.mark.asyncio
