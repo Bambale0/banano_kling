@@ -189,6 +189,28 @@ python -m py_compile $(find bot tests scripts -name '*.py')
 
 Не перезапускать production service после неуспешных тестов или syntax check.
 
+### Telegram update latency and FSM recovery
+
+Telegram webhook replies with HTTP 200 before processing completes. A healthy
+Docker container and fast webhook response are **not** proof of fast user replies.
+Use `aiogram.event` handler durations and the following warning fields:
+
+- `Telegram webhook queue slow`: `update_id`, `queue_wait_ms`,
+  `in_flight` (time waiting for the configured webhook semaphore).
+- `Telegram update processing slow`: `update_id`, `handler_ms`,
+  `queue_wait_ms`, `in_flight` (time spent after semaphore admission).
+- `FSM Redis storage unavailable` and `FSM Redis recovery`: verify
+  key-specific fallback, retry frequency and backlog rather than treating
+  a short Redis PING as evidence of absence of historical timeouts.
+
+Warning thresholds are environment-configurable:
+`TELEGRAM_WEBHOOK_QUEUE_WARN_MS=1000`,
+`TELEGRAM_HANDLER_SLOW_WARN_MS=5000` (defaults; milliseconds).
+Keep the existing `REDIS_OPERATION_TIMEOUT_SECONDS` and
+`REDIS_RECOVERY_INTERVAL_SECONDS` unless measured production evidence
+justifies changing them. Do not infer successful user delivery from a
+webhook ACK; check the handler result or Telegram send receipt.
+
 ## 7. Backend restart
 
 ```bash
