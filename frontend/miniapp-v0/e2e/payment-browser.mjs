@@ -132,6 +132,11 @@ try {
       const website = await page.evaluate(() => window.__openedPayments[0])
       assert.equal(new URL(website).pathname, '/login')
       assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
+      // The tappable website fallback remains visible until the user dismisses it.
+      // Close it via the actual UI before interacting with generation forms:
+      // otherwise its high-z-index panel intercepts unrelated WebKit taps.
+      await page.getByRole('button', { name: 'Закрыть ссылку на сайт' }).click()
+      assert.equal(await page.getByRole('status', { name: 'Оплата на сайте' }).count(), 0)
     }
     assert.equal(paymentRequests, 0)
     await page.getByRole('button', { name: 'Оплатить Stars', exact: true }).click()
