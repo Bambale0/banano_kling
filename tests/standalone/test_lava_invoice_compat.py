@@ -163,7 +163,6 @@ async def test_concurrent_unknown_contract_webhooks_share_one_bounded_discovery(
     async def discover(contract_id):
         attempts.append(contract_id)
         await release.wait()
-        return None
 
     monkeypatch.setattr(compat, "_WEBHOOK_DISCOVERY_WAIT_SECONDS", 0.01)
     monkeypatch.setattr(safety, "_discover_invoice_id_by_contract", discover)
