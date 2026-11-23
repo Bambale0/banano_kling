@@ -124,3 +124,35 @@ async def test_existing_link_receipt_does_not_resend_video_or_link():
     bot.send_video.assert_not_awaited()
     bot.send_document.assert_not_awaited()
     bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_confirmed_link_is_not_retried_by_recovery_poller():
+    """Delivery receipt is terminal: never repeat media or charge again."""
+    from bot import database
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycle
+    from tests.test_wan3_prime_lifecycle import Prices, Probe, Provider, body, user_actor
+
+    actor = await user_actor(credits=50)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(probe=Probe(), preset_manager=Prices(), transport=provider)
+    quote = await lifecycle.quote(actor, body())
+    submitted = await lifecycle.launch(actor, body(), quote, "wan3-link-terminal")
+    task_id = submitted["task_id"]
+
+    async with database.db_backend.connect(database.DATABASE_PATH) as conn:
+        await conn.execute(
+            "UPDATE wan3_prime_intents SET status = 'completed', settled = 1, "
+            "delivery_status = 'link_sent', result_url = ?, next_attempt_at = CURRENT_TIMESTAMP "
+            "WHERE internal_task_id = ?",
+            ("https://neuromixbot.com/uploads/wan3_prime/results/test.mp4", task_id),
+        )
+        await conn.commit()
+
+    bot = _bot()
+    assert await lifecycle.deliver_ready_once(bot) == 0
+    assert await lifecycle.deliver_ready_once(bot) == 0
+    bot.send_video.assert_not_awaited()
+    bot.send_document.assert_not_awaited()
+    bot.send_message.assert_not_awaited()
+    assert provider.creates == 1
