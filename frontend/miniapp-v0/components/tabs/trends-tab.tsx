@@ -197,7 +197,7 @@ export function TrendsTab() {
   const isLive = state.mode === 'live'
   const isAdmin = state.user.isAdmin
 
-  const refreshCatalog = useCallback(async () => {
+  const refreshCatalog = useCallback(async (forceRefresh = false) => {
     const request = ++catalogRequestRef.current
     if (!isLive) {
       setCatalog([])
@@ -205,8 +205,9 @@ export function TrendsTab() {
       return
     }
     setCatalogLoading(true)
+    setError(null)
     try {
-      const loaded = await fetchTrendCatalog(6)
+      const loaded = await fetchTrendCatalog(6, forceRefresh)
       if (request !== catalogRequestRef.current) return
       setCatalog(loaded)
       // Catalog cards are usable immediately. Private Genjutsu recipe costs
@@ -216,12 +217,16 @@ export function TrendsTab() {
       })
     } catch (e) {
       if (request !== catalogRequestRef.current) return
-      if (e instanceof ShowcaseApiError && e.status === 403) {
-        setCatalog([])
-        setError(e.message)
-      } else {
-        // Only transport/unavailable API failures can enter the legacy fallback.
+      if (e instanceof ShowcaseApiError
+        && (e.status === 404 || e.code === 'invalid_catalog')) {
+        // Only servers that do not implement the current catalog contract
+        // may fall back to the older, heavier prompt-list endpoint.
         setCatalog(null)
+      } else {
+        // Timeout, auth and network failures must stop the spinner.
+        // Keep previous cards, if any, and expose an explicit retry.
+        setCatalog((current) => current ?? [])
+        setError(e instanceof Error ? e.message : 'Не удалось загрузить тренды.')
       }
     } finally {
       if (request === catalogRequestRef.current) setCatalogLoading(false)
@@ -504,7 +509,7 @@ export function TrendsTab() {
         setEditPreviewUrl(result.uploadedUrl)
         setEditingTrend(result.updated)
         setItems((prev) => prev.map((item) => item.id === result.updated.id ? result.updated : item))
-        await refreshCatalog()
+        await refreshCatalog(true)
       }
     } finally {
       if (editUploadAttemptRef.current === attemptId) {
@@ -687,7 +692,7 @@ export function TrendsTab() {
       resetForm()
       setNewTrendCategories([])
       setIsCreateOpen(false)
-      await refreshCatalog()
+      await refreshCatalog(true)
       if (!categoriesSaved) {
         setError('Тренд опубликован, но не удалось назначить папки. Откройте «Категории» и разместите его вручную. Повторно публиковать не нужно.')
       }
@@ -706,7 +711,7 @@ export function TrendsTab() {
     try {
       await deactivatePrompt(trend.id)
       setItems((prev) => prev.filter((item) => item.id !== trend.id))
-      await refreshCatalog()
+      await refreshCatalog(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось убрать тренд')
     } finally {
@@ -1343,7 +1348,13 @@ export function TrendsTab() {
 
       {error ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {error}
+          <span>{error}</span>
+          {!catalogLoading && catalog !== null && catalog.length === 0 ? (
+            <Button type="button" variant="secondary" size="sm"
+              className="mt-3" onClick={() => { void refreshCatalog() }}>
+              Повторить загрузку трендов
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1501,7 +1512,7 @@ export function TrendsTab() {
                     setEditingTrend((current) => current?.id === editingTrend.id ? { ...current, title } : current)
                     setItems((previous) => previous.map((item) => item.id === editingTrend.id ? { ...item, title } : item))
                     setContentRefreshVersion((value) => value + 1)
-                    await refreshCatalog()
+                    await refreshCatalog(true)
                   }} />
                 <p className="mt-1 text-xs text-muted-foreground">Загрузите новый preview. Тип фото/видео сохранится вместе с трендом.</p>
               </div>

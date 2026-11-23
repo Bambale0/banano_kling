@@ -132,6 +132,11 @@ try {
       const website = await page.evaluate(() => window.__openedPayments[0])
       assert.equal(new URL(website).pathname, '/login')
       assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
+      // The tappable website fallback remains visible until the user dismisses it.
+      // Close it via the actual UI before interacting with generation forms:
+      // otherwise its high-z-index panel intercepts unrelated WebKit taps.
+      await page.getByRole('button', { name: 'Закрыть ссылку на сайт' }).click()
+      assert.equal(await page.getByRole('status', { name: 'Оплата на сайте' }).count(), 0)
     }
     assert.equal(paymentRequests, 0)
     await page.getByRole('button', { name: 'Оплатить Stars', exact: true }).click()
@@ -199,7 +204,18 @@ try {
     assert.equal(paymentRequests, 1, 'Package selection must not create a new invoice')
     // The existing authenticated bootstrap refresh provides the confirmed wallet.
     creditedBalance = 51
+    // A focus refresh can race a later browser navigation in WebKit.
+    // Wait for the actual settled API response rather than assuming the
+    // wallet UI finishing its render also drained pending fetch callbacks.
+    const fundedRefresh = page.waitForResponse(async response =>
+      new URL(response.url()).pathname === '/mini-app/api/bootstrap'
+      && response.request().method() === 'POST'
+      && response.status() === 200
+      && (await response.json()).credits === 51,
+    )
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+    assert.equal((await (await fundedRefresh).json()).credits, 51,
+      'Funded wallet refresh must complete before leaving checkout')
     await page.getByRole('button', { name: 'Вернуться к видео' }).click()
     assert.equal(await prompt.inputValue(), 'Синтетический текст повтора для проверки оплаты')
     assert.equal(await offer.count(), 0, 'After confirmed funds, no top-up call-to-action is needed')
@@ -208,24 +224,22 @@ try {
     // DOM visibility alone misses a sheet painted behind the repeat editor.
     creditedBalance = 1
     showTrend = true
-    // Real users return from checkout by focusing the still-open Mini App,
-    // then opening Trends. A full-page navigation here aborts the in-flight
-    // focus bootstrap in WebKit and produces an artificial CORS pageerror.
-    // Await the authenticated wallet refresh explicitly, without reloading.
+    // Real users remain on the mounted Mini App after checkout and open Trends.
+    // Do not reload here: the live five-second background bootstrap poll can
+    // race full-page navigation in WebKit and produce an artificial CORS error.
     // Keep both strict pageerror assertions; never filter CORS/runtime errors.
-    const walletRefresh = page.waitForResponse(response =>
+    const walletRefresh = page.waitForResponse(async response =>
       new URL(response.url()).pathname === '/mini-app/api/bootstrap'
       && response.request().method() === 'POST'
-      && response.status() === 200,
+      && response.status() === 200
+      && (await response.json()).credits === 1,
     )
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     const walletResponse = await walletRefresh
     assert.equal((await walletResponse.json()).credits, 1, 'Wallet refresh must return the updated balance')
-    // The following scenario starts from a fresh user visit; the checkout
-    // sheet from the previous scenario must not cover its repeat editor.
-    // Navigate only after the real focused-wallet request has finished.
-    await page.waitForLoadState('networkidle')
-    await page.goto(baseUrl, { waitUntil: 'networkidle' })
+    // The video checkout was closed via "Вернуться к видео"; keep the
+    // component mounted so a normal tab switch exercises the real return flow.
+    // The completed focus response above confirms the updated wallet state.
     await page.locator('nav').getByRole('button', { name: 'Тренды', exact: true }).click()
     await page.getByRole('button', { name: /Повторить · 50/ }).click()
     const repeatDialog = page.getByRole('dialog')
