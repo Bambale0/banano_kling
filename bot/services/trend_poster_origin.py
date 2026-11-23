@@ -11,6 +11,7 @@ import logging
 import re
 
 from aiohttp import web
+
 from bot.services.media_storage import (
     S3Settings,
     _is_missing_object_error,
