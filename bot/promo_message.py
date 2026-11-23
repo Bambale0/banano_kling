@@ -431,12 +431,24 @@ def classify_delivery_error(error: Exception) -> DeliveryPartError:
     if isinstance(error, TelegramForbiddenError):
         return DeliveryPartError("blocked", code)
     if isinstance(error, TelegramBadRequest):
-        if any(
-            marker in str(error).lower()
-            for marker in ("chat not found", "user is deactivated", "bot was blocked")
+        # Only persist fixed, allowlisted codes. Provider text can contain
+        # private message bodies, media URLs, recipient IDs or credentials.
+        # The existing blocked/terminal decision must remain fail-closed:
+        # an unknown BadRequest is terminal, not a reason to replay a send.
+        description = str(error).lower()
+        for marker, reason, kind in (
+            ("chat not found", "chat_not_found", "blocked"),
+            ("user is deactivated", "user_deactivated", "blocked"),
+            ("bot was blocked", "bot_blocked", "blocked"),
+            ("can't parse entities", "invalid_entities", "terminal"),
+            ("message text is empty", "empty_message", "terminal"),
+            ("wrong file identifier", "invalid_media", "terminal"),
+            ("wrong http url", "invalid_media", "terminal"),
+            ("inline keyboard expected", "invalid_reply_markup", "terminal"),
         ):
-            return DeliveryPartError("blocked", code)
-        return DeliveryPartError("terminal", code)
+            if marker in description:
+                return DeliveryPartError(kind, f"{code}.{reason}")
+        return DeliveryPartError("terminal", f"{code}.unclassified")
     if isinstance(error, TelegramServerError):
         # Telegram does not guarantee that an HTTP 5xx means send was rejected.
         # Without an idempotency key, replay could duplicate an accepted album.
