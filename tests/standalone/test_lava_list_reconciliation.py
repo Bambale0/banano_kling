@@ -21,7 +21,7 @@ def tx(payment_id=INV1, amount_rub=500):
 
 
 @pytest.mark.asyncio
-async def test_reconciles_verified_completed_from_list_without_detail_404(monkeypatch):
+async def test_reconciles_verified_completed_from_list_after_detail_404(monkeypatch):
     calls = []
 
     async def provider(method, path, params=None):
@@ -33,8 +33,11 @@ async def test_reconciles_verified_completed_from_list_without_detail_404(monkey
             ],
         }
 
+    detail_calls = []
+
     async def broken_detail(identifier):
-        pytest.fail("Verified listing must avoid broken detail endpoint")
+        detail_calls.append(identifier)
+        # Only a confirmed 404 should activate the slower verified list.
 
     monkeypatch.setattr(lava_service, "_request", provider)
     monkeypatch.setattr(lava_service, "get_invoice", broken_detail)
@@ -43,6 +46,7 @@ async def test_reconciles_verified_completed_from_list_without_detail_404(monkey
         tx(), contract_id=INV1, retry_delays=(0.0,)
     )
     assert (status, resolved) == ("completed", INV1)
+    assert detail_calls == [INV1]
     assert len(calls) == 1
     assert calls[0][1] == "/api/v2/invoices"
     assert calls[0][2]["page"] == 1
@@ -135,8 +139,10 @@ async def test_verified_list_keeps_invoice_id_when_webhook_contract_differs(monk
     async def fake_save(contract_id, invoice_id):
         saved.append((contract_id, invoice_id))
 
+    detail_calls = []
+
     async def no_detail(identifier):
-        pytest.fail("List lookup should not require detail endpoint")
+        detail_calls.append(identifier)
 
     monkeypatch.setattr(lava_service, "_request", provider)
     monkeypatch.setattr(lava_service, "get_invoice", no_detail)
@@ -148,6 +154,7 @@ async def test_verified_list_keeps_invoice_id_when_webhook_contract_differs(monk
     )
     assert (status, resolved) == ("completed", INV1)
     assert saved == [(INV2, INV1)]
+    assert detail_calls == [INV1, INV2]
 
 
 @pytest.mark.asyncio
