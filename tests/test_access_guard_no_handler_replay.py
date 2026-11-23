@@ -1,6 +1,6 @@
 """Access policy errors must never re-execute a state-changing handler."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from aiogram import types
@@ -21,7 +21,7 @@ async def test_browser_login_handler_exception_is_not_replayed(monkeypatch):
 
     event = types.Message(
         message_id=1234,
-        date=datetime.now(timezone.utc),
+        date=datetime.now(UTC),
         chat=types.Chat(id=-100123, type="group"),
         from_user=types.User(id=987612345, is_bot=False, first_name="Test"),
         text="/start auth_test",
