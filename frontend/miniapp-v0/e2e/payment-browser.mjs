@@ -218,10 +218,9 @@ try {
     // DOM visibility alone misses a sheet painted behind the repeat editor.
     creditedBalance = 1
     showTrend = true
-    // Real users return from checkout by focusing the still-open Mini App,
-    // then opening Trends. A full-page navigation here aborts the in-flight
-    // focus bootstrap in WebKit and produces an artificial CORS pageerror.
-    // Await the authenticated wallet refresh explicitly, without reloading.
+    // Real users remain on the mounted Mini App after checkout and open Trends.
+    // Do not reload here: the live five-second background bootstrap poll can
+    // race full-page navigation in WebKit and produce an artificial CORS error.
     // Keep both strict pageerror assertions; never filter CORS/runtime errors.
     const walletRefresh = page.waitForResponse(response =>
       new URL(response.url()).pathname === '/mini-app/api/bootstrap'
@@ -231,11 +230,9 @@ try {
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     const walletResponse = await walletRefresh
     assert.equal((await walletResponse.json()).credits, 1, 'Wallet refresh must return the updated balance')
-    // The following scenario starts from a fresh user visit; the checkout
-    // sheet from the previous scenario must not cover its repeat editor.
-    // Navigate only after the real focused-wallet request has finished.
-    await page.waitForLoadState('networkidle')
-    await page.goto(baseUrl, { waitUntil: 'networkidle' })
+    // The video checkout was closed via "Вернуться к видео"; keep the
+    // component mounted so a normal tab switch exercises the real return flow.
+    // The completed focus response above confirms the updated wallet state.
     await page.locator('nav').getByRole('button', { name: 'Тренды', exact: true }).click()
     await page.getByRole('button', { name: /Повторить · 50/ }).click()
     const repeatDialog = page.getByRole('dialog')
