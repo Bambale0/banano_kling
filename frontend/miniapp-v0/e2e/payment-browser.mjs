@@ -207,10 +207,11 @@ try {
     // A focus refresh can race a later browser navigation in WebKit.
     // Wait for the actual settled API response rather than assuming the
     // wallet UI finishing its render also drained pending fetch callbacks.
-    const fundedRefresh = page.waitForResponse(response =>
+    const fundedRefresh = page.waitForResponse(async response =>
       new URL(response.url()).pathname === '/mini-app/api/bootstrap'
       && response.request().method() === 'POST'
-      && response.status() === 200,
+      && response.status() === 200
+      && (await response.json()).credits === 51,
     )
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     assert.equal((await (await fundedRefresh).json()).credits, 51,
@@ -227,10 +228,11 @@ try {
     // Do not reload here: the live five-second background bootstrap poll can
     // race full-page navigation in WebKit and produce an artificial CORS error.
     // Keep both strict pageerror assertions; never filter CORS/runtime errors.
-    const walletRefresh = page.waitForResponse(response =>
+    const walletRefresh = page.waitForResponse(async response =>
       new URL(response.url()).pathname === '/mini-app/api/bootstrap'
       && response.request().method() === 'POST'
-      && response.status() === 200,
+      && response.status() === 200
+      && (await response.json()).credits === 1,
     )
     await page.evaluate(() => window.dispatchEvent(new Event('focus')))
     const walletResponse = await walletRefresh
