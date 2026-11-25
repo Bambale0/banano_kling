@@ -77,9 +77,12 @@ async def original_download(request: web.Request) -> web.StreamResponse:
         raise web.HTTPNotFound(headers=_PRIVATE_HEADERS) from None
     except web.HTTPException:
         raise
-    except Exception:  # noqa: BLE001 - HTTP boundary hides storage/config internals.
+    except Exception as exc:  # noqa: BLE001 - HTTP boundary hides storage/config internals.
         # Do not log a bearer URL, S3 signature, or customer filename.
-        logger.error("Original download unavailable", exc_info=False)
+        logger.error(
+            "Original download unavailable: method=%s error_type=%s",
+            request.method, type(exc).__name__[:64],
+        )
         raise web.HTTPServiceUnavailable(
             text="Media temporarily unavailable", headers=_PRIVATE_HEADERS,
         ) from None

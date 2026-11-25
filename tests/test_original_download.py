@@ -156,7 +156,7 @@ def test_attachment_filename_is_safe_and_retains_extension():
 
 
 @pytest.mark.asyncio
-async def test_signing_failure_returns_private_503_without_falling_back_to_preview(monkeypatch):
+async def test_signing_failure_returns_private_503_without_falling_back_to_preview(monkeypatch, caplog):
     from bot.services.original_download import setup_original_download_routes
 
     monkeypatch.setattr(config, "MEDIA_STORAGE_BACKEND", "s3")
@@ -169,6 +169,10 @@ async def test_signing_failure_returns_private_503_without_falling_back_to_previ
         assert response.headers["Cache-Control"] == "private, no-store"
         assert "Location" not in response.headers
         assert await response.text() == "Media temporarily unavailable"
+    assert "error_type=MediaStorageConfigurationError" in caplog.text
+    assert "method=GET" in caplog.text
+    assert "clip.mp4" not in caplog.text
+    assert "ACCESS_KEY" not in caplog.text
 
 
 @pytest.mark.asyncio
