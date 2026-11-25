@@ -2052,7 +2052,9 @@ async def _deliver_miniapp_direct_image_result(
         caption += f"\n• Формат: <code>{html.escape(str(img_ratio).replace(':', '∶'))}</code>"
     caption += "\n\n🎯 Промпт скрыт" if prompt_hidden else "\n\nСоздано через Mini App"
     if saved_url:
-        caption += f"\n\n🔗 <a href='{html.escape(saved_url, quote=True)}'>Открыть оригинал</a>"
+        from bot.services.original_download import original_download_url
+
+        caption += f"\n\n📥 <a href='{html.escape(original_download_url(saved_url), quote=True)}'>Скачать оригинал</a>"
 
     try:
         if isinstance(result_bytes, (bytes, bytearray)):

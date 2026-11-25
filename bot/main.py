@@ -1643,13 +1643,15 @@ def _sanitize_base_caption(base_caption: str) -> str:
     return base
 
 def _with_original_link(base_caption: str, result_url: str | None) -> str:
+    from bot.services.original_download import original_download_url
+
     base = str(base_caption or "").strip()
     if not result_url:
         return base
     if "Открыть оригинал" in base or "Скачать оригинал" in base:
         return base
-    safe_url = html.escape(str(result_url), quote=True)
-    return f"{base}\n\n🔗 <a href='{safe_url}'>Открыть оригинал</a>"
+    safe_url = html.escape(original_download_url(str(result_url)), quote=True)
+    return f"{base}\n\n📥 <a href='{safe_url}'>Скачать оригинал</a>"
 
 def _html_fragment(value, limit: int | None = None) -> str:
     text = "" if value is None else str(value)
@@ -5309,10 +5311,7 @@ async def handle_kie_ai_webhook(request: web.Request) -> web.Response:
             if is_video:
                 if source_links:
                     full_caption += source_links
-                full_caption += (
-                    f"\n\n🔗 <a href='{html.escape(str(result_url), quote=True)}'>"
-                    "Открыть оригинал</a>"
-                )
+                full_caption = _with_original_link(full_caption, result_url)
             if len(full_caption) > 980:
                 full_caption = full_caption[:977] + "..."
 
@@ -5840,6 +5839,9 @@ def setup_web_server(dp: Dispatcher, bot: Bot) -> web.Application:
     )
 
     validate_media_storage_configuration()
+    from bot.services.original_download import setup_original_download_routes
+
+    setup_original_download_routes(app)
     if is_s3_enabled():
         # Public Trend thumbnails are tiny JPEGs. Keep browsers on our origin
         # instead of redirecting to the private S3 host; registration must
