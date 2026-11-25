@@ -29,12 +29,12 @@ beforeEach(() => {
   Object.assign(window.Telegram!.WebApp!, { platform: 'ios', openLink })
 })
 
-it('exposes only Stars in Telegram even when fiat packages are configured', () => {
+it('keeps configured fiat methods alongside native Stars in Telegram', () => {
   ;(getInitData as jest.Mock).mockReturnValue('query_id=telegram_fixture')
   render(<BalanceSheet />)
-  expect(screen.queryByRole('button', { name: 'Карта' })).not.toBeInTheDocument()
-  expect(screen.queryByRole('button', { name: 'Зарубежная / СНГ' })).not.toBeInTheDocument()
-  expect(screen.queryByLabelText('Почта для оплаты через Lava.top')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Карта' })).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Зарубежная / СНГ' })).toBeInTheDocument()
+  expect(screen.getByLabelText(/Почта для оплаты через Lava.top/)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: /Stars/ })).toBeInTheDocument()
 })
 
@@ -399,4 +399,13 @@ it('shows VK-native commerce, not the Telegram Lava packages, in the shared bala
   expect(screen.queryByText('Старт')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Получить ссылку на оплату' })).toBeInTheDocument()
   expect(createPayment).not.toHaveBeenCalled()
+})
+
+ it('creates fiat checkout directly from native Telegram without web login', async () => {
+  ;(getInitData as jest.Mock).mockReturnValue('query_id=telegram_fixture')
+  render(<BalanceSheet />)
+  fireEvent.click(screen.getByRole('button', { name: 'Карта' }))
+  expect(await screen.findByRole('link', { name: 'Перейти к оплате' })).toHaveAttribute('href', exactUrl)
+  expect(createPayment).toHaveBeenCalledWith(expect.objectContaining({ provider: 'lava_card' }))
+  expect(openLink).not.toHaveBeenCalled()
 })

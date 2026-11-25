@@ -9,7 +9,6 @@ import { isVideoTrendItem, isWanTrendItem, resolveTrendSettings } from './trend-
 import { genjutsuCall, openGenjutsu } from './genjutsu-api'
 import { hydrateSeedance25IdentityPreset } from './seedance25-repeat'
 import { ASTRO_TAB_ID, isAstroVisible } from './astro-access'
-import { isTelegramPaymentSurface, openWebPayment } from './web-payments'
 import { WebPaymentHandoff } from '@/components/web-payment-handoff'
 
 export interface BalanceRequest {
@@ -341,10 +340,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [applyTaskDetail])
 
   const openBalance = useCallback((request?: BalanceRequest) => {
-    if (!request?.nativeStars && isTelegramPaymentSurface()) {
-      openWebPayment(request)
-      return
-    }
     cancelStartNavigation()
     setBalanceRequest(request ?? null)
     setIsBalanceOpen(true)
