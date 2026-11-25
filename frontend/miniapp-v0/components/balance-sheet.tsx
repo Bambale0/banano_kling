@@ -12,7 +12,6 @@ import { cn } from '@/lib/utils'
 import { bootstrapApp, sendMiniAppClientLog } from '@/lib/api'
 import { createPayment } from '@/lib/payment-api'
 import { currentAccountPlatform } from '@/lib/account-platform'
-import { isTelegramPaymentSurface, openWebPayment } from '@/lib/web-payments'
 import type { PaymentProvider } from '@/lib/types'
 import { VkSharedBalanceCheckout } from '@/components/vk-shared-balance-checkout'
 import type { VkCheckoutAttempt } from '@/components/vk-native-checkout'
@@ -79,7 +78,6 @@ export function BalanceSheet() {
   const { state, isBalanceOpen, balanceRequest, closeBalance, refreshBalance } = useApp()
   const { paymentPackages, user, recentTasks, mode } = state
   const vkPaymentsOnly = currentAccountPlatform() === 'vk'
-  const starsOnly = isTelegramPaymentSurface()
   // Native checkout claim survives modal close/reopen to preserve financial idempotency.
   const [vkCheckoutAttempt, setVkCheckoutAttempt] = useState<VkCheckoutAttempt | null>(null)
   const selectedPackageId = balanceRequest?.packageId
@@ -158,7 +156,7 @@ export function BalanceSheet() {
   const missingCredits = Math.max(0, requiredCredits - user.credits)
   const selectedCredits = selectedPackage ? totalPackageCredits(selectedPackage) : 0
   const selectedProvider = selectedPackage
-    ? starsOnly ? 'telegram_stars' : requestedProviderAvailable ? requestedProvider as PaymentProvider : preferredProviderForPackage(selectedPackage, vkPaymentsOnly ? 'vk' : 'telegram')
+    ? requestedProviderAvailable ? requestedProvider as PaymentProvider : preferredProviderForPackage(selectedPackage, vkPaymentsOnly ? 'vk' : 'telegram')
     : null
   const selectedPrice = selectedPackage && selectedProvider
     ? paymentPriceLabel(selectedPackage, selectedProvider)
@@ -238,10 +236,6 @@ export function BalanceSheet() {
   }
 
   const handleTopup = async (packageId: string, provider: PaymentProvider = 'telegram_stars') => {
-    if (starsOnly && provider !== 'telegram_stars') {
-      openWebPayment({ packageId, provider })
-      return
-    }
     // The legacy createPayment route is Telegram-owned. Never submit a VK
     // actor's checkout there, even if a stale button survives a UI update.
     if (vkPaymentsOnly || paymentRequestInFlight.current || mode !== 'live') return
@@ -545,7 +539,7 @@ export function BalanceSheet() {
 
               </>) : null}
 
-              {!vkPaymentsOnly && !starsOnly ? <label className="block space-y-2" htmlFor="payment-customer-email">
+              {!vkPaymentsOnly ? <label className="block space-y-2" htmlFor="payment-customer-email">
                 <span className="text-sm font-medium text-foreground">Почта для оплаты через Lava.top</span>
                 <div className="relative">
                   <Mail className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -575,8 +569,7 @@ export function BalanceSheet() {
               </label> : null}
 
               <div ref={packagesRef}>
-                {starsOnly ? <Button onClick={() => openWebPayment(balanceRequest || {})} variant="outline" className="mb-4 w-full">Баланс и пополнение на сайте</Button> : null}
-                {balanceRequest?.provider && !starsOnly && !vkPaymentsOnly ? (
+                {balanceRequest?.provider && !vkPaymentsOnly ? (
                   requestedProviderAvailable ? <Button className="mb-3 w-full" disabled={Boolean(loadingPayment)} onClick={() => handleTopup(selectedPackage!.id, requestedProvider as PaymentProvider)}>Продолжить: {requestedProviderLabel}</Button>
                     : <p role="status" className="mb-3 text-sm text-muted-foreground">Ранее выбранный способ сейчас недоступен. Выберите другой способ оплаты ниже.</p>
                 ) : null}
@@ -599,8 +592,8 @@ export function BalanceSheet() {
                     const grantedCredits = totalPackageCredits(pkg)
                     const pricePerBanana = Math.round(pkg.price_rub / grantedCredits)
                     const starsPrice = pkg.price_stars ?? pkg.price_rub
-                    const lavaConfigured = !starsOnly && Boolean(pkg.lava_offer_id)
-                    const tributeConfigured = !starsOnly && Boolean(TRIBUTE_LINKS[pkg.id])
+                    const lavaConfigured = Boolean(pkg.lava_offer_id)
+                    const tributeConfigured = Boolean(TRIBUTE_LINKS[pkg.id])
                     const starsLoading = loadingPayment === `${pkg.id}:telegram_stars`
                     const tributeLoading = loadingPayment === `${pkg.id}:tribute`
                     const cardLoading = loadingPayment === `${pkg.id}:lava_card`
@@ -610,8 +603,8 @@ export function BalanceSheet() {
                     const foreignPayPalLoading = loadingPayment === `${pkg.id}:lava_foreign_paypal`
                     const freekassaCardLoading = loadingPayment === `${pkg.id}:freekassa_card`
                     const freekassaSbpLoading = loadingPayment === `${pkg.id}:freekassa_sbp`
-                    const foreignConfigured = !starsOnly && Boolean(pkg.lava_foreign_offer_id || pkg.lava_foreign_product_id)
-                    const freekassaConfigured = !starsOnly && Boolean(pkg.freekassa_enabled)
+                    const foreignConfigured = Boolean(pkg.lava_foreign_offer_id || pkg.lava_foreign_product_id)
+                    const freekassaConfigured = Boolean(pkg.freekassa_enabled)
                     return (
                       <div
                         key={pkg.id}
@@ -653,7 +646,7 @@ export function BalanceSheet() {
                             ) : null}
                           </div>
                           <div className="text-right">
-                            <p className="text-xl font-semibold text-foreground">{starsOnly ? `${starsPrice}⭐` : `${pkg.price_rub}₽`}</p>
+                            <p className="text-xl font-semibold text-foreground">{`${pkg.price_rub}₽`}</p>
                             <p className="text-xs text-muted-foreground">{grantedCredits} бананов</p>
                           </div>
                         </div>
@@ -725,7 +718,7 @@ export function BalanceSheet() {
                               </Button>
                             </>
                           ) : null}
-                          {!vkPaymentsOnly && !starsOnly ? <Button
+                          {!vkPaymentsOnly ? <Button
                             onClick={() => handleTopup(pkg.id, 'tribute' as PaymentProvider)}
                             disabled={Boolean(loadingPayment) || !tributeConfigured}
                             className="col-span-2 w-full bg-secondary text-foreground hover:bg-secondary/80"

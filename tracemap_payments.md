@@ -152,3 +152,7 @@ On successful completion system may:
 - provider sends callback before backend sees transaction
 - payment already completed via webhook before reconcile loop
 - optional API key is missing, so manual status polling is unavailable
+
+## Telegram checkout restoration (2026-11-25)
+
+Forced website handoffs were removed from bot middleware, Mini App balance entry, provider selection and API platform guard. Configured hosted methods are accessible directly alongside native Stars. The user explicitly accepted Telegram's restriction risk; this must not be described as compliant with its digital-goods Stars-only policy (https://core.telegram.org/bots/payments-stars). Native invoices remain XTR. Existing external provider signatures, amount checks, owner checks and atomic settlement remain unchanged. Linked website/Telegram sessions retain the existing Telegram wallet; independent web wallet feature gates are unchanged. No pricing/config/schema migration is required.

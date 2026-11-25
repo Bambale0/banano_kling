@@ -125,30 +125,19 @@ try {
       return route.abort()
     })
     await page.goto(baseUrl, { waitUntil: 'networkidle' })
-    // Actual TG wallet entry leaves the Mini App for the website; no fiat API.
+    // Native Telegram opens the existing wallet without a website login.
     await page.evaluate(() => { window.Telegram.WebApp.initData = 'query_id=tg_native' })
-    if (bridge === 'native') {
-      await page.locator('header button').last().click()
-      const website = await page.evaluate(() => window.__openedPayments[0])
-      assert.equal(new URL(website).pathname, '/login')
-      assert.equal(new URL(website).searchParams.get('return_to'), '/mini-app/?intent=topup')
-      // The tappable website fallback remains visible until the user dismisses it.
-      // Close it via the actual UI before interacting with generation forms:
-      // otherwise its high-z-index panel intercepts unrelated WebKit taps.
-      await page.getByRole('button', { name: 'Закрыть ссылку на сайт' }).click()
-      assert.equal(await page.getByRole('status', { name: 'Оплата на сайте' }).count(), 0)
-    }
-    assert.equal(paymentRequests, 0)
-    await page.getByRole('button', { name: 'Оплатить Stars', exact: true }).click()
-    assert.equal(await page.getByRole('button', { name: 'Карта', exact: true }).count(), 0)
-    assert.equal(await page.getByLabel('Почта для оплаты через Lava.top').count(), 0)
+    await page.locator('header button').last().click()
+    assert.deepEqual(await page.evaluate(() => window.__openedPayments), [])
+    assert.equal(await page.getByRole('button', { name: 'Карта', exact: true }).count(), 1)
+    assert.equal(await page.getByLabel('Почта для оплаты через Lava.top').count(), 1)
     await page.getByRole('button', { name: /Stars ·/ }).click()
     await page.waitForFunction(() => window.__openedStarInvoice === 'https://t.me/$synthetic_stars')
     assert.equal(starsRequests, 1)
     assert.equal(paymentRequests, 0)
     await page.getByRole('button', { name: 'Закрыть пополнение' }).click()
     await page.evaluate((source) => {
-      window.Telegram.WebApp.initData = source === 'webstudio'
+      window.Telegram.WebApp.initData = source === 'native' ? 'query_id=tg_native' : source === 'webstudio'
         ? 'query_id=webstudio_verified-session-abcdef123456'
         : 'query_id=browser_synthetic-payment'
       window.__openedPayments = []
