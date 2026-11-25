@@ -69,6 +69,7 @@ jobs:
         run: >-
           npm test -- --runInBand
           lib/__tests__/api-upload-origin.test.ts
+          lib/__tests__/payment-api.test.ts
           lib/__tests__/web-payments.test.ts
           lib/__tests__/task-history-api.test.ts
           lib/__tests__/account-credentials-cache.test.ts
