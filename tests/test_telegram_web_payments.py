@@ -20,6 +20,7 @@ def test_vk_scope_unchanged():
 @pytest.mark.parametrize('callback', ['menu_balance', 'buy_lava_card_mini', 'freekassa_sbp_mini', 'buy_crypto_mini', 'choose_pay_mini'])
 async def test_bot_callbacks_reach_existing_handlers(callback):
     from aiogram.types import CallbackQuery, User
+
     from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
     event = CallbackQuery(id='test', from_user=User(id=123, is_bot=False, first_name='test'), chat_instance='test', data=callback)
     handler = AsyncMock()
@@ -30,6 +31,7 @@ async def test_bot_callbacks_reach_existing_handlers(callback):
 async def test_outgoing_keyboard_preserves_callbacks_and_signed_checkout_url():
     from aiogram.methods import SendMessage
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
     from bot.telegram_payment_surface import TelegramPaymentRequestMiddleware
     markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text='Card', callback_data='buy_lava_card_mini'),
@@ -139,9 +141,10 @@ async def test_empty_message_or_start_argument_does_not_crash(text):
 @pytest.mark.parametrize('provider', ['freekassa_card', 'freekassa_sbp'])
 async def test_miniapp_checkout_uses_authenticated_owner_and_config_price(monkeypatch, query_id, provider):
     import json
+
     from bot import miniapp
-    from bot.handlers import miniapp_lava_payment_methods_compat as compat
     from bot.handlers import freekassa_payments
+    from bot.handlers import miniapp_lava_payment_methods_compat as compat
     compat.install_miniapp_lava_payment_methods()
     context = AsyncMock(return_value=(123, {'platform': 'telegram', 'payload': {'query_id': query_id}, 'user': SimpleNamespace(id=9)}))
     monkeypatch.setattr(miniapp, '_get_user_context', context)
@@ -165,7 +168,9 @@ async def test_miniapp_checkout_uses_authenticated_owner_and_config_price(monkey
 @pytest.mark.parametrize('text', ['/balance', '/wallet', '/topup', '/pay', '/start buy_lava_card_mini', 'buyer@synthetic.test'])
 async def test_bot_payment_commands_and_existing_email_state_are_preserved(text):
     from datetime import UTC, datetime
+
     from aiogram.types import Chat, Message
+
     from bot.states import PaymentStates
     from bot.telegram_payment_surface import TelegramPaymentSurfaceMiddleware
     event = Message(message_id=1, date=datetime.now(UTC), chat=Chat(id=123, type='private'), text=text)
