@@ -8,17 +8,22 @@ bucket policy, database migration, or new environment variable is required.
 
 ## Storage and access contract
 
-- S3: the route returns a `307` redirect to a newly signed `get_object` or
-  `head_object` request. `ResponseContentDisposition` requests `attachment`, with
+- S3 GET: the route returns a `307` redirect to a newly signed `get_object`
+  request. `ResponseContentDisposition` requests `attachment`, with
   a safe ASCII `filename` and UTF-8 `filename*` retaining the stored extension.
   `ResponseCacheControl` and the redirect use `private, no-store`.
+- S3 HEAD: Selectel ignores response overrides on a signed HEAD (verified on
+  the real bucket). The endpoint reads metadata only through SDK `head_object`
+  and returns 200 with attachment, original Content-Type/Content-Length and
+  private/no-store headers. No object contents are read; missing objects yield
+  404 and storage failures 503.
 - The existing `MEDIA_S3_PRESIGN_TTL_SECONDS` applies (60–900 seconds). A saved
   bot link obtains a fresh signature when clicked. It does not embed a signature
   that expires while the message waits in the chat. Existing object deletion
   and retention behavior still applies; absent originals cannot be recovered by
   this route.
 - S3 transfers bytes directly to the client, including Range requests. The
-  application does no media GET, HEAD, materialization, transcoding or upload.
+  application does no media-body GET, materialization, transcoding or upload.
   Local mode serves the existing file with aiohttp `FileResponse`, bounded
   transfer and existing HEAD/Range support, without a second file copy.
 - The opaque public upload path carries the same access as existing `/uploads/`

@@ -61,6 +61,19 @@ async def original_download(request: web.Request) -> web.StreamResponse:
         relative = media_storage._validate_relative_path(request.match_info["path"])
         disposition = media_storage.attachment_content_disposition(relative)
         if media_storage.is_s3_enabled():
+            if request.method == "HEAD":
+                # Selectel ignores response header overrides on signed HEAD.
+                # Supply our attachment headers using a metadata-only request.
+                metadata = await asyncio.to_thread(media_storage.head_upload_metadata, relative)
+                if metadata is None:
+                    raise web.HTTPNotFound(headers=_PRIVATE_HEADERS)
+                return web.Response(headers={
+                    **_PRIVATE_HEADERS,
+                    "Content-Disposition": disposition,
+                    "Content-Length": str(int(metadata["ContentLength"])),
+                    "Content-Type": metadata.get("ContentType") or "application/octet-stream",
+                    "Accept-Ranges": "bytes",
+                })
             location = await asyncio.to_thread(
                 media_storage.presigned_upload_url, relative,
                 method=request.method, download=True,

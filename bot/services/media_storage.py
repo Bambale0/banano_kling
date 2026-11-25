@@ -332,6 +332,18 @@ def _build_s3_client(settings: S3Settings):
     )
 
 
+def head_upload_metadata(relative_path: str) -> dict | None:
+    """Read only remote headers; never materialize or hash the original."""
+    settings = S3Settings.from_config()
+    key = object_key(relative_path, settings)
+    try:
+        return _s3_client(settings).head_object(Bucket=settings.bucket, Key=key)
+    except Exception as exc:
+        if _is_missing_object_error(exc):
+            return None
+        raise
+
+
 def _s3_client(settings: S3Settings):
     global _cached_client, _cached_settings
     with _client_lock:

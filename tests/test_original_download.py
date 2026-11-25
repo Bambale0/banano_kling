@@ -54,9 +54,8 @@ async def test_local_attachment_get_head_range_and_missing(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("method", ["GET", "HEAD"])
 async def test_s3_download_signs_attachment_with_existing_ttl_without_local_copy(
-    monkeypatch, tmp_path, method,
+    monkeypatch, tmp_path,
 ):
     from bot.services import media_storage
     from bot.services.original_download import setup_original_download_routes
@@ -79,7 +78,7 @@ async def test_s3_download_signs_attachment_with_existing_ttl_without_local_copy
     setup_original_download_routes(app)
     async with TestClient(TestServer(app)) as client:
         response = await client.request(
-            method, "/api/media-download/results/clip.mp4", allow_redirects=False,
+            "GET", "/api/media-download/results/clip.mp4", allow_redirects=False,
         )
         assert response.status == 307
         parsed = urlsplit(response.headers["Location"])
@@ -94,6 +93,61 @@ async def test_s3_download_signs_attachment_with_existing_ttl_without_local_copy
         assert response.headers["Referrer-Policy"] == "no-referrer"
     assert not (tmp_path / "static").exists()
     media_storage.reset_media_storage_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_s3_head_supplies_attachment_metadata_without_redirect_or_media_read(monkeypatch, tmp_path):
+    from bot.services import media_storage
+    from bot.services.original_download import setup_original_download_routes
+    from tests.test_media_storage import FakeS3Client, configure_s3
+
+    class MetadataOnlyClient(FakeS3Client):
+        def head_object(self, *, Bucket, Key):
+            assert Bucket == "neuromix-media"
+            assert Key == "uploads/results/clip.mp4"
+            return {"ContentLength": 6 * 1024 ** 3, "ContentType": "video/mp4"}
+
+        def download_file(self, *_args, **_kwargs):
+            pytest.fail("HEAD must never download the original")
+
+    monkeypatch.chdir(tmp_path)
+    configure_s3(monkeypatch, MetadataOnlyClient())
+    app = web.Application()
+    setup_original_download_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.head("/api/media-download/results/clip.mp4", allow_redirects=False)
+        assert response.status == 200
+        assert response.headers["Content-Disposition"].startswith('attachment; filename="clip.mp4"')
+        assert response.headers["Content-Length"] == str(6 * 1024 ** 3)
+        assert response.headers["Content-Type"] == "video/mp4"
+        assert response.headers["Cache-Control"] == "private, no-store"
+        assert "Location" not in response.headers
+        assert await response.read() == b""
+    assert not (tmp_path / "static").exists()
+    media_storage.reset_media_storage_for_tests()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("storage_code,expected_status", [("NoSuchKey", 404), ("AccessDenied", 503), ("SlowDown", 503)])
+async def test_s3_head_missing_and_unavailable_never_serve_media(monkeypatch, storage_code, expected_status):
+    from botocore.exceptions import ClientError
+
+    from bot.services.original_download import setup_original_download_routes
+    from tests.test_media_storage import FakeS3Client, configure_s3
+
+    class UnavailableClient(FakeS3Client):
+        def head_object(self, **_kwargs):
+            raise ClientError({"Error": {"Code": storage_code}}, "HeadObject")
+
+    configure_s3(monkeypatch, UnavailableClient())
+    app = web.Application()
+    setup_original_download_routes(app)
+    async with TestClient(TestServer(app)) as client:
+        response = await client.head("/api/media-download/results/clip.mp4", allow_redirects=False)
+        assert response.status == expected_status
+        assert response.headers["Cache-Control"] == "private, no-store"
+        assert "Location" not in response.headers
+        assert await response.read() == b""
 
 
 def test_trusted_download_mapping_preserves_external_and_signed_capabilities(monkeypatch):
