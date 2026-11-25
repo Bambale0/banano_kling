@@ -14,8 +14,10 @@ import os
 import re
 import threading
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from urllib.parse import quote
 from uuid import uuid4
 
 from bot.config import config
@@ -259,7 +261,27 @@ def public_upload_url(relative_path: str) -> str:
     return f"{config.static_base_url.rstrip('/')}/uploads/{relative}"
 
 
-def presigned_upload_url(relative_path: str, *, method: str = "GET") -> str:
+def attachment_content_disposition(relative_path: str) -> str:
+    """RFC 6266 ASCII fallback and RFC 5987 UTF-8 name, never header syntax."""
+    name = PurePosixPath(_validate_relative_path(relative_path)).name
+    name = "".join(
+        char for char in name
+        if not unicodedata.category(char).startswith("C") and char not in '\\";'
+    ).strip(" .")
+    if not name:
+        name = "original"
+    # Bound the header while retaining the real media extension.
+    suffix = PurePosixPath(name).suffix[:20]
+    if len(name.encode("utf-8")) > 180:
+        stem = name[:-len(suffix)] if suffix else name
+        name = stem.encode("utf-8")[:140].decode("utf-8", errors="ignore") + suffix
+    fallback = re.sub(r"[^A-Za-z0-9._-]", "_", name).strip(".") or "original"
+    return f'attachment; filename="{fallback}"; filename*=UTF-8\'\'{quote(name, safe="")}'
+
+
+def presigned_upload_url(
+    relative_path: str, *, method: str = "GET", download: bool = False,
+) -> str:
     """Sign for the actual HTTP method; S3 rejects HEAD with a GET signature."""
     relative = _validate_relative_path(relative_path)
     http_method = method.upper()
@@ -268,13 +290,14 @@ def presigned_upload_url(relative_path: str, *, method: str = "GET") -> str:
     if not is_s3_enabled():
         return public_upload_url(relative)
     settings = S3Settings.from_config()
+    params = {"Bucket": settings.bucket, "Key": object_key(relative, settings)}
+    if download:
+        params["ResponseContentDisposition"] = attachment_content_disposition(relative)
+        params["ResponseCacheControl"] = "private, no-store"
     return str(
         _s3_client(settings).generate_presigned_url(
             "head_object" if http_method == "HEAD" else "get_object",
-            Params={
-                "Bucket": settings.bucket,
-                "Key": object_key(relative, settings),
-            },
+            Params=params,
             ExpiresIn=settings.presign_ttl_seconds,
         )
     )
@@ -307,6 +330,18 @@ def _build_s3_client(settings: S3Settings):
             },
         ),
     )
+
+
+def head_upload_metadata(relative_path: str) -> dict | None:
+    """Read only remote headers; never materialize or hash the original."""
+    settings = S3Settings.from_config()
+    key = object_key(relative_path, settings)
+    try:
+        return _s3_client(settings).head_object(Bucket=settings.bucket, Key=key)
+    except Exception as exc:
+        if _is_missing_object_error(exc):
+            return None
+        raise
 
 
 def _s3_client(settings: S3Settings):

@@ -6424,10 +6424,12 @@ async def _send_original_document(
 
 async def _send_download_link(send_callable, saved_url: str):
     """Send a small message with an inline URL button to download the original file."""
+    from bot.services.original_download import original_download_url
+
     try:
         kb = types.InlineKeyboardMarkup(
             inline_keyboard=[
-                [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=saved_url)]
+                [types.InlineKeyboardButton(text="📥 Скачать оригинал", url=original_download_url(saved_url))]
             ]
         )
         await send_callable(

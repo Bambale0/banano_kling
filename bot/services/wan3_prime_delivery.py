@@ -86,9 +86,11 @@ def _receipt(message: Any, status: str = "delivered") -> DeliveryOutcome:
 
 
 def _markup(task_id: str, url: str | None) -> InlineKeyboardMarkup:
+    from bot.services.original_download import original_download_url
+
     rows = []
     if url and urlsplit(url).scheme in {"http", "https"}:
-        rows.append([InlineKeyboardButton(text="📥 Скачать оригинал", url=url)])
+        rows.append([InlineKeyboardButton(text="📥 Скачать оригинал", url=original_download_url(url))])
     rows.append([InlineKeyboardButton(text="🔁 Повторить / изменить", callback_data=f"wan3_recipe:{task_id}")])
     if url:
         rows.append([InlineKeyboardButton(text="🎞 В ленту", callback_data=f"feedpub_{task_id}")])

@@ -974,8 +974,10 @@ def get_confirm_keyboard(confirm_data: str, cancel_data: str):
 
 
 def get_video_result_keyboard(video_url: str, user_credits: int = 0, task_id: str = None, model: str = None, is_public_feed: bool = False):
+    from bot.services.original_download import original_download_url
+
     builder = InlineKeyboardBuilder()
-    builder.button(text="📥 Скачать видео", url=video_url)
+    builder.button(text="📥 Скачать видео", url=original_download_url(video_url))
     if task_id:
         builder.button(text="🗑 Убрать из ленты" if is_public_feed else "🎞 В ленту", callback_data=f"feedrm_{task_id}" if is_public_feed else f"feedpub_{task_id}")
     if task_id and model and model.startswith("veo3"):
@@ -995,8 +997,10 @@ def get_video_result_keyboard(video_url: str, user_credits: int = 0, task_id: st
 
 
 def get_image_result_keyboard(image_url: str, task_id: str = None, is_public_feed: bool = False, is_prompt_library: bool = False):
+    from bot.services.original_download import original_download_url
+
     builder = InlineKeyboardBuilder()
-    builder.button(text="📥 Скачать оригинал", url=image_url)
+    builder.button(text="📥 Скачать оригинал", url=original_download_url(image_url))
     if task_id:
         builder.button(text="🎬 Оживить в Grok", callback_data=f"grokvid_{task_id}")
         builder.button(text="🎬 Grok 1.5", callback_data=f"grok15vid_{task_id}")

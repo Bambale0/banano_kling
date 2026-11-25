@@ -60,7 +60,11 @@ async def test_telegram_entity_too_large_sends_download_link_instead_of_uncertai
     bot.send_video.assert_awaited_once()
     bot.send_document.assert_not_awaited()
     bot.send_message.assert_awaited_once()
-    assert _download_button(bot).url == _record()["result_url"]
+    from bot.services.original_download import original_download_url
+
+    assert _download_button(bot).url == original_download_url(_record()["result_url"])
+    assert "/api/media-download/wan3_prime/results/" in _download_button(bot).url
+    assert bot.send_video.await_args.kwargs["video"] == _record()["result_url"]
 
 
 @pytest.mark.asyncio
