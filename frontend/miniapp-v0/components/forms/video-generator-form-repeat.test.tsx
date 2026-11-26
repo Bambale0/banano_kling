@@ -79,6 +79,19 @@ describe('VideoGeneratorForm repeat photo references', () => {
     })))
   })
 
+  it('discloses the paid fallback even when the author supplied the frame', async () => {
+    render(<VideoGeneratorForm
+      models={[{ ...models[0], seedance25_repeat_optional_frames_until: Date.now() / 1000 + 60 }]}
+      onSubmit={jest.fn()} isSubmitting={false} credits={100}
+      promptPreset={{ ...preset, prompt: '', promptHidden: true, repeatReferenceSlots: {
+        version: 1, available: true, cost_multiplier: 1, duration_costs: { '5': 5 },
+        pricing_quality: '720p', images: [{ index: 0, role: 'first_frame', binding: 'fixed' }], videos: [],
+      } }}
+      onPromptPresetConsumed={() => undefined}
+    />)
+    expect(await screen.findByText(/Если нужного кадра нет.*Цена сохраняется/)).toBeInTheDocument()
+  })
+
   it('uses a saved photo reference without a separate start-image field', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     const firstConsumed = jest.fn()

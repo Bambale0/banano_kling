@@ -1388,10 +1388,10 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
-        {framesOptional && (!repeatSlots || optionalUploads.length > 0) ? (
+        {framesOptional && (!repeatSlots || (repeatSlots.available && typedSlots.some(optionalFrame))) ? (
           <p className="text-xs text-muted-foreground">
             {frameOrderInvalid ? 'Добавьте первый кадр, чтобы использовать последний.'
-              : 'Кадры можно пропустить. Повтор всё равно платный, и результат может отличаться от оригинала.'}
+              : 'Если нужного кадра нет, повтор может запуститься без него. Цена сохраняется, результат может отличаться от оригинала.'}
           </p>
         ) : null}
         <div className="space-y-2">
