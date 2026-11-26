@@ -3538,6 +3538,13 @@ private references and browser-provided actor information fail closed.
 - Pre-merge independent PostgreSQL smoke exposed a migration blocker: compatibility execute() silently skips CREATE TABLE; original cursor DDL in init_db would not create the table on existing production. #706 converted back to draft before merge. Added owned native DDL helper (SQLite fallback) and regression, isolated tests green. Native PostgreSQL keyset/CAS smoke using an independently created scratch schema confirmed cursor 2→4→6. No live DB changes. Full exact-head CI must restart; verify actual native migration and production telemetry after deploy.
 
 
+## 2026-11-26 — WAN publication media incident
+- Active ledger: [WAN trend media](EXECUTION/wan-trend-media-20261126.md).
+- Baseline/deployed 12c9183f. Four WAN cards lacked poster manifests despite
+  existing live clips; both direct WAN publishers bypass generic approval hooks.
+  Four posters recovered with existing bounded helper; original row/recipe/category/
+  generation-run snapshots unchanged. Regression and minimal prevention in progress.
+
 ## 2026-11-26 — #535: known pre-dispatch exception and release sequencing
 - #706 merged SHA 098d35d5234f22c81d9ce90ccf4f7108de930c3b; exact push CI/deploy success, Docker/checkout/public Mini App match, healthy, no restarts. Native cursor migration present; first production poll 10:23:38 UTC checked=100 fresh=80 history=20 unverified_lookup=80 pending=20 verification_failed=0 paid_unhandled=0; persisted cursor=7328. Movement requires second production tick.
 - #707 fixes the reproduced pre-dispatch claim leak: unexpected recipe/reference/quote errors before entering paid dispatch finalize known failure with stable 503, allow new request ID; uncertain dispatch remains processing. Baseline red, candidate 50 tests green. Both touched files unchanged between original and new base. Merge latest verified base into task branch without rewriting history; combined 54 tests and Ruff/compile green. No live claim/credit edits. Historical unknown claims remain unresolved. Full exact-head gates and exact deployment verification required; protected revert on regression.

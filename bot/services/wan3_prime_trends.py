@@ -21,6 +21,20 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
 
 
+async def _prepare_published_media(trend_id: int) -> None:
+    # WAN commits approval and its private recipe atomically, bypassing the
+    # generic approve_prompt hook. Prepare the same media only AFTER commit.
+    from bot.services.trend_catalog_live_video import schedule_published_live_preview
+    from bot.services.trend_catalog_publish_thumbnail import (
+        ensure_published_trend_poster,
+    )
+
+    prompt = await database.get_prompt_by_id(trend_id)
+    if prompt:
+        await ensure_published_trend_poster(prompt)
+        schedule_published_live_preview(prompt)
+
+
 async def init_trend_schema() -> None:
     async with db_backend.connect(database.DATABASE_PATH) as db:
         await execute_wan_ddl(db, '''CREATE TABLE IF NOT EXISTS wan3_prime_trend_recipes (
@@ -109,6 +123,7 @@ async def publish_trend(actor, *, task_id: str, title: str, description: str, re
             VALUES (?, ?, ?, ?, ?, ?, ?)''',
             (trend_id, task_id, actor.user_id, actor.telegram_id, _json(recipe), _json(slots), publication_key))
         await db.commit()
+    await _prepare_published_media(trend_id)
     return {'ok': True, 'trend_id': trend_id, 'replayed': False}
 
 
@@ -229,4 +244,5 @@ async def publish_manual_trend(actor, *, model: str, prompt: str, settings: dict
             VALUES (?, '', ?, ?, ?, ?, ?)''',
             (trend_id, actor.user_id, actor.telegram_id, _json(recipe), _json(slots), publication_key))
         await db.commit()
+    await _prepare_published_media(trend_id)
     return {'ok': True, 'trend_id': trend_id, 'replayed': False}
