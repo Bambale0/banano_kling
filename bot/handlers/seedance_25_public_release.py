@@ -1363,6 +1363,8 @@ def install_seedance_25_public_release() -> None:
 
     @wraps(current_bootstrap)
     async def public_bootstrap(request: web.Request) -> web.Response:
+        from bot.services.seedance25_repeat_frames import SETTING_KEY, optional_repeat_frames_until
+
         response = await current_bootstrap(request)
         if response.status != 200:
             return response
@@ -1373,7 +1375,10 @@ def install_seedance_25_public_release() -> None:
             item for item in list(payload.get("video_models") or [])
             if not (isinstance(item, dict) and str(item.get("id")) == MODEL_KEY)
         ]
-        models.append(_public_model_meta(tariff=getattr(request, "_creator_tariff", "standard")))
+        model = _public_model_meta(tariff=getattr(request, "_creator_tariff", "standard"))
+        if until := await optional_repeat_frames_until():
+            model[SETTING_KEY] = until
+        models.append(model)
         payload["video_models"] = models
         return web.json_response(payload, headers={"Cache-Control": "no-store"})
 

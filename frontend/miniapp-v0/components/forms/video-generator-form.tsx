@@ -198,9 +198,6 @@ export function VideoGeneratorForm({
   const hasImageChoices = repeatUserFields.some((field) => Boolean(field.image_choices?.length))
   const hasImageUploadSlot = typedSlots.some((slot) => slot.type === 'image' && slot.binding === 'upload')
   const needsCatalogPersonalPhoto = Boolean(sourceFeedGenId && hasImageChoices && !hasImageUploadSlot)
-  const missingRepeatUploads = typedSlots.some((slot) => slot.binding === 'upload'
-    && (!repeatUploads[slot.key]?.[0]?.url || repeatUploads[slot.key][0].uploading))
-  const repeatBlocked = Boolean(repeatPending) || Boolean(repeatSlots && (!repeatSlots.available || missingRepeatUploads || repeatError))
   const [startImage, setStartImage] = useState<UploadedFile[]>([])
   const [photoReferences, setPhotoReferences] = useState<UploadedFile[]>([])
   const [videoReferences, setVideoReferences] = useState<UploadedFile[]>([])
@@ -229,6 +226,27 @@ export function VideoGeneratorForm({
   )
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
+  const frameWindowExpiresAt = (model?.seedance25_repeat_optional_frames_until ?? 0) * 1000
+  const [frameWindowClock, setFrameWindowClock] = useState(Date.now)
+  useEffect(() => {
+    if (!frameWindowExpiresAt) return
+    const timeout = window.setTimeout(() => setFrameWindowClock(Date.now()), Math.max(0, frameWindowExpiresAt - Date.now()))
+    return () => window.clearTimeout(timeout)
+  }, [frameWindowExpiresAt])
+  const framesOptional = Boolean(sourceFeedGenId && selectedModel === 'seedance_2_5' && !hasImageChoices
+    && ['imgtxt', 'first_last'].includes(selectedScenario)
+    && frameWindowExpiresAt > frameWindowClock)
+  const optionalFrame = (slot: typeof typedSlots[number]) => framesOptional && slot.type === 'image'
+    && (slot.role === 'first_frame' || slot.role === 'last_frame')
+  const uploadSlots = typedSlots.filter((slot) => slot.binding === 'upload')
+  const missingRepeatUploads = uploadSlots.some((slot) => repeatUploads[slot.key]?.[0]?.uploading
+    || (!optionalFrame(slot) && !repeatUploads[slot.key]?.[0]?.url))
+  // The API receives uploads in slot order. A last frame cannot stand in for a missing first frame.
+  const optionalUploads = uploadSlots.filter(optionalFrame)
+  const frameOrderInvalid = optionalUploads.length === 2
+    && !repeatUploads[optionalUploads[0].key]?.[0]?.url && Boolean(repeatUploads[optionalUploads[1].key]?.[0]?.url)
+  const repeatBlocked = Boolean(repeatPending) || Boolean(repeatSlots
+    && (!repeatSlots.available || missingRepeatUploads || frameOrderInvalid || repeatError))
 
   const isGeminiOmni = selectedModel === 'gemini_omni'
   const isOmniAudio = selectedModel === 'gemini_omni_audio' || (isGeminiOmni && selectedScenario === 'audio')
@@ -633,7 +651,10 @@ export function VideoGeneratorForm({
       references:
         repeatSlots ? [
           ...(needsCatalogPersonalPhoto ? photoReferences.map((item) => item.url) : []),
-          ...typedSlots.filter((slot) => slot.type === 'image' && slot.binding === 'upload').map((slot) => repeatUploads[slot.key][0].url),
+          ...uploadSlots.filter((slot) => slot.type === 'image').flatMap((slot) => {
+            const url = repeatUploads[slot.key]?.[0]?.url
+            return url ? [url] : []
+          }),
         ] : isOmniAudio || isOmniCharacter
           ? []
           : selectedScenario === 'imgtxt' || (model?.max_image_references ?? 8) > 0
@@ -1352,7 +1373,7 @@ export function VideoGeneratorForm({
                           if (slotSession !== repeatSession.current) return
                           setRepeatUploads((current) => ({ ...current, [slot.key]: files }))
                         }}
-                        maxFiles={1} accept={`${slot.type}/*`} required
+                        maxFiles={1} accept={`${slot.type}/*`} required={!optionalFrame(slot)}
                         onUpload={slot.type === 'image' ? onUploadImageReference : onUploadVideoReference
                           ? (file) => onUploadVideoReference(file, selectedModel) : undefined}
                         libraryFiles={(slot.type === 'image' ? savedImageReferences : savedVideoReferences).filter((file) =>
@@ -1367,6 +1388,12 @@ export function VideoGeneratorForm({
           </div>
         ) : null}
 
+        {framesOptional && (!repeatSlots || optionalUploads.length > 0) ? (
+          <p className="text-xs text-muted-foreground">
+            {frameOrderInvalid ? 'Добавьте первый кадр, чтобы использовать последний.'
+              : 'Кадры можно пропустить. Повтор всё равно платный, и результат может отличаться от оригинала.'}
+          </p>
+        ) : null}
         <div className="space-y-2">
           <RepeatPersonalizationFields key={sourceFeedGenId}
             fields={repeatUserFields}

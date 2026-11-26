@@ -343,6 +343,7 @@ def video_repeat_descriptors(
 
 def merge_typed_video_inputs(
     task: dict[str, Any], body: dict[str, Any], normalized: dict[str, Any],
+    *, allow_missing_seedance_frames: bool = False,
 ) -> dict[str, Any]:
     if any(body.get(key) for key in PROVIDER_ASSET_KEYS):
         raise VideoRepeatContractError("Сохранённые аудио и персонажи провайдера не входят в этот договор повтора.")
@@ -359,6 +360,11 @@ def merge_typed_video_inputs(
     # are neither published nor reused unless explicitly granted as fixed.
     fields = task.get("_repeat_choice_fields") or []
     image_fields = [item for item in fields if item.get("image_choices")]
+    frames_optional = (
+        allow_missing_seedance_frames and not identity and not image_fields
+        and plan["model"] == "seedance_2_5" and plan["scenario"] in {"first_frame", "first_last"}
+        and normalized.get("seedance25_video_editing", False) is False
+    )
     selected_by_key: dict[str, str] = {}
     if image_fields:
         from bot.repeat_personalization import (
@@ -429,7 +435,8 @@ def merge_typed_video_inputs(
             and not any(slot["binding"] == "upload" for slot in slots)
         )
         required_count = sum(slot["binding"] == "upload" for slot in slots) + int(needs_personal_photo)
-        if len(uploads) != required_count:
+        may_omit = frames_optional and kind == "images" and len(uploads) < required_count
+        if len(uploads) != required_count and not may_omit:
             raise VideoRepeatContractError(
                 "Добавьте своё фото для повтора." if needs_personal_photo
                 else "Добавьте по одному файлу для каждого заменяемого места в публикации."
@@ -465,7 +472,9 @@ def merge_typed_video_inputs(
             elif slot["binding"] == "choice":
                 value = selected_by_key[slot["choice_key"]]
             else:
-                value = next(iterator)
+                value = next(iterator, None) if may_omit else next(iterator)
+                if value is None:
+                    continue
             if kind == "videos" or slot["role"] == "reference":
                 result[field].append(value)
             elif slot["role"] == "first_frame":
