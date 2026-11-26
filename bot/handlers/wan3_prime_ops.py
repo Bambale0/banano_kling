@@ -29,13 +29,15 @@ async def list_wan_operations(message: types.Message) -> None:
     for row in rows:
         lines.append(f"<code>{html.escape(row['internal_task_id'])}</code>\n"
                      f"Статус: {html.escape(row['status'])}; резерв: {float(row['reserve_credits']):g}🍌; "
-                     f"доставка: {html.escape(str(row['delivery_status'] or 'ожидается'))}")
+                     f"доставка: {html.escape(str(row['delivery_status'] or 'ожидается'))}; "
+                     f"причина: {html.escape(str(row['error_code'] or 'не указана'))}")
     if not rows:
         lines.append("Неразрешённых операций нет.")
     lines.append("\nПосле сверки с KIE:\n"
                  "<code>/wan3_resolve ID refund причина</code> — освободить резерв неподтверждённого запуска.\n"
                  "<code>/wan3_resolve ID bind PROVIDER_ID</code> — восстановить только при совпадении параметров у KIE.\n"
-                 "Возврат требует отдельного подтверждения; новые генерации не запускаются.")
+                 "<code>/wan3_resolve ID retry причина</code> — повторно получить подтверждённый результат, без нового запуска.\n"
+                 "Действие требует отдельного подтверждения; новые генерации не запускаются.")
     await message.answer("\n\n".join(lines), parse_mode="HTML")
 
 
@@ -44,14 +46,17 @@ async def prepare_wan_resolution(message: types.Message, state: FSMContext) -> N
     if not message.from_user or not config.is_admin(message.from_user.id):
         return
     parts = (message.text or "").split(maxsplit=3)
-    if len(parts) != 4 or parts[2] not in {"refund", "bind"}:
-        await message.answer("Используйте /wan3_resolve ID refund причина или /wan3_resolve ID bind PROVIDER_ID")
+    if len(parts) != 4 or parts[2] not in {"refund", "bind", "retry"}:
+        await message.answer("Используйте /wan3_resolve ID refund причина, bind PROVIDER_ID или retry причина")
         return
     task_id, action, argument = parts[1:]
     row = await wan3_prime_lifecycle._intent(task_id)
     eligible = row and not row["settled"] and (
-        (row["status"] == "unknown" and not row["provider_task_id"])
-        or (action == "refund" and row["status"] == "result_attention"))
+        (action in {"refund", "bind"} and row["status"] == "unknown" and not row["provider_task_id"])
+        or (action == "refund" and row["status"] == "result_attention")
+        or (action == "retry" and row["status"] == "result_attention"
+            and row["error_code"] == "result_validation_failed"
+            and row["provider_state"] == "success" and row["provider_task_id"]))
     if not eligible:
         await message.answer("Операция не является неподтверждённым запуском. Её состояние и баланс не изменены.")
         return
@@ -66,8 +71,12 @@ async def prepare_wan_resolution(message: types.Message, state: FSMContext) -> N
     token = secrets.token_hex(12)
     await state.update_data(wan3_operator_resolution={"task_id": task_id, "action": action, "argument": argument,
                                                     "admin_id": message.from_user.id, "token": token})
-    detail = (f"Возврат резерва {float(row['reserve_credits']):g}🍌.\nПричина: {argument}" if action == "refund"
-              else f"Привязка подтверждённой задачи KIE {argument}. Платный запрос не повторяется.")
+    if action == "refund":
+        detail = f"Возврат резерва {float(row['reserve_credits']):g}🍌.\nПричина: {argument}"
+    elif action == "retry":
+        detail = f"Повторная проверка и получение существующего результата.\nПричина: {argument}\nНовый платный запрос не отправляется."
+    else:
+        detail = f"Привязка подтверждённой задачи KIE {argument}. Платный запрос не повторяется."
     await message.answer(f"Операция {task_id}\n{detail}\n\nПодтвердите действие после сверки.", parse_mode=None,
         reply_markup=types.InlineKeyboardMarkup(inline_keyboard=[[
             types.InlineKeyboardButton(text="Подтвердить сверку", callback_data=f"wan3_resolve_confirm:{token}")]]))
@@ -87,6 +96,10 @@ async def confirm_wan_resolution(callback: types.CallbackQuery, state: FSMContex
     try:
         if pending["action"] == "refund":
             await wan3_prime_lifecycle.resolve_unknown_refund(task_id, admin_telegram_id=callback.from_user.id, reason=pending["argument"])
+        elif pending["action"] == "retry":
+            await wan3_prime_lifecycle.requeue_invalid_result(
+                task_id, admin_telegram_id=callback.from_user.id, reason=pending["argument"]
+            )
         else:
             row = await wan3_prime_lifecycle._intent(task_id)
             canonical = await wan3_prime_lifecycle.transport.get_task_status(pending["argument"])

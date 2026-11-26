@@ -1260,6 +1260,65 @@ class Wan3PrimeLifecycle:
             await db.commit()
         return True
 
+    async def requeue_invalid_result(
+        self, internal_task_id: str, *, admin_telegram_id: int, reason: str
+    ) -> None:
+        """Explicitly rearm bounded result retrieval, never submit a new generation."""
+        from bot.config import config
+
+        if not config.is_admin(admin_telegram_id):
+            raise Wan3PrimeLifecycleError("Administrator access required", status=403, code="admin_required")
+        if not isinstance(reason, str) or not 8 <= len(reason.strip()) <= 1000:
+            raise Wan3PrimeLifecycleError("Document the operator finding", status=400, code="reason_required")
+
+        row = await self._intent(internal_task_id)
+        if (not row or row["settled"] or row["status"] != "result_attention"
+                or row["error_code"] != "result_validation_failed"
+                or row["provider_state"] != "success" or not row["provider_task_id"]):
+            raise Wan3PrimeLifecycleError("Result is not eligible for repair", status=409, code="repair_not_eligible")
+        provider_id = row["provider_task_id"]
+        try:
+            canonical = await self.transport.get_task_status(provider_id)
+        except Exception as exc:  # noqa: BLE001 - a provider outage must not rearm settlement
+            raise Wan3PrimeLifecycleError(
+                "Provider result is not verified", status=503, code="provider_unverified"
+            ) from exc
+        if (not isinstance(canonical, dict) or canonical.get("taskId") != provider_id
+                or (canonical.get("model") and canonical["model"] != row["provider_model"])
+                or str(canonical.get("state") or canonical.get("status") or "").lower() not in TERMINAL_SUCCESS
+                or not _extract_result_urls(canonical)):
+            raise Wan3PrimeLifecycleError("Provider result is not verified", status=409, code="provider_unverified")
+
+        # Compare-and-swap protects against concurrent repair/refund/callback.
+        # The existing recovery worker owns the normal validated settlement path.
+        async with db_backend.connect(_database_path()) as db:
+            await db.execute("BEGIN IMMEDIATE" if not _is_postgres() else "BEGIN")
+            updated = await db.execute(
+                """UPDATE wan3_prime_intents
+                SET status = 'settlement_pending', next_attempt_at = NULL,
+                    lease_until = NULL, error_message = 'Operator requested result repair',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE internal_task_id = ? AND provider_task_id = ? AND settled = 0
+                  AND status = 'result_attention' AND error_code = 'result_validation_failed'
+                  AND provider_state = 'success'
+                  AND (lease_until IS NULL OR lease_until <= CURRENT_TIMESTAMP)""",
+                (internal_task_id, provider_id),
+            )
+            if updated.rowcount != 1:
+                await db.rollback()
+                raise Wan3PrimeLifecycleError("Operation changed; review again", status=409, code="repair_conflict")
+            await db.execute(
+                "UPDATE wan3_prime_result_retries SET attempts = 0, updated_at = CURRENT_TIMESTAMP "
+                "WHERE internal_task_id = ?", (internal_task_id,),
+            )
+            await db.execute(
+                "INSERT INTO wan3_prime_operator_audit "
+                "(internal_task_id, admin_telegram_id, action, reason, details) "
+                "VALUES (?, ?, 'retry_result', ?, '{}')",
+                (internal_task_id, admin_telegram_id, reason.strip()),
+            )
+            await db.commit()
+
     async def resolve_unknown_refund(self, internal_task_id: str, *, admin_telegram_id: int, reason: str) -> None:
         from bot.config import config
 
