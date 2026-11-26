@@ -9,7 +9,7 @@ import types
 import unittest
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from test_wan_manual_publication import ManualPublicationTests
 
@@ -65,6 +65,17 @@ class ManualTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.actor = types.SimpleNamespace(user_id=1, telegram_id=100, is_admin=True)
         self.prepared = AsyncMock(return_value={})
 
+        async def committed_poster(prompt):
+            self.assertFalse(self.db.in_transaction)
+            self.assertEqual(self.db.execute(
+                'SELECT count(*) FROM wan3_prime_trend_recipes WHERE trend_id = ?',
+                (prompt['id'],),
+            ).fetchone()[0], 1)
+            return True
+
+        self.poster = AsyncMock(side_effect=committed_poster)
+        self.schedule = Mock(return_value=True)
+
         @asynccontextmanager
         async def connect(_path):
             try:
@@ -95,16 +106,19 @@ class ManualTransactionTests(unittest.IsolatedAsyncioTestCase):
         module('bot.services.wan3_prime_storage', UPLOAD_ROOT=self.root, _sha256_file=lambda _: 'digest',
                wan3_prime_storage=types.SimpleNamespace(init_schema=AsyncMock()))
         module('bot.services.wan3_prime_storage_policy', lock_storage=lock)
+        module('bot.services.trend_catalog_publish_thumbnail', ensure_published_trend_poster=self.poster)
+        module('bot.services.trend_catalog_live_video', schedule_published_live_preview=self.schedule)
         self.patch = patch.dict(sys.modules, modules)
         self.patch.start()
         self.addCleanup(self.patch.stop)
         tree = ast.parse(Path('bot/services/wan3_prime_trends.py').read_text())
-        node = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'publish_manual_trend')
+        nodes = [n for n in tree.body if isinstance(n, ast.AsyncFunctionDef)
+                 and n.name in {'publish_manual_trend', '_prepare_published_media'}]
         namespace = {'Any': object, 'hashlib': hashlib, '_json': lambda value: json.dumps(value, sort_keys=True),
                      'Wan3PrimeValidationError': ValidationError, 'init_trend_schema': AsyncMock(),
                      'database': types.SimpleNamespace(DATABASE_PATH='synthetic'),
                      'db_backend': types.SimpleNamespace(connect=connect, Row=sqlite3.Row)}
-        exec(compile(ast.Module(body=[node], type_ignores=[]), 'trusted-publication', 'exec'), namespace)  # noqa: S102
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'trusted-publication', 'exec'), namespace)  # noqa: S102
         self.publish = namespace['publish_manual_trend']
         self.kwargs = {'model': 'wan_3', 'prompt': self.recipe['prompt'], 'settings': self.settings,
                        'title': 'Synthetic', 'description': '', 'preview_url': 'https://owned.test/preview.mp4'}
@@ -114,6 +128,8 @@ class ManualTransactionTests(unittest.IsolatedAsyncioTestCase):
         replay = await self.publish(self.actor, **self.kwargs)
         self.assertEqual(first['trend_id'], replay['trend_id'])
         self.assertTrue(replay['replayed'])
+        self.poster.assert_awaited_once()
+        self.schedule.assert_called_once_with(self.poster.call_args.args[0])
         row = dict(self.db.execute('SELECT * FROM user_prompts').fetchone())
         self.assertNotIn('owned.test/a.jpg', str(row))
         self.assertNotIn('Image1 beside', str(row))
@@ -123,12 +139,14 @@ class ManualTransactionTests(unittest.IsolatedAsyncioTestCase):
         self.db.commit()
         await self.publish(self.actor, **self.kwargs)
         self.assertEqual(self.db.execute('SELECT status FROM user_prompts').fetchone()[0], 'deactivated')
+        self.assertEqual(self.poster.await_count, 1)
 
     async def test_failure_in_second_insert_rolls_back_first(self):
         self.db.execute("CREATE TRIGGER reject_recipe BEFORE INSERT ON wan3_prime_trend_recipes BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
         with self.assertRaises(sqlite3.IntegrityError):
             await self.publish(self.actor, **self.kwargs)
         self.assertEqual(self.db.execute('SELECT count(*) FROM user_prompts').fetchone()[0], 0)
+        self.poster.assert_not_awaited()
 
     async def test_foreign_owner_rejected_before_any_publication(self):
         self.db.execute('UPDATE wan3_prime_media SET user_id=99')
