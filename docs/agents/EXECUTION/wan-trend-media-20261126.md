@@ -100,3 +100,14 @@ reviewed. Required protected CI, exact-SHA release and native iOS smoke pending.
   403 after expiry, newly signed stable original 206. No signed URL was logged.
 - Real production category_page serializer returned poster+clip for all4 ids
   across their existing category placements, preserving original preview_url.
+- Exact `da64f4ea` WAN Linux suite: 386 passed / 15 skipped / 18 subtests;
+  PostgreSQL: 15 passed. Both independent rereviews found no findings.
+- Full safe CI: 6207 passed / 309 skipped / 100 subtests, one failure in the
+  isolated AST-extraction harness: it loaded publish_manual_trend without its
+  new helper. Update extraction to include the actual helper and stub only
+  external media adapters. Add assertions for no media before commit, no
+  duplicate generation on replay/deactivation and no media on rollback.
+  All previous transaction/privacy/replay assertions are preserved.
+- Separate read-only WebKit live-media smoke also passed all four cards,
+  including Range/MIME/signature, poster decode and advancing original/clip
+  playback. This remains desktop engine evidence, not a physical iPhone test.
