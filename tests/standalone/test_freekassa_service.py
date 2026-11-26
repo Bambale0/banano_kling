@@ -284,7 +284,7 @@ def test_reconcile_prioritizes_newest_pending_transactions(monkeypatch):
     )
 
     result = asyncio.run(
-        service.poll_pending_transactions(limit=25, providers=("freekassa",))
+        service.poll_pending_transactions(limit=25, providers=("freekassa",), rotate_history=False)
     )
 
     assert result == []

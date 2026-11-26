@@ -27,6 +27,7 @@ async def main() -> None:
     results = await freekassa_service.poll_pending_transactions(
         providers=("freekassa", "yookassa"),
         complete_order=None,
+        rotate_history=False,
     )
     print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
     await freekassa_service.close()

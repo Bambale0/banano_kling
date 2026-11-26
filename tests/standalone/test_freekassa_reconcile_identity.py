@@ -97,6 +97,6 @@ def test_poll_requires_verified_amount_and_currency(
 
     monkeypatch.setattr(module.db_backend, "connect", FakeConnection)
     monkeypatch.setattr(service, "get_payment", payment)
-    results = asyncio.run(service.poll_pending_transactions(complete_order=complete))
+    results = asyncio.run(service.poll_pending_transactions(complete_order=complete, rotate_history=False))
     assert results[0]["action"] == expected
     assert completed == (["wanted"] if expected == "completed" else [])
