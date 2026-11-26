@@ -21,7 +21,7 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
 
 
-async def _prepare_published_media(trend_id: int) -> None:
+async def _prepare_published_media(trend_id: int, preview_url: str) -> None:
     # WAN commits approval and its private recipe atomically, bypassing the
     # generic approve_prompt hook. Prepare the same media only AFTER commit.
     from bot.services.trend_catalog_live_video import schedule_published_live_preview
@@ -29,10 +29,14 @@ async def _prepare_published_media(trend_id: int) -> None:
         ensure_published_trend_poster,
     )
 
-    prompt = await database.get_prompt_by_id(trend_id)
-    if prompt:
-        await ensure_published_trend_poster(prompt)
-        schedule_published_live_preview(prompt)
+    # Use only the presentation fields just committed by these publishers.
+    # Media preparation must not depend on unrelated moderation DTO columns.
+    prompt = {
+        'id': trend_id, 'preview_url': preview_url, 'category': 'video',
+        'status': 'approved', 'is_public': True, 'tags': ['trend', 'trend-video'],
+    }
+    await ensure_published_trend_poster(prompt)
+    schedule_published_live_preview(prompt)
 
 
 async def init_trend_schema() -> None:
@@ -123,7 +127,7 @@ async def publish_trend(actor, *, task_id: str, title: str, description: str, re
             VALUES (?, ?, ?, ?, ?, ?, ?)''',
             (trend_id, task_id, actor.user_id, actor.telegram_id, _json(recipe), _json(slots), publication_key))
         await db.commit()
-    await _prepare_published_media(trend_id)
+    await _prepare_published_media(trend_id, original['source']['result_url'])
     return {'ok': True, 'trend_id': trend_id, 'replayed': False}
 
 
@@ -244,5 +248,5 @@ async def publish_manual_trend(actor, *, model: str, prompt: str, settings: dict
             VALUES (?, '', ?, ?, ?, ?, ?)''',
             (trend_id, actor.user_id, actor.telegram_id, _json(recipe), _json(slots), publication_key))
         await db.commit()
-    await _prepare_published_media(trend_id)
+    await _prepare_published_media(trend_id, preview_url)
     return {'ok': True, 'trend_id': trend_id, 'replayed': False}

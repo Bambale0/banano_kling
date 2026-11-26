@@ -61,7 +61,7 @@ existing operator backfill remains retry mechanism. No data migration/admin chan
   `test_trend_catalog_live_video`, `test_trend_catalog_media_cache`: 40 passed
   with the same Windows filesystem harness. Linux CI must run without that
   harness. Changed-file Ruff, py_compile and Node syntax checks passed.
-- Runtime prevention is 16 added lines in the WAN service: reuse bounded
+- Runtime prevention is confined to the WAN service: reuse bounded
   poster generation and tracked live scheduler after both transactions close.
 - Two independent code-review axes (Standards/Spec) against `12c9183f...82e9c3bb`
   found no actionable issues. Known fail-open/backfill policy is unchanged.
@@ -81,3 +81,22 @@ existing operator backfill remains retry mechanism. No data migration/admin chan
 
 Progress: production card recovery and real-media smoke green; code tested and
 reviewed. Required protected CI, exact-SHA release and native iOS smoke pending.
+
+## CI follow-up
+
+- PR #708 targets tanyapi; native SQUASH auto-merge initially armed, strict four
+  required gates verified unchanged. Separate WAN PostgreSQL CI caught a new
+  dependency on full moderation DTO fields (`ai_moderated_at`) in its minimal
+  schema: 1 failed / 14 passed. Auto-merge disabled while correcting it.
+- Remove that unnecessary full-row reload. The media hook now receives only
+  exact public presentation fields committed by these two approved publishers;
+  no private prompt/recipe DTO is loaded. Existing PostgreSQL regression is the
+  red-capable integration seam. No schema/fixture relaxation or migration.
+- Additional Windows adjacent run: 114 passed / 19 skipped / 2 failed. Both
+  failures are OS-specific existing Seedance fixture issues (symlink privilege
+  and backslash URL built by str(Path)); Seedance files were not changed.
+  Unmodified Linux CI is the final contract check.
+- Real S3 expiry probe: configured TTL 900s, short-lived URL 206 initially then
+  403 after expiry, newly signed stable original 206. No signed URL was logged.
+- Real production category_page serializer returned poster+clip for all4 ids
+  across their existing category placements, preserving original preview_url.
