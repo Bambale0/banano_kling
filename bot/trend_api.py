@@ -1464,7 +1464,29 @@ async def miniapp_run_trend(request: web.Request) -> web.Response:
             )
         return response
     except Exception:
-        logger.exception("Mini App trend generation failed")
+        logger.exception("Mini App trend generation failed: validation_stage=%s", validation_stage)
+        # These stages have not called either paid launch handler. Release the
+        # reserved claim as a terminal pre-dispatch failure, not an unknown
+        # provider outcome. Never do this after entering dispatch.
+        if claim_reserved and claim_context and validation_stage in {
+            "validate_recipe", "validate_references", "quote",
+        }:
+            response = web.json_response(
+                {
+                    "ok": False,
+                    "code": "trend_pre_dispatch_unavailable",
+                    "error": "Не удалось подготовить тренд. Средства не списаны. Попробуйте снова.",
+                    "retry_same_request": False,
+                },
+                status=503,
+            )
+            await _safe_complete_trend_run_claim(
+                claim_context=claim_context,
+                status="failed",
+                http_status=503,
+                response_payload=_trend_response_payload(response),
+            )
+            return response
         response = web.json_response(
             {
                 "ok": False,

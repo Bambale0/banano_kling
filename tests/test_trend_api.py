@@ -1195,3 +1195,53 @@ async def test_video_trend_quote_is_read_only_and_requires_exact_price_approval(
     assert launch.await_args.kwargs["origin_vk_user_id"] == 2001
     assert launch.await_args.kwargs["origin_account_id"] == "a" * 32
     assert launch.await_args.kwargs["vk_chat_delivery_requested"] is True
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_exception_finishes_claim_without_provider_call(monkeypatch):
+    import json
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from bot import miniapp as miniapp_module
+    from bot import trend_api as api
+
+    monkeypatch.setattr(
+        miniapp_module, "_get_user_context",
+        AsyncMock(return_value=(123456, {"user": SimpleNamespace(id=9, credits=100)})),
+    )
+    monkeypatch.setattr(api, "get_prompt_by_id", AsyncMock(return_value=_trend()))
+    monkeypatch.setattr(api, "reserve_trend_run_claim",
+                        AsyncMock(return_value={"claimed": True, "status": "processing"}))
+    complete = AsyncMock(return_value=True)
+    monkeypatch.setattr(api, "complete_trend_run_claim", complete)
+
+    def unavailable(*_args):
+        raise RuntimeError("storage unavailable")
+
+    monkeypatch.setattr(api, "_preflight_trend_references", unavailable)
+    launch = AsyncMock()
+    monkeypatch.setattr(api, "_run_image_trend", launch)
+
+    class Request:
+        def __init__(self):
+            self.app = {}
+
+        async def json(self):
+            return {
+                "trend_id": 42,
+                "reference_urls": ["https://example.test/ref.jpg"],
+                "client_request_id": "trend_request_preflight_outage",
+                "init_data": "synthetic",
+            }
+
+    response = await api.miniapp_run_trend(Request())
+    payload = json.loads(response.text)
+    assert response.status == 503
+    assert payload["code"] == "trend_pre_dispatch_unavailable"
+    assert payload["retry_same_request"] is False
+    launch.assert_not_awaited()
+    complete.assert_awaited_once()
+    assert complete.await_args.kwargs["status"] == "failed"
+    assert complete.await_args.kwargs["http_status"] == 503
+
