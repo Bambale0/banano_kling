@@ -49,4 +49,35 @@ Rollback: protected revert of code; added immutable poster/manifest assets can
 remain. The bounded helper logs trend id/error class and fails open on S3 outage;
 existing operator backfill remains retry mechanism. No data migration/admin change.
 
-Progress: production data recovery green; regression tests and code fix pending.
+## Verified candidate
+
+- RED: `pytest tests/test_wan3_publication_media.py -q --tb=short` through a
+  Windows-only harness substituting POSIX directory fsync: 4 failures, each
+  publisher never awaited poster preparation. An initial direct Windows run
+  also hit the existing POSIX directory-fsync incompatibility in the manual
+  fixture; the production filesystem code and committed tests were not altered.
+- GREEN: the new regression plus `test_wan3_manual_trends`,
+  `test_wan3_curated_trends`, `test_trend_catalog_publish_thumbnail`,
+  `test_trend_catalog_live_video`, `test_trend_catalog_media_cache`: 40 passed
+  with the same Windows filesystem harness. Linux CI must run without that
+  harness. Changed-file Ruff, py_compile and Node syntax checks passed.
+- Runtime prevention is 16 added lines in the WAN service: reuse bounded
+  poster generation and tracked live scheduler after both transactions close.
+- Two independent code-review axes (Standards/Spec) against `12c9183f...82e9c3bb`
+  found no actionable issues. Known fail-open/backfill policy is unchanged.
+- Live Chromium smoke on the real Mini App origin, 390×844 viewport, passed
+  all four recovered cards: poster JPEG decoding, compact MP4 and full original
+  playback with advancing time; all 12 asset Range probes returned 206 with
+  correct Content-Type, Content-Range and JPEG/MP4 magic. Derivatives have no
+  redirect. This is real-media verification, not a native Telegram UI claim.
+- ffprobe of all four compact clips: muted H.264 Constrained Baseline,
+  yuv420p, 4 seconds, moov before mdat, 61,215–173,310 bytes. Original URLs
+  are stable unsigned uploads, not stored expiring provider links.
+- Existing frontend lazy gate is the failure amplifier: without poster it
+  deliberately attaches no grid video source. Creating the missing poster
+  restores eligibility without removing lazy loading or its two-video limit.
+- Server-to-public HTTP from the datacenter was denied by Cloudflare (403).
+  Desktop Chromium/public HTTP succeeded; no change to origin policy was made.
+
+Progress: production card recovery and real-media smoke green; code tested and
+reviewed. Required protected CI, exact-SHA release and native iOS smoke pending.
