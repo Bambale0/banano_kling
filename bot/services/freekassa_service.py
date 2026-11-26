@@ -370,27 +370,22 @@ class FreeKassaService:
         if not isinstance(orders, list) or not orders:
             return None
 
-        selected = None
-        for item in orders:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("merchant_order_id") or "") == lookup_id:
-                selected = item
-                break
-        if selected is None:
-            selected = next(
-                (item for item in orders if isinstance(item, dict)), None
-            )
-        if not selected:
+        matches = [
+            item for item in orders
+            if isinstance(item, dict)
+            and str(item.get("merchant_order_id") or "") == lookup_id
+        ]
+        # Never infer a merchant order from an unrelated or ambiguous response.
+        if len(matches) != 1:
+            logger.warning("FreeKassa order lookup unverified: exact_matches=%s", len(matches))
             return None
+        selected = matches[0]
 
         status = normalize_order_status(selected.get("status"))
         return {
             **status,
             "id": str(selected.get("fk_order_id") or ""),
-            "merchant_order_id": str(
-                selected.get("merchant_order_id") or lookup_id
-            ),
+            "merchant_order_id": lookup_id,
             "amount": selected.get("amount"),
             "currency": selected.get("currency"),
             "raw": selected,
@@ -416,7 +411,7 @@ class FreeKassaService:
             return []
         placeholders = ",".join("?" for _ in provider_names)
         query = (
-            "SELECT order_id, payment_id FROM transactions "
+            "SELECT order_id, payment_id, amount_rub FROM transactions "
             f"WHERE provider IN ({placeholders}) AND status = 'pending' "
             # Reconcile current checkouts first. Historic abandoned/not-found
             # rows must not permanently consume the whole provider batch.
@@ -440,7 +435,27 @@ class FreeKassaService:
                 continue
 
             item["status"] = payment.get("status")
+            if payment.get("merchant_order_id") != order_id:
+                item["action"] = "verification_failed"
+                results.append(item)
+                continue
             if payment.get("paid"):
+                try:
+                    amount_matches = (
+                        normalize_amount(payment.get("amount"))
+                        == normalize_amount(row["amount_rub"])
+                    )
+                except (ValueError, TypeError, InvalidOperation):
+                    amount_matches = False
+                currency_matches = (
+                    str(payment.get("currency") or "").strip().upper()
+                    == self.currency
+                )
+                if not amount_matches or not currency_matches:
+                    # Keep the order pending for a verified webhook or review.
+                    item["action"] = "verification_failed"
+                    results.append(item)
+                    continue
                 completion = (
                     await complete_order(order_id) if complete_order else None
                 )
