@@ -188,3 +188,107 @@ async def test_permanent_download_failure_enters_operator_queue_without_resubmis
     assert failed_download.download.await_count == 2
     assert launched['task_id'] in [row['internal_task_id'] for row in await unresolved_operations()]
     assert provider.creates == 1 and await balance(actor.user_id) == 90
+
+@pytest.mark.asyncio
+async def test_operator_result_retry_rearms_existing_generation_only(tmp_path, monkeypatch):
+    from bot import database
+    from bot.config import config
+    from bot.services.wan3_prime_lifecycle import Wan3PrimeLifecycleError
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WAN3_RESULT_PROBE_MAX_ATTEMPTS", "1")
+    monkeypatch.setattr(config, "is_admin", lambda value: value == 999999999)
+    actor = await user_actor(100)
+    provider = Provider()
+    lifecycle = Wan3PrimeLifecycle(
+        probe=Probe(file_duration=None), preset_manager=Prices(), transport=provider,
+        downloader=Downloader(Path("static/uploads/wan3_prime/results/repair.mp4")),
+    )
+    quote = await lifecycle.quote(actor, body())
+    launched = await lifecycle.launch(actor, body(), quote, "operator-result-repair")
+    task_id = launched["task_id"]
+    canonical = {"taskId": "provider_1", "state": "success",
+                 "resultUrls": ["https://owned.test/result.mp4"]}
+    provider.statuses["provider_1"] = canonical
+    await lifecycle.reconcile_once(provider_task_id="provider_1")
+    assert (await lifecycle.status(actor, task_id))["status"] == "result_attention"
+    assert await balance(actor.user_id) == 90
+    with pytest.raises(Wan3PrimeLifecycleError, match="Administrator"):
+        await lifecycle.requeue_invalid_result(task_id, admin_telegram_id=123, reason="operator checked result")
+    provider.statuses["provider_1"] = {**canonical, "taskId": "different"}
+    with pytest.raises(Wan3PrimeLifecycleError, match="not verified"):
+        await lifecycle.requeue_invalid_result(task_id, admin_telegram_id=999999999, reason="operator checked result")
+    assert (await lifecycle.status(actor, task_id))["status"] == "result_attention"
+    provider.statuses["provider_1"] = canonical
+    await lifecycle.requeue_invalid_result(task_id, admin_telegram_id=999999999, reason="operator checked result")
+    assert (await lifecycle.status(actor, task_id))["status"] == "settlement_pending"
+    assert await balance(actor.user_id) == 90
+    with pytest.raises(Wan3PrimeLifecycleError, match="not eligible"):
+        await lifecycle.requeue_invalid_result(task_id, admin_telegram_id=999999999, reason="operator checked result")
+    async with database.db_backend.connect(database.DATABASE_PATH) as db:
+        attempts = await (await db.execute(
+            "SELECT attempts FROM wan3_prime_result_retries WHERE internal_task_id = ?", (task_id,)
+        )).fetchone()
+        audit = await (await db.execute(
+            "SELECT COUNT(*) FROM wan3_prime_operator_audit WHERE internal_task_id = ? AND action = 'retry_result'",
+            (task_id,),
+        )).fetchone()
+    assert attempts[0] == 0 and audit[0] == 1
+    lifecycle.probe = Probe(file_duration=5)
+    await lifecycle.reconcile_once()
+    assert (await lifecycle.status(actor, task_id))["status"] == "completed"
+    assert provider.creates == 1
+    assert await balance(actor.user_id) == 90
+    await lifecycle.reconcile_once()
+    assert provider.creates == 1 and await balance(actor.user_id) == 90
+
+
+@pytest.mark.asyncio
+async def test_operator_retry_command_requires_admin_confirmation(monkeypatch):
+    from bot.handlers import wan3_prime_ops as ops
+
+    row = {
+        "settled": 0, "status": "result_attention", "error_code": "result_validation_failed",
+        "provider_state": "success", "provider_task_id": "provider_1",
+    }
+    lifecycle = SimpleNamespace(
+        _intent=AsyncMock(return_value=row), requeue_invalid_result=AsyncMock()
+    )
+    monkeypatch.setattr(ops, "wan3_prime_lifecycle", lifecycle)
+    monkeypatch.setattr(ops.config, "is_admin", lambda value: value == 999999999)
+    data = {}
+
+    async def update_data(**kwargs):
+        data.update(kwargs)
+
+    async def get_data():
+        return dict(data)
+
+    state = SimpleNamespace(update_data=update_data, get_data=get_data)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=999999999),
+        text="/wan3_resolve synthetic retry checked canonical result",
+        answer=AsyncMock(),
+    )
+    await ops.prepare_wan_resolution(message, state)
+    pending = data["wan3_operator_resolution"]
+    assert pending["action"] == "retry"
+    lifecycle.requeue_invalid_result.assert_not_awaited()
+    callback = SimpleNamespace(
+        from_user=SimpleNamespace(id=123),
+        data="wan3_resolve_confirm:" + pending["token"],
+        message=message,
+        answer=AsyncMock(),
+    )
+    await ops.confirm_wan_resolution(callback, state)
+    lifecycle.requeue_invalid_result.assert_not_awaited()
+    callback.from_user.id = 999999999
+    callback.data = "wan3_resolve_confirm:invalid"
+    await ops.confirm_wan_resolution(callback, state)
+    lifecycle.requeue_invalid_result.assert_not_awaited()
+    callback.data = "wan3_resolve_confirm:" + pending["token"]
+    await ops.confirm_wan_resolution(callback, state)
+    lifecycle.requeue_invalid_result.assert_awaited_once_with(
+        "synthetic", admin_telegram_id=999999999, reason="checked canonical result"
+    )
+    assert data["wan3_operator_resolution"] is None
