@@ -391,11 +391,65 @@ class FreeKassaService:
             "raw": selected,
         }
 
+    async def _select_rotating_pending(self, provider_names, limit):
+        """Keep a fresh lane and a durable keyset sweep over the remaining backlog."""
+        scope = ",".join(sorted(set(provider_names)))
+        placeholders = ",".join("?" for _ in provider_names)
+        where = f"FROM transactions WHERE provider IN ({placeholders}) AND status = 'pending'"
+        fields = "SELECT id, order_id, payment_id, amount_rub "
+        history_budget = max(1, limit // 5)
+        async with db_backend.connect() as connection:
+            connection.row_factory = db_backend.Row
+            cursor = await connection.execute(
+                "SELECT last_transaction_id FROM freekassa_reconcile_cursor WHERE scope = ?",
+                (scope,),
+            )
+            previous = await cursor.fetchone()
+            last_id = int(previous["last_transaction_id"]) if previous else 0
+            cursor = await connection.execute(
+                fields + where + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*provider_names, limit - history_budget),
+            )
+            fresh = list(await cursor.fetchall())
+            excluded = tuple(row["id"] for row in fresh)
+            exclusion = (
+                " AND id NOT IN (" + ",".join("?" for _ in excluded) + ")"
+                if excluded else ""
+            )
+            query = fields + where + exclusion
+            budget = limit - len(fresh)
+            cursor = await connection.execute(
+                query + " AND id > ? ORDER BY id ASC LIMIT ?",
+                (*provider_names, *excluded, last_id, budget),
+            )
+            history = list(await cursor.fetchall())
+            if last_id and len(history) < budget:
+                cursor = await connection.execute(
+                    query + " AND id <= ? ORDER BY id ASC LIMIT ?",
+                    (*provider_names, *excluded, last_id, budget - len(history)),
+                )
+                history.extend(await cursor.fetchall())
+        next_id = int(history[-1]["id"]) if history else last_id
+        return fresh + history, len(fresh), scope, last_id, next_id
+
+    async def _advance_reconcile_cursor(self, scope: str, previous: int, next_id: int) -> None:
+        if previous == next_id:
+            return
+        async with db_backend.connect() as connection:
+            await connection.execute(
+                "INSERT INTO freekassa_reconcile_cursor (scope, last_transaction_id) VALUES (?, ?) "
+                "ON CONFLICT (scope) DO UPDATE SET last_transaction_id = excluded.last_transaction_id "
+                "WHERE freekassa_reconcile_cursor.last_transaction_id = ?",
+                (scope, next_id, previous),
+            )
+            await connection.commit()
+
     async def poll_pending_transactions(
         self,
         *,
         limit: int = 100,
         providers: Iterable[str] = ("freekassa",),
+        rotate_history: bool = True,
         complete_order: Callable[
             [str], Awaitable[dict[str, Any]]
         ]
@@ -407,27 +461,32 @@ class FreeKassaService:
         provider_names = tuple(
             str(provider).strip().lower() for provider in providers if provider
         )
-        if not provider_names:
+        limit = int(limit)
+        if not provider_names or limit <= 0:
             return []
-        placeholders = ",".join("?" for _ in provider_names)
-        query = (
-            "SELECT order_id, payment_id, amount_rub FROM transactions "
-            f"WHERE provider IN ({placeholders}) AND status = 'pending' "
-            # Reconcile current checkouts first. Historic abandoned/not-found
-            # rows must not permanently consume the whole provider batch.
-            "ORDER BY created_at DESC LIMIT ?"
-        )
-        async with db_backend.connect() as connection:
-            connection.row_factory = db_backend.Row
-            cursor = await connection.execute(
-                query, (*provider_names, int(limit))
+        if rotate_history:
+            rows, fresh_count, scope, previous_id, next_id = await self._select_rotating_pending(
+                provider_names, limit
             )
-            rows = await cursor.fetchall()
+        else:
+            placeholders = ",".join("?" for _ in provider_names)
+            query = (
+                "SELECT order_id, payment_id, amount_rub FROM transactions "
+                f"WHERE provider IN ({placeholders}) AND status = 'pending' "
+                "ORDER BY created_at DESC LIMIT ?"
+            )
+            async with db_backend.connect() as connection:
+                connection.row_factory = db_backend.Row
+                cursor = await connection.execute(query, (*provider_names, limit))
+                rows = await cursor.fetchall()
+            fresh_count = len(rows)
 
         results: list[dict[str, Any]] = []
-        for row in rows:
+        for index, row in enumerate(rows):
             order_id = str(row["order_id"])
             item: dict[str, Any] = {"order_id": order_id}
+            if rotate_history:
+                item["scan_lane"] = "fresh" if index < fresh_count else "history"
             payment = await self.get_payment(merchant_order_id=order_id)
             if not payment:
                 item["action"] = "not_found"
@@ -482,6 +541,9 @@ class FreeKassaService:
                 item["action"] = "still_pending"
             results.append(item)
 
+        if rotate_history:
+            # A crash repeats work instead of silently skipping unprocessed history.
+            await self._advance_reconcile_cursor(scope, previous_id, next_id)
         return results
 
 

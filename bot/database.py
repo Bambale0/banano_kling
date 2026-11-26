@@ -1030,6 +1030,13 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS freekassa_reconcile_cursor (
+                scope TEXT PRIMARY KEY,
+                last_transaction_id BIGINT NOT NULL
+            )
+        """)
+
         for statement in (
             "ALTER TABLE transactions ADD COLUMN promo_code_id INTEGER",
             "ALTER TABLE transactions ADD COLUMN promo_code TEXT",

@@ -658,7 +658,8 @@ async def _reconcile_loop(app: web.Application) -> None:
             if results:
                 logger.info(
                     "FreeKassa reconcile: checked=%s completed=%s failed=%s pending=%s "
-                    "unverified_lookup=%s verification_failed=%s paid_unhandled=%s",
+                    "unverified_lookup=%s verification_failed=%s paid_unhandled=%s "
+                    "fresh_checked=%s history_checked=%s",
                     len(results),
                     sum(
                         item.get("action") in {"completed", "already_completed"}
@@ -669,6 +670,8 @@ async def _reconcile_loop(app: web.Application) -> None:
                     sum(item.get("action") == "not_found" for item in results),
                     sum(item.get("action") == "verification_failed" for item in results),
                     sum(item.get("action") == "paid_unhandled" for item in results),
+                    sum(item.get("scan_lane") == "fresh" for item in results),
+                    sum(item.get("scan_lane") == "history" for item in results),
                 )
         except asyncio.CancelledError:
             raise
