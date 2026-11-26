@@ -1279,7 +1279,7 @@ class Wan3PrimeLifecycle:
         provider_id = row["provider_task_id"]
         try:
             canonical = await self.transport.get_task_status(provider_id)
-        except Exception as exc:  # noqa: BLE001 - a provider outage must not rearm settlement
+        except Exception as exc:  # A provider outage must not rearm settlement.
             raise Wan3PrimeLifecycleError(
                 "Provider result is not verified", status=503, code="provider_unverified"
             ) from exc
