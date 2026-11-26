@@ -2733,6 +2733,46 @@ async def cmd_referral_notifications_config(message: types.Message) -> None:
     await message.answer("Настройки реферальных уведомлений сохранены.")
 
 
+@router.message(Command("seedance25_repeat_frames"))
+async def cmd_seedance25_repeat_frames(message: types.Message) -> None:
+    """Enable a bounded missing-frame window for paid Mini App repeats."""
+    if not message.from_user or not is_admin(message.from_user.id):
+        await message.answer("⛔ Только для администратора.")
+        return
+    from time import time
+
+    from bot.database import set_bot_setting
+    from bot.services.seedance25_repeat_frames import (
+        SETTING_KEY,
+        optional_repeat_frames_until,
+    )
+
+    parts = str(message.text or "").split()
+    usage = (
+        "/seedance25_repeat_frames 60 — разрешить повтор без кадров на 60 минут\n"
+        "/seedance25_repeat_frames 0 — вернуть обязательные кадры"
+    )
+    if len(parts) > 1:
+        try:
+            minutes = int(parts[1])
+        except ValueError:
+            minutes = -1
+        if len(parts) != 2 or not 0 <= minutes <= 1440:
+            await message.answer("Укажите от 0 до 1440 минут.\n" + usage)
+            return
+        expires = int(time()) + minutes * 60 if minutes else 0
+        if not await set_bot_setting(SETTING_KEY, expires, updated_by_telegram_id=message.from_user.id):
+            await message.answer("Не удалось сохранить настройку.")
+            return
+        logger.info("Seedance optional repeat frames updated: admin_id=%s until=%s", message.from_user.id, expires)
+    until = await optional_repeat_frames_until()
+    status = (
+        f"Повтор без кадров доступен ещё {(until - int(time()) + 59) // 60} мин."
+        if until else "Проверка обязательных кадров включена."
+    )
+    await message.answer(status + "\n" + usage)
+
+
 @router.message(Command("seedance25_edit_prompt"))
 async def cmd_seedance25_edit_prompt(message: types.Message) -> None:
     """Manage the direct-edit default through the existing audited settings store."""

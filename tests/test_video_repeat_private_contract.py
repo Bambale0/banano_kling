@@ -343,6 +343,113 @@ async def test_typed_first_last_uses_upload_slots_not_raw_source_aliases(typed_v
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("remaining, expected_scenario", [([], "text"), ([FACE], "first_frame")])
+async def test_seedance_repeat_uses_supported_mode_when_frame_is_omitted(
+    monkeypatch, typed_video_entrypoint, remaining, expected_scenario,
+):
+    from time import time
+
+    entry = typed_video_entrypoint
+    entry.source["request_data"] = {
+        "seedance25_scenario": "first_last", "first_frame_url": FACE, "last_frame_url": FIXED,
+    }
+    entry.source["feed_repeat_reference_selection"] = {
+        "version": 1, "images": remaining, "videos": [],
+    }
+    setting = AsyncMock(return_value=str(int(time()) + 300))
+    monkeypatch.setattr(database, "get_bot_setting", setting)
+    body = {"v_type": "imgtxt", "reference_images": []}
+    request = entry.request(body)
+    assert (await entry.call(request)).status == 200
+    internal = await request.json()
+    assert internal["seedance25_scenario"] == expected_scenario
+    assert internal["seedance25_first_frame_url"] == (FACE if remaining else None)
+    assert internal["seedance25_last_frame_url"] is None
+    assert internal["prompt"] == entry.source["prompt"]
+    assert entry.availability.call_args.args[0] == remaining
+    assert request._video_repeat_authorization["active_media"] == remaining
+
+    # An expired setting restores the same required-upload contract.
+    setting.return_value = str(int(time()) - 1)
+    assert (await entry.call(entry.request(body))).status == 400
+
+
+@pytest.mark.asyncio
+async def test_optional_seedance_frame_omits_unavailable_file_without_reusing_last(
+    monkeypatch, typed_video_entrypoint,
+):
+    from time import time
+
+    entry = typed_video_entrypoint
+    entry.source.update(request_data={
+        "seedance25_scenario": "first_last", "first_frame_url": FACE, "last_frame_url": FIXED,
+    }, feed_repeat_reference_selection={"version": 1, "images": [FACE, FIXED], "videos": []})
+    monkeypatch.setattr(database, "get_bot_setting", AsyncMock(return_value=str(int(time()) + 300)))
+    entry.availability.return_value = [FACE]
+    request = entry.request({"reference_images": []})
+    assert (await entry.call(request)).status == 200
+    entry.availability.assert_called_once_with([FACE, FIXED])
+    assert request._video_repeat_authorization["active_media"] == []
+    assert (await request.json())["seedance25_scenario"] == "text"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accepted", [True, False])
+async def test_paid_repeat_without_frame_keeps_price_and_refunds_rejection(
+    monkeypatch, typed_video_entrypoint, accepted,
+):
+    from time import time
+
+    from bot.handlers import seedance_25_public_release as public
+
+    entry = typed_video_entrypoint
+    entry.source.update(is_public_feed=True, request_data={
+        "seedance25_scenario": "first_frame", "first_frame_url": FACE,
+    }, feed_repeat_reference_selection={"version": 1, "images": [], "videos": []})
+    miniapp._get_repeat_source_card.return_value.update(model="seedance_2_5")
+    setting = AsyncMock(return_value=str(int(time()) + 300))
+    monkeypatch.setattr(database, "get_bot_setting", setting)
+    monkeypatch.setattr(miniapp.config, "is_admin", lambda _: False)
+    monkeypatch.setattr(public.preset_manager, "_price_config", {
+        "costs_reference": {"video_models": {"seedance_2_5": {"quality_costs": {"720p": 0.2}}}},
+    })
+    monkeypatch.setattr(miniapp, "check_can_afford", AsyncMock(return_value=True))
+    debit = AsyncMock(return_value=True)
+    refund = AsyncMock(return_value=True)
+    monkeypatch.setattr(miniapp, "deduct_credits", debit)
+    monkeypatch.setattr(miniapp, "add_credits", refund)
+    provider = AsyncMock(return_value={"task_id": "seedance-paid-repeat"} if accepted else {})
+    monkeypatch.setattr(public.seedance_25_service, "generate_video", provider)
+    monkeypatch.setattr(public.generation_module, "add_generation_task", AsyncMock())
+    monkeypatch.setattr(miniapp, "credit_feed_prompt_repeat", AsyncMock())
+    monkeypatch.setattr(miniapp, "get_or_create_user", AsyncMock(return_value=SimpleNamespace(credits=99)))
+
+    async def delegate(request):
+        return await public._public_miniapp_generate(request, await request.json())
+
+    entry.delegate.side_effect = delegate
+    body = {"v_model": "seedance_2_5", "v_type": "imgtxt", "v_duration": 5,
+            "v_ratio": "9:16", "reference_images": []}
+    quote = await entry.call(entry.request({**body, "seedance25_quote_only": True}))
+    assert quote.status == 200
+    assert json.loads(quote.body)["cost"] == 1
+    debit.assert_not_awaited()
+    provider.assert_not_awaited()
+
+    response = await entry.call(entry.request(body))
+    assert (response.status == 200) is accepted
+    debit.assert_awaited_once_with(880102, 1)
+    provider.assert_awaited_once()
+    assert provider.call_args.kwargs["first_frame_url"] is None
+    assert provider.call_args.kwargs["last_frame_url"] is None
+    assert provider.call_args.kwargs["aspect_ratio"] == "9:16"
+    if accepted:
+        refund.assert_not_awaited()
+    else:
+        refund.assert_awaited_once_with(880102, 1)
+
+
+@pytest.mark.asyncio
 async def test_image_only_multimodal_preserves_provider_scenario_from_generic_card(typed_video_entrypoint):
     entry = typed_video_entrypoint
     entry.source["request_data"]["v_reference_videos"] = []

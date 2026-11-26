@@ -23,6 +23,7 @@ from bot.services.media_input_utils import (
     resolve_reference_source,
 )
 from bot.services.remix_prompt import compose_feed_remix_prompt
+from bot.services.seedance25_repeat_frames import optional_repeat_frames_until
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
@@ -283,7 +284,9 @@ def _infer_scenario(request_data: dict[str, Any]) -> str:
     return "text"
 
 
-def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) -> dict[str, Any]:
+def enrich_video_repeat_body(
+    body: dict[str, Any], source_task: dict[str, Any], *, allow_missing_seedance_frames: bool = False,
+) -> dict[str, Any]:
     owner = bool(source_task.get("_repeat_is_owner"))
     requires_personal_photo = owner and any(
         field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or []
@@ -330,7 +333,9 @@ def enrich_video_repeat_body(body: dict[str, Any], source_task: dict[str, Any]) 
             "feed_repeat_reference_selection": None, "feed_reference_selection": None,
         }
         normalized = _enrich_legacy_video_repeat_body(body, source_metadata)
-        return merge_typed_video_inputs(source_task, body, normalized)
+        return merge_typed_video_inputs(
+            source_task, body, normalized, allow_missing_seedance_frames=allow_missing_seedance_frames,
+        )
     except VideoRepeatContractError as exc:
         raise VideoRepeatReferenceError(str(exc)) from exc
 
@@ -598,6 +603,22 @@ def _active_video_reference_urls(body: dict[str, Any]) -> list[str]:
     ])
 
 
+def _use_available_seedance_frames(body: dict[str, Any], missing: list[str]) -> bool:
+    """Build a valid provider mode from the frames left after authorization."""
+    scenario = body.get("seedance25_scenario")
+    if scenario not in {"first_frame", "first_last"}:
+        return False
+    first = body.get("seedance25_first_frame_url")
+    last = body.get("seedance25_last_frame_url")
+    if not first or first in missing:
+        body.update(seedance25_scenario="text", v_type="text", v_image_url=None,
+                    seedance25_first_frame_url=None, seedance25_last_frame_url=None,
+                    reference_images=[])
+    elif scenario == "first_last" and (not last or last in missing):
+        body.update(seedance25_scenario="first_frame", v_type="imgtxt", seedance25_last_frame_url=None)
+    return scenario != body["seedance25_scenario"]
+
+
 async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) -> dict[str, Any]:
     source_id = _source_id(body)
     if not source_id:
@@ -640,6 +661,15 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
     # Only this authenticated boundary can authorize the owner's legacy reuse.
     # Foreign repeats retain only explicit typed or validated historical slots.
     # Every other source slot requires a caller-supplied replacement.
+    source_data = source_request(source_task)
+    frames_optional = (
+        source_task.get("model") == "seedance_2_5"
+        and _infer_scenario(source_data) in {"first_frame", "first_last", "imgtxt"}
+        and all(data.get(flag, False) is False for data in (body, source_data)
+                for flag in ("identityTransfer", "seedance25_identity_transfer", "seedance25_video_editing"))
+        and not any(field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or [])
+        and bool(await optional_repeat_frames_until())
+    )
     try:
         # The dedicated identity form owns its inputs, including omissions and
         # empty lists. Its own validator must never inherit legacy author media
@@ -653,9 +683,16 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         consumer_task = source_task if source_task["_repeat_is_owner"] else foreign_video_repeat_task(
             source_task, retain_legacy_selection=not legacy_identity,
         )
-        enriched = enrich_video_repeat_body(body, consumer_task)
+        enriched = enrich_video_repeat_body(body, consumer_task, allow_missing_seedance_frames=frames_optional)
     except VideoRepeatContractError as exc:
         raise VideoRepeatReferenceError(str(exc)) from exc
+    missing_frames: list[str] | None = None
+    if (frames_optional and enriched.get("v_model") == "seedance_2_5"
+            and enriched.get("seedance25_scenario") in {"first_frame", "first_last"}):
+        missing_frames = missing_local_upload_sources(_active_video_reference_urls(enriched))
+        if _use_available_seedance_frames(enriched, missing_frames):
+            logger.info("Seedance repeat frame fallback: source_generation_id=%s scenario=%s",
+                        source_id, enriched["seedance25_scenario"])
     # This authenticated boundary wraps both legacy video handlers and the
     # separate Seedance 2.5 endpoint. Compose once from the original client
     # changes, keeping the author's base server-side just like photo remixes.
@@ -712,7 +749,8 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         raise web.HTTPBadRequest(reason=str(exc)) from exc
     enriched["prompt"] = compose_feed_remix_prompt(source_prompt, body.get("prompt"))
     active_media = _active_video_reference_urls(enriched)
-    if missing_local_upload_sources(active_media):
+    if (any(source in missing_frames for source in active_media) if missing_frames is not None
+            else missing_local_upload_sources(active_media)):
         raise VideoRepeatReferenceError(
             "Один или несколько референсов для повтора больше недоступны. "
             "Загрузите недостающие файлы или откройте другую публикацию."
