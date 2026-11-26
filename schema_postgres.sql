@@ -111,6 +111,11 @@ CREATE TABLE IF NOT EXISTS transactions (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS freekassa_reconcile_cursor (
+    scope TEXT PRIMARY KEY,
+    last_transaction_id BIGINT NOT NULL
+);
+
 -- ============================================================
 -- GENERATION TASKS
 -- ============================================================
