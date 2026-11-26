@@ -502,6 +502,17 @@ def derive_description(prompt_text: str) -> str:
     return (text[:197] + "...") if len(text) > 200 else text
 
 
+async def _ensure_freekassa_reconcile_schema(db: db_backend.Connection) -> None:
+    """Install scheduler metadata on existing PostgreSQL and SQLite databases."""
+    ddl = db.execute_native_ddl if db_backend.is_postgres() else db.execute
+    await ddl("""
+        CREATE TABLE IF NOT EXISTS freekassa_reconcile_cursor (
+            scope TEXT PRIMARY KEY,
+            last_transaction_id BIGINT NOT NULL
+        )
+    """)
+
+
 async def _ensure_vk_feed_likes_schema(db: db_backend.Connection) -> None:
     """Ensure VK-owned feed reactions exist on both SQLite and PostgreSQL.
 
@@ -1030,12 +1041,7 @@ async def init_db():
             )
         """)
 
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS freekassa_reconcile_cursor (
-                scope TEXT PRIMARY KEY,
-                last_transaction_id BIGINT NOT NULL
-            )
-        """)
+        await _ensure_freekassa_reconcile_schema(db)
 
         for statement in (
             "ALTER TABLE transactions ADD COLUMN promo_code_id INTEGER",

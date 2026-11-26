@@ -91,3 +91,21 @@ async def test_unverified_history_never_settles_and_one_off_does_not_move_cursor
     await current.poll_pending_transactions(limit=5, rotate_history=False, complete_order=complete)
     second = await current.poll_pending_transactions(limit=5, complete_order=complete)
     assert [r["order_id"] for r in second if r.get("scan_lane") == "history"] == ["freekassa-1"]
+
+@pytest.mark.asyncio
+async def test_cursor_schema_uses_native_ddl_on_postgres(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    class PgConnection:
+        def __init__(self):
+            self.execute = AsyncMock(side_effect=AssertionError("generic CREATE is skipped"))
+            self.execute_native_ddl = AsyncMock()
+
+    monkeypatch.setattr(database.db_backend, "is_postgres", lambda: True)
+    connection = PgConnection()
+    await database._ensure_freekassa_reconcile_schema(connection)
+    connection.execute.assert_not_awaited()
+    connection.execute_native_ddl.assert_awaited_once()
+    statement = connection.execute_native_ddl.await_args.args[0]
+    assert "CREATE TABLE IF NOT EXISTS freekassa_reconcile_cursor" in statement
+
