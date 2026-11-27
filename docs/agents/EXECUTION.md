@@ -3548,23 +3548,23 @@ private references and browser-provided actor information fail closed.
 ## 2026-11-26 — #535: known pre-dispatch exception and release sequencing
 - #706 merged SHA 098d35d5234f22c81d9ce90ccf4f7108de930c3b; exact push CI/deploy success, Docker/checkout/public Mini App match, healthy, no restarts. Native cursor migration present; first production poll 10:23:38 UTC checked=100 fresh=80 history=20 unverified_lookup=80 pending=20 verification_failed=0 paid_unhandled=0; persisted cursor=7328. Movement requires second production tick.
 - #707 fixes the reproduced pre-dispatch claim leak: unexpected recipe/reference/quote errors before entering paid dispatch finalize known failure with stable 503, allow new request ID; uncertain dispatch remains processing. Baseline red, candidate 50 tests green. Both touched files unchanged between original and new base. Merge latest verified base into task branch without rewriting history; combined 54 tests and Ruff/compile green. No live claim/credit edits. Historical unknown claims remain unresolved. Full exact-head gates and exact deployment verification required; protected revert on regression.
-## 2026-11-27 — Temporary Seedance 2.5 repeat without frames
+## 2026-11-27 — Seedance 2.5 repeat without mandatory frames
 
-- Baseline `90f7a692`. The WAN release is live and verified separately.
-  User explicitly authorized paid Seedance 2.5 feed repeats without a required frame.
+- Initial bounded release `98b4417c` was deployed and verified healthy. The user
+  then explicitly rejected any automatic enable/disable mechanism and directed
+  that paid Seedance 2.5 feed repeats permanently allow a missing frame.
 - The provider requires a first frame to accept a last frame. Reuse its valid
-  text-only or first-frame mode when frames are omitted. Commands and bootstrap
-  share an expiring, audited `bot_settings` value. Enable only after deployment;
-  zero or expiry restores strict validation. No database shape change.
+  text-only or first-frame mode when frames are omitted. There is no setting,
+  timer, expiry, bootstrap flag or admin command. No database shape change.
 - The Mini App still requires complete multimodal, video-edit, identity, and
   catalog-personalization inputs. The repeat authorizations, prompt privacy,
   file checks for retained inputs, tariff, debit, refund and acceptance code
   are preserved. A stored grant still needs an intact recipe definition.
 - Before the change, the typed repeat entrypoint rejected missing frames with
-  HTTP 400 in two synthetic cases. Tests cover both fallback modes, expiry, quote
-  without debit, unchanged provider price and rejection refund. Verify release
-  with quote-only and financial mocks. Avoid a live paid generation in smoke.
+  HTTP 400 in two synthetic cases. Tests cover both permanent fallback modes,
+  quote without debit, unchanged provider price and rejection refund. Verify
+  release with quote-only and financial mocks. Avoid a live paid generation in smoke.
 - Rollout through the four required `tanyapi` checks and protected squash merge.
-  After verifying the deployed SHA, enable a 60-minute window. Close early via
-  admin `/seedance25_repeat_frames 0`; inspect fallback counts without logging
-  prompt text or reference file addresses.
+  After verifying the deployed SHA, confirm no expiry field is published and
+  both fallback modes remain available without settings. Inspect fallback counts
+  without logging prompt text or reference file addresses.

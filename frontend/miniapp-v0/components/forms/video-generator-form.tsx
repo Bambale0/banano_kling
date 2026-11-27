@@ -226,16 +226,8 @@ export function VideoGeneratorForm({
   )
 
   const model = useMemo(() => models.find(m => m.id === selectedModel), [models, selectedModel])
-  const frameWindowExpiresAt = (model?.seedance25_repeat_optional_frames_until ?? 0) * 1000
-  const [frameWindowClock, setFrameWindowClock] = useState(Date.now)
-  useEffect(() => {
-    if (!frameWindowExpiresAt) return
-    const timeout = window.setTimeout(() => setFrameWindowClock(Date.now()), Math.max(0, frameWindowExpiresAt - Date.now()))
-    return () => window.clearTimeout(timeout)
-  }, [frameWindowExpiresAt])
   const framesOptional = Boolean(sourceFeedGenId && selectedModel === 'seedance_2_5' && !hasImageChoices
-    && ['imgtxt', 'first_last'].includes(selectedScenario)
-    && frameWindowExpiresAt > frameWindowClock)
+    && ['imgtxt', 'first_last'].includes(selectedScenario))
   const optionalFrame = (slot: typeof typedSlots[number]) => framesOptional && slot.type === 'image'
     && (slot.role === 'first_frame' || slot.role === 'last_frame')
   const uploadSlots = typedSlots.filter((slot) => slot.binding === 'upload')
