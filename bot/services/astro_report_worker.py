@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 _ARCHIVED_NATAL_PLAN_PATHS = (
+    Path(__file__).resolve().parents[1] / "astro_report_plans_natal_v4_legacy.json",
     Path(__file__).resolve().parents[1] / "astro_report_plans_natal_v3_legacy.json",
     Path(__file__).resolve().parents[1] / "astro_report_plans_natal_v2_legacy.json",
 )
@@ -49,7 +50,7 @@ def resolve_astro_job_plan(job: ClaimedAstroJob, secret: str) -> tuple[ReportPla
     """Match an encrypted job's exact immutable prompt and section contract.
 
     Prompt updates preserve the original HMAC-signed templates and encrypted
-    checkpoints for unfinished reports. Supports signed natal v3/v2,
+    checkpoints for unfinished reports. Supports signed natal v4/v3/v2,
     lunar v2, solar v2 and karma v2 tasks; mismatched and tampered fingerprints still fail closed.
     """
     latest = load_report_plan(job.service_id)
