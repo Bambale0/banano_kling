@@ -85,7 +85,6 @@ export interface VideoModel {
   costs: Record<string, number>
   quality_costs?: Record<string, number>
   quality_duration_costs?: Record<string, Record<string, number>>
-  seedance25_repeat_optional_frames_until?: number
   grok_modes?: string[]
   grok_resolutions?: string[]
   veo_generation_types?: string[]

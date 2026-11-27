@@ -741,9 +741,12 @@ async def test_restored_video_media_is_validated_before_launch(
     private_url = "/uploads/synthetic-private-reference.bin"
     value = [private_url] if list_value else private_url
     entry.source.return_value["user_id"] = 501  # This test validates the original owner's media.
-    entry.source.return_value["request_data"] = {
+    source_request = {
         "seedance25_scenario": scenario, field: value,
     }
+    if scenario == "first_last":
+        source_request["seedance25_first_frame_url"] = "/uploads/synthetic-first-frame.bin"
+    entry.source.return_value["request_data"] = source_request
     entry.availability.side_effect = (
         lambda values: [private_url] if missing and private_url in values else []
     )
@@ -751,7 +754,7 @@ async def test_restored_video_media_is_validated_before_launch(
     response = await entry.call(request)
     entry.availability.assert_called_once()
     assert private_url in entry.availability.call_args.args[0]
-    if missing:
+    if missing and scenario == "multimodal":
         assert response.status == 400
         assert json.loads(response.text)["code"] == "repeat_reference_incomplete"
         assert private_url not in response.text
@@ -759,7 +762,14 @@ async def test_restored_video_media_is_validated_before_launch(
     else:
         assert response.status == 200
         entry.delegate.assert_awaited_once()
-        assert (await request.json())[field] == value
+        restored = await request.json()
+        if missing:
+            assert restored[field] is None
+            assert restored["seedance25_scenario"] == (
+                "first_frame" if scenario == "first_last" else "text"
+            )
+        else:
+            assert restored[field] == value
 
 
 @pytest.mark.asyncio

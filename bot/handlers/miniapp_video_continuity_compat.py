@@ -23,7 +23,6 @@ from bot.services.media_input_utils import (
     resolve_reference_source,
 )
 from bot.services.remix_prompt import compose_feed_remix_prompt
-from bot.services.seedance25_repeat_frames import optional_repeat_frames_until
 from bot.video_repeat_reference_contract import (
     MEDIA_KEYS,
     VideoRepeatContractError,
@@ -668,7 +667,6 @@ async def _restore_repeat_request(request: web.Request, body: dict[str, Any]) ->
         and all(data.get(flag, False) is False for data in (body, source_data)
                 for flag in ("identityTransfer", "seedance25_identity_transfer", "seedance25_video_editing"))
         and not any(field.get("image_choices") for field in source_task.get("_repeat_choice_fields") or [])
-        and bool(await optional_repeat_frames_until())
     )
     try:
         # The dedicated identity form owns its inputs, including omissions and

@@ -56,10 +56,10 @@ const measuredVideoQuote = {
 }
 
 describe('VideoGeneratorForm repeat photo references', () => {
-  it.each([true, false])('submits without a Seedance frame only during the open window (%s)', async (enabled) => {
+  it('always submits a paid Seedance repeat without the missing frame', async () => {
     const onSubmit = jest.fn().mockResolvedValue(undefined)
     render(<VideoGeneratorForm
-      models={[{ ...models[0], seedance25_repeat_optional_frames_until: Date.now() / 1000 + (enabled ? 60 : -60) }]}
+      models={models}
       onSubmit={onSubmit} isSubmitting={false} credits={100}
       promptPreset={{ ...preset, prompt: '', promptHidden: true, repeatReferenceSlots: {
         version: 1, available: true, cost_multiplier: 1, duration_costs: { '5': 5 },
@@ -68,10 +68,6 @@ describe('VideoGeneratorForm repeat photo references', () => {
       onPromptPresetConsumed={() => undefined}
     />)
     const launch = screen.getByRole('button', { name: /Запустить видео/i })
-    if (!enabled) {
-      expect(launch).toBeDisabled()
-      return
-    }
     await waitFor(() => expect(launch).toBeEnabled())
     fireEvent.click(launch)
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
@@ -81,7 +77,7 @@ describe('VideoGeneratorForm repeat photo references', () => {
 
   it('discloses the paid fallback even when the author supplied the frame', async () => {
     render(<VideoGeneratorForm
-      models={[{ ...models[0], seedance25_repeat_optional_frames_until: Date.now() / 1000 + 60 }]}
+      models={models}
       onSubmit={jest.fn()} isSubmitting={false} credits={100}
       promptPreset={{ ...preset, prompt: '', promptHidden: true, repeatReferenceSlots: {
         version: 1, available: true, cost_multiplier: 1, duration_costs: { '5': 5 },
