@@ -538,6 +538,22 @@ def _enforce_generation_prompt_policy(prompt: str, *, medium: str) -> Optional[s
     return None
 
 
+def _image_prompt_precharge_error(img_service: str, prompt: str) -> str | None:
+    """Reject unsupported Seedream 5.5 prompt lengths before credit deduction.
+
+    Layer generation deliberately accepts its own 'auto' empty prompt, so
+    only the ordinary Seedream 5.5 image service uses this constraint.
+    """
+    if img_service != "seedream_55":
+        return None
+    if 5 <= len(str(prompt or "").strip()) <= 5000:
+        return None
+    return (
+        "Для Seedream 5.5 описание должно содержать от 5 до 5000 символов. "
+        "Исправьте текст и отправьте его снова — бананы не списаны."
+    )
+
+
 def _enforce_image_prompt_policy(prompt: str) -> Optional[str]:
     return _enforce_generation_prompt_policy(prompt, medium="image")
 
@@ -9221,6 +9237,13 @@ async def handle_image_prompt_text(message: types.Message, state: FSMContext):
         return
 
     img_service = data.get("img_service", "nanobanana")
+    precharge_error = _image_prompt_precharge_error(img_service, prompt)
+    if precharge_error:
+        await message.answer(
+            precharge_error,
+            reply_markup=get_main_menu_button_keyboard(),
+        )
+        return
     img_ratio = data.get("img_ratio", "1:1")
     previous_img_count = data.get("img_count", 1)
     img_count = 1
