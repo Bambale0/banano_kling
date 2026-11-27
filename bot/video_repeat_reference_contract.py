@@ -15,6 +15,7 @@ from bot.services.media_input_utils import (
     reference_upload_owner_telegram_id,
     resolve_reference_source,
 )
+from bot.services.seedance_reference_binding import missing_seedance_reference_tags
 
 IMAGE_LIST_KEYS = ("reference_images", "reference_image_urls")
 VIDEO_LIST_KEYS = ("v_reference_videos", "reference_videos", "reference_video_urls", "video_references")
@@ -137,14 +138,33 @@ def active_video_recipe(task: dict[str, Any]) -> dict[str, Any]:
     videos: list[dict[str, Any]] = []
     audio: list[str] = []
     if model == "seedance_2_5":
+        legacy_images = _list(data, IMAGE_LIST_KEYS)
         if not scenario:
-            scenario = "multimodal" if _list(data, IMAGE_LIST_KEYS) or _list(data, VIDEO_LIST_KEYS) else "first_frame" if _first(data, FIRST_KEYS) else "text"
+            scenario = (
+                "multimodal"
+                if legacy_images or _list(data, VIDEO_LIST_KEYS)
+                else "first_frame"
+                if _first(data, FIRST_KEYS)
+                else "text"
+            )
+        if scenario == "imgtxt" and not declared_scenario and legacy_images:
+            missing_without_images = missing_seedance_reference_tags(
+                str(task.get("prompt") or ""),
+                image_count=0,
+                video_count=0,
+                audio_count=0,
+            )
+            if any(tag.startswith("@Image") for tag in missing_without_images):
+                # Old generic Seedance records used ``imgtxt`` even when the
+                # provider prompt explicitly bound the selected photo as
+                # @Image1. Replaying that photo as a first frame leaves the tag
+                # unbound, so retain the original multimodal provider contract.
+                scenario = "multimodal"
         if scenario in {"imgtxt", "video"}:
             scenario = "first_frame" if scenario == "imgtxt" else "multimodal"
         if scenario in {"first_frame", "first_last"}:
             first = _first(data, FIRST_KEYS)
             # Generic I2V promotes a sole selected photo to the start frame.
-            legacy_images = _list(data, IMAGE_LIST_KEYS)
             if not first and not declared_scenario and data.get("v_type") == "imgtxt" and len(legacy_images) == 1:
                 first = legacy_images[0]
             last = _first(data, LAST_KEYS)
