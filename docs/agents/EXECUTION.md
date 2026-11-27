@@ -3571,3 +3571,37 @@ private references and browser-provided actor information fail closed.
 - First full CI correctly exposed three stale media-validation expectations.
   Updated them to keep multimodal media fail-closed while missing frame modes
   fall back to text-only or first-frame. Focused frame suites: 15 passed.
+
+## 2026-11-27 — Legacy Seedance 2.5 repeat image binding
+
+- Baseline: exact current `origin/tanyapi` SHA
+  `49a5a93c5b2cd9659052fabb962763edc79dd145`; isolated branch
+  `fix/seedance25-legacy-repeat-image-binding`. No database, object-storage,
+  pricing, frontend, Seedance provider, or payment mutation is required.
+- Production evidence at 13:51 MSK: the iPhone Mini App uploaded
+  `IMG_1457.jpeg` successfully (HTTP 200), normalized it to a valid 898x1280
+  PNG, then `/mini-app/api/generate-video` returned HTTP 400 in about 40 ms.
+  No debit or provider launch occurred. A direct read-only check of that exact
+  normalized upload passed, so the user-facing file-validation message was
+  misleading rather than evidence of a damaged photo.
+- Root cause: historical generic Seedance tasks stored one photo in
+  `reference_images` with `v_type=imgtxt` and no explicit Seedance scenario.
+  The repeat contract promoted that photo to `first_frame`, even when the
+  hidden prompt explicitly bound it as `@Image1`. Seedance prompt validation
+  correctly saw zero multimodal images and stopped the request before charge.
+- Minimal fix: infer `multimodal` only for that legacy undeclared scenario when
+  the stored prompt contains an actual Seedance `@ImageN` binding. Explicit
+  modern first-frame/first-last recipes and ordinary legacy prompts without
+  image tags keep their existing frame behavior. The existing missing-tag
+  validator remains unchanged, so `@Image1 @Image2` with one uploaded photo
+  still fails before billing/provider dispatch.
+- TDD: regression first reproduced `first_frame` instead of `multimodal`; after
+  the fix, the uploaded replacement remains `reference_images[0]`, `@Image1`
+  validates, and a missing `@Image2` remains rejected. Initial focused run:
+  6 passed. A broader Windows run reached 230 passed and 12 known host-specific
+  failures involving production URL aliases/local ownership fixtures; none
+  touched the new path. Linux protected CI remains authoritative.
+- Rollout: focused repeat/reference suites, syntax/lint/diff checks, reviewed PR
+  to protected `tanyapi`, four required gates, squash auto-merge, exact-SHA
+  autodeploy, then health and non-billed live contract smoke. Do not perform a
+  paid Seedance launch merely for verification.

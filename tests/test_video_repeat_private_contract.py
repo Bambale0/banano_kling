@@ -449,6 +449,78 @@ async def test_image_only_multimodal_preserves_provider_scenario_from_generic_ca
 
 
 @pytest.mark.asyncio
+async def test_legacy_seedance_image_tag_repeat_keeps_uploaded_photo_multimodal(
+    typed_video_entrypoint,
+):
+    entry = typed_video_entrypoint
+    viewer_photo = "https://example.test/viewer.png"
+    entry.source.update(
+        prompt="Animate the person from @Image1",
+        request_data={
+            "v_model": "seedance_2_5",
+            "v_type": "imgtxt",
+            "reference_images": [FACE],
+        },
+        feed_repeat_reference_selection={"version": 1, "images": [], "videos": []},
+    )
+
+    request = entry.request({
+        "v_model": "seedance_2_5",
+        "v_type": "imgtxt",
+        "reference_images": [viewer_photo],
+    })
+
+    assert (await entry.call(request)).status == 200
+    internal = await request.json()
+    assert internal["seedance25_scenario"] == "multimodal"
+    assert internal["reference_images"] == [viewer_photo]
+    assert internal["seedance25_first_frame_url"] is None
+    assert internal["v_image_url"] is None
+    from bot.services.seedance_25_service import Seedance25Service
+
+    assert Seedance25Service().prepare_prompt(
+        internal["prompt"],
+        image_urls=internal["reference_images"],
+        video_urls=[],
+        audio_urls=[],
+    ) == "Animate the person from @Image1"
+
+
+@pytest.mark.asyncio
+async def test_legacy_seedance_image_tag_repeat_still_rejects_missing_second_photo(
+    typed_video_entrypoint,
+):
+    from bot.services.seedance_25_service import Seedance25Service
+
+    entry = typed_video_entrypoint
+    viewer_photo = "https://example.test/viewer.png"
+    entry.source.update(
+        prompt="Animate @Image1 beside @Image2",
+        request_data={
+            "v_model": "seedance_2_5",
+            "v_type": "imgtxt",
+            "reference_images": [FACE],
+        },
+        feed_repeat_reference_selection={"version": 1, "images": [], "videos": []},
+    )
+    request = entry.request({
+        "v_model": "seedance_2_5",
+        "v_type": "imgtxt",
+        "reference_images": [viewer_photo],
+    })
+
+    assert (await entry.call(request)).status == 200
+    internal = await request.json()
+    with pytest.raises(ValueError, match="@Image2"):
+        Seedance25Service().prepare_prompt(
+            internal["prompt"],
+            image_urls=internal["reference_images"],
+            video_urls=[],
+            audio_urls=[],
+        )
+
+
+@pytest.mark.asyncio
 async def test_legacy_single_photo_i2v_snapshot_can_receive_a_typed_grant(monkeypatch):
     owner = await database.get_or_create_user(880111)
     await database.add_generation_task(
