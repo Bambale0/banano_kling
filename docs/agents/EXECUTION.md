@@ -3568,3 +3568,6 @@ private references and browser-provided actor information fail closed.
   After verifying the deployed SHA, confirm no expiry field is published and
   both fallback modes remain available without settings. Inspect fallback counts
   without logging prompt text or reference file addresses.
+- First full CI correctly exposed three stale media-validation expectations.
+  Updated them to keep multimodal media fail-closed while missing frame modes
+  fall back to text-only or first-frame. Focused frame suites: 15 passed.
