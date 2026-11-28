@@ -613,3 +613,34 @@ def test_concurrent_missing_materialization_uses_one_remote_lookup(monkeypatch, 
         assert [future.result(timeout=8) for future in futures] == [None] * 6
     assert fake.calls == 1
     assert not media_storage._materialize_locks
+
+
+def test_concurrent_materialization_independent_keys(monkeypatch, tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from bot.services import media_storage
+
+    class ParallelClient(FakeS3Client):
+        def __init__(self):
+            super().__init__()
+            self.barrier = threading.Barrier(2)
+            self.calls = []
+
+        def download_file(self, bucket, key, filename):
+            self.calls.append(key)
+            self.barrier.wait(timeout=5)
+            Path(filename).write_bytes(b"synthetic")
+
+    monkeypatch.chdir(tmp_path)
+    fake = ParallelClient()
+    configure_s3(monkeypatch, fake)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = [
+            executor.submit(media_storage.materialize_upload, f"refs/image/42/{i % 2}.png")
+            for i in range(6)
+        ]
+        results = [future.result(timeout=10) for future in futures]
+    assert all(result and Path(result).read_bytes() == b"synthetic" for result in results)
+    assert len(fake.calls) == 2
+    assert not media_storage._materialize_locks
