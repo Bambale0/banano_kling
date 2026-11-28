@@ -75,3 +75,33 @@ def test_missing_s3_thumbnail_retries_on_next_request(monkeypatch, tmp_path):
     assert one is None
     assert two and two.endswith("/feed/thumbs/missed-feed-photo.jpg")
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("viewer_id", [42, 99])
+def test_feed_card_does_not_download_originals_or_references(monkeypatch, viewer_id):
+    import json
+    from bot.services import media_input_utils
+
+    base = "https://neuromixbot.com/uploads/"
+    result = base + "feed/result.png"
+    ref = base + "refs/image/ref.png"
+    missing = base + "refs/image/missing.png"
+    probes = []
+    downloads = []
+    monkeypatch.setattr(media_input_utils, "is_local_upload_source", lambda url: url.startswith(base))
+    monkeypatch.setattr(media_input_utils, "local_upload_presence_without_download",
+                        lambda url: probes.append(url) or url != missing)
+    monkeypatch.setattr(media_input_utils, "resolve_local_upload_path",
+                        lambda url: downloads.append(url) or "/fake/media")
+    monkeypatch.setattr(feed_persist, "feed_thumbnail_url_for", lambda url: None)
+    row = {"id": 1, "task_id": "test", "user_id": 42, "model": "nano_banana_2",
+           "preset_id": "", "type": "image", "result_url": result, "result_urls": "[]",
+           "request_data": json.dumps({"reference_images": [ref, missing]}),
+           "prompt": "test", "likes_count": 0, "shares_count": 0, "aspect_ratio": "1:1",
+           "created_at": "2026-11-28 10:00:00", "is_public_feed": 1,
+           "feed_prompt_visible": 1, "feed_references_visible": 1}
+    card = database._generation_row_to_card(row, viewer_user_id=viewer_id)
+    assert card["result_url"] == result
+    assert card["reference_images"] == ([ref] if viewer_id == 42 else [])
+    assert not downloads
+    assert result in probes and ref in probes and missing in probes

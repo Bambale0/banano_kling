@@ -7744,19 +7744,31 @@ def _feed_reference_video_candidates(request_data: dict[str, Any]) -> list[str]:
     return candidates
 
 
-def _feed_reference_images(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
+def _feed_reference_images(
+    row: db_backend.Row, request_data: dict[str, Any], *, hydrate_local_uploads: bool = True,
+) -> list[str]:
     return [
         url
         for url in _feed_reference_image_candidates(request_data)
-        if _is_feed_result_url_available(row, url)
+        if (
+            _is_feed_result_url_available(row, url)
+            if hydrate_local_uploads
+            else _is_feed_result_url_available(row, url, hydrate_local_uploads=False)
+        )
     ]
 
 
-def _feed_reference_videos(row: db_backend.Row, request_data: dict[str, Any]) -> list[str]:
+def _feed_reference_videos(
+    row: db_backend.Row, request_data: dict[str, Any], *, hydrate_local_uploads: bool = True,
+) -> list[str]:
     return [
         url
         for url in _feed_reference_video_candidates(request_data)
-        if _is_feed_result_url_available(row, url)
+        if (
+            _is_feed_result_url_available(row, url)
+            if hydrate_local_uploads
+            else _is_feed_result_url_available(row, url, hydrate_local_uploads=False)
+        )
     ]
 
 
@@ -7893,7 +7905,9 @@ def _generation_row_to_card(
     viewer_user_id: Optional[int] = None,
     include_unavailable: bool = False,
 ) -> Optional[dict[str, Any]]:
-    feed_urls = _feed_result_urls(row)
+    # Card listing only needs existence, not a local copy of each original.
+    # Actual media reads and repeat preparation retain their hydration paths.
+    feed_urls = _feed_result_urls(row, hydrate_local_uploads=False)
     media_unavailable = not feed_urls
     if media_unavailable and not include_unavailable:
         return None
@@ -7917,8 +7931,8 @@ def _generation_row_to_card(
     references_allowed_for_viewer = bool(
         viewer_is_owner and references_visible and not is_remix and not generation_has_private_recipe(row)
     )
-    all_reference_images = _feed_reference_images(row, request_data)
-    all_reference_videos = _feed_reference_videos(row, request_data)
+    all_reference_images = _feed_reference_images(row, request_data, hydrate_local_uploads=False)
+    all_reference_videos = _feed_reference_videos(row, request_data, hydrate_local_uploads=False)
     selection = generation_reference_selection(row)
     selected_reference_images = (
         [url for url in all_reference_images if url in selection["images"]]
