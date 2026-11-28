@@ -132,6 +132,8 @@ _client_lock = threading.Lock()
 _cached_client = None
 _cached_settings: S3Settings | None = None
 _missing_lock = threading.Lock()
+_materialize_guard = threading.Lock()
+_materialize_locks: dict[tuple[str, str, str], tuple[threading.Lock, int]] = {}
 _missing_until: dict[tuple[str, str, str], float] = {}
 _MAX_MISSING_ENTRIES = 4096
 
@@ -559,8 +561,30 @@ def materialize_upload(relative_path: str) -> str | None:
 
     settings = S3Settings.from_config()
     key = object_key(relative, settings)
-    if _missing_cached(settings, key):
-        return None
+    identity = _missing_key(settings, key)
+    with _materialize_guard:
+        lock, users = _materialize_locks.get(identity, (threading.Lock(), 0))
+        _materialize_locks[identity] = (lock, users + 1)
+    try:
+        with lock:
+            if destination.is_file() and not destination.is_symlink():
+                marker = _cache_marker(destination)
+                if marker.is_file():
+                    marker.touch(exist_ok=True)
+                return str(destination)
+            if _missing_cached(settings, key):
+                return None
+            return _download_materialized(settings, key, destination)
+    finally:
+        with _materialize_guard:
+            _, users = _materialize_locks[identity]
+            if users == 1:
+                del _materialize_locks[identity]
+            else:
+                _materialize_locks[identity] = (lock, users - 1)
+
+
+def _download_materialized(settings: S3Settings, key: str, destination: Path) -> str | None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(
         f".{destination.name}.{os.getpid()}.{uuid4().hex}.tmp"
