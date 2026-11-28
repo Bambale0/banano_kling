@@ -119,3 +119,47 @@ def test_report_start_requires_consent_and_creates_fresh_jobs_per_click(tmp_path
                 })
                 assert unsigned_retry.status == 401
     asyncio.run(run())
+
+
+def test_astro_prices_read_current_catalog_without_billing_or_public_access():
+    from bot.services.astro_pricing import ASTRO_SERVICE_LABELS
+    from bot.services.preset_manager import preset_manager
+
+    async def run():
+        async def actor(_app, token):
+            if token == "admin":
+                return 101, {"platform": "telegram"}
+            if token == "other":
+                return 202, {"platform": "telegram"}
+            if token == "web":
+                return 101, {"platform": "web"}
+            raise ValueError("invalid signature")
+
+        prices = {"natal": 50, "month": 30.25}
+        app = web.Application()
+        astro_report_api.setup_astro_report_routes(app, "/mini-app", initialize_worker=False)
+        with (patch.object(miniapp, "_get_user_context", actor),
+              patch.object(config, "is_admin", lambda uid: uid == 101),
+              patch.object(preset_manager, "get_price_config",
+                           lambda: {"service_prices": {"astro": dict(prices)}})):
+            async with TestClient(TestServer(app)) as client:
+                path = "/mini-app/api/astro/reports/prices"
+                for token, status in (("", 401), ("bad", 401), ("other", 403), ("web", 403)):
+                    denied = await client.post(path, json={"init_data": token})
+                    assert denied.status == status
+                first = await client.post(path, json={"init_data": "admin"})
+                assert first.status == 200 and first.headers["Cache-Control"] == "no-store"
+                payload = await first.json()
+                assert payload["billing_enabled"] is False
+                assert set(payload["prices"]) == set(ASTRO_SERVICE_LABELS)
+                assert payload["prices"]["natal"] == 50
+                assert payload["prices"]["month"] == 30.25
+                assert payload["prices"]["solar"] is None
+                prices["natal"] = 51.5
+                updated = await client.post(path, json={"init_data": "admin"})
+                assert (await updated.json())["prices"]["natal"] == 51.5
+                prices["month"] = -1
+                invalid = await client.post(path, json={"init_data": "admin"})
+                assert invalid.status == 503
+
+    asyncio.run(run())

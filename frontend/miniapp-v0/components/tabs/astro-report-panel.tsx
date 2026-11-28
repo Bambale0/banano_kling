@@ -91,11 +91,12 @@ export function buildAstroReportInput(
 const REPORTS_ROOT = '/mini-app/api/astro/reports'
 const REFRESH_MS = 6000
 
-export function AstroReportPanel({ service, formRef, period, formRevision = 0 }: {
+export function AstroReportPanel({ service, formRef, period, formRevision = 0, priceLabel }: {
   service: AstroReportService
   formRef: RefObject<HTMLFormElement | null>
   period: string
   formRevision?: number
+  priceLabel?: string
 }) {
   const [consent, setConsent] = useState(false)
   const [availability, setAvailability] = useState<'ready' | 'disabled'>('ready')
@@ -399,6 +400,7 @@ export function AstroReportPanel({ service, formRef, period, formRevision = 0 }:
           <button type="button" className="astro-ai-action" onClick={() => { void startReport() }}
             disabled={busy || !consent}>
             {busy ? 'Начинаем разбор…' : 'Создать полный ИИ-разбор'}
+            {!busy && priceLabel && <span className="astro-ai-price">Тариф: {priceLabel}</span>}
           </button>
           <p className="astro-ai-privacy">Отчёт хранится временно и доступен только вам. Списаний с баланса нет.</p>
         </>

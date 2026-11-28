@@ -510,7 +510,9 @@ function BirthFields({ prefix, heading, requireTimezone = false, onPlaceSelect }
   )
 }
 
-function AstroForm({ service, onBack }: { service: AstroService; onBack: () => void }) {
+function AstroForm({ service, onBack, priceLabel }: {
+  service: AstroService; onBack: () => void; priceLabel: string
+}) {
   const [message, setMessage] = useState('')
   const [period, setPeriod] = useState('')
   const [timezoneName, setTimezoneName] = useState(() => {
@@ -749,6 +751,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
       <div className="astro-kicker"><span /> ASTRO <span /></div>
       <h1 className="astro-detail-title">{service.title}</h1>
       <p className="astro-detail-description">{service.description}</p>
+      <p className="astro-detail-price">Тариф отчёта: {priceLabel}<small>Списаний пока нет</small></p>
       <div className="astro-wheel-scene" aria-hidden="true">
         <div className="astro-orbit astro-orbit-left">☾</div>
         <ZodiacWheel />
@@ -895,7 +898,7 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
         {message && <p className="astro-form-message" role="status">{message}</p>}
       </form>
       <AstroReportPanel service={service.id} formRef={reportFormRef}
-        period={period} formRevision={reportFormRevision} />
+        period={period} formRevision={reportFormRevision} priceLabel={priceLabel} />
       {compatibilityReport && (
         <div className="astro-lunar-result" aria-label="Рассчитанные межкартные аспекты">
           <h2>Межкартные аспекты</h2>
@@ -1126,8 +1129,64 @@ function AstroForm({ service, onBack }: { service: AstroService; onBack: () => v
   )
 }
 
+type AstroPriceState =
+  | { status: 'loading' | 'error' }
+  | { status: 'ready'; prices: Record<AstroKind, number | null> }
+
+function formatAstroPrice(state: AstroPriceState, id: AstroKind): string {
+  if (state.status === 'loading') return 'Загрузка цены…'
+  if (state.status === 'error') return 'Цена недоступна'
+  if (state.status !== 'ready') return 'Цена недоступна'
+  const value = state.prices[id]
+  return value === null ? 'Цена не настроена'
+    : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value) + ' 🍌'
+}
+
 export function AstroTab() {
   const [selected, setSelected] = useState<AstroKind | null>(null)
+  const [priceState, setPriceState] = useState<AstroPriceState>({ status: 'loading' })
+
+  useEffect(() => {
+    let controller: AbortController | undefined
+    const refresh = async () => {
+      controller?.abort()
+      const current = new AbortController()
+      controller = current
+      setPriceState({ status: 'loading' })
+      try {
+        const response = await fetch('/mini-app/api/astro/reports/prices', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ init_data: getInitData() }),
+          signal: current.signal,
+          cache: 'no-store',
+        })
+        if (!response.ok) throw new Error('Astro prices unavailable')
+        const data = await response.json()
+        const prices = data?.prices
+        if (data?.ok !== true || data.billing_enabled !== false || !prices ||
+          typeof prices !== 'object' || Array.isArray(prices) ||
+          !ASTRO_SERVICES.every(({ id }) => prices[id] === null ||
+            (typeof prices[id] === 'number' && Number.isFinite(prices[id]) && prices[id] > 0))) {
+          throw new Error('Invalid Astro price catalog')
+        }
+        if (!current.signal.aborted) setPriceState({ status: 'ready', prices })
+      } catch {
+        if (!current.signal.aborted) setPriceState({ status: 'error' })
+      }
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    void refresh()
+    window.addEventListener('focus', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      controller?.abort()
+      window.removeEventListener('focus', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [selected])
   const service = ASTRO_SERVICES.find((item) => item.id === selected)
   const handleBack = useCallback(() => {
     setSelected(null)
@@ -1158,11 +1217,13 @@ export function AstroTab() {
   return (
     <section className="astro-shell" aria-label="Раздел Astro">
       {service ? (
-        <AstroForm key={service.id} service={service} onBack={handleBack} />
+        <AstroForm key={service.id} service={service} onBack={handleBack}
+          priceLabel={formatAstroPrice(priceState, service.id)} />
       ) : (
         <div className="astro-menu">
           <div className="astro-mark"><Sparkles size={28} /></div>
           <div className="astro-kicker"><span /> ASTRO <span /></div>
+          <p className="astro-price-note">Тарифы ИИ-отчётов · списаний пока нет</p>
           <div className="astro-menu-list">
             {ASTRO_SERVICES.map((item) => (
               <button key={item.id} className="astro-menu-card" type="button" onClick={() => setSelected(item.id)}>
@@ -1170,6 +1231,7 @@ export function AstroTab() {
                 <span className="astro-card-label">
                   <span>{item.title}</span>
                   {item.subtitle && <small>{item.subtitle}</small>}
+                  <span className="astro-card-price">{formatAstroPrice(priceState, item.id)}</span>
                 </span>
                 <ChevronRight className="astro-card-chevron" size={27} strokeWidth={2.5} aria-hidden="true" />
               </button>

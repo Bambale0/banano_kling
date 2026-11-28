@@ -148,6 +148,25 @@ def _response(result: dict, status: int = 200) -> web.Response:
     return web.json_response(result, status=status, headers={"Cache-Control": "no-store"})
 
 
+async def astro_report_prices(request: web.Request) -> web.Response:
+    """Read the same catalog as the admin editor; do not enable billing."""
+    from bot.services.astro_pricing import ASTRO_SERVICE_LABELS, get_astro_service_price
+    from bot.services.preset_manager import preset_manager
+
+    body = await _body(request)
+    await _admin_actor(request, body)
+    try:
+        catalog = preset_manager.get_price_config()
+        prices = {
+            service: get_astro_service_price(catalog, service)
+            for service in ASTRO_SERVICE_LABELS
+        }
+    except (ValueError, TypeError, OSError):
+        logger.warning("astro_price_catalog_unavailable")
+        return _response({"ok": False, "error": "prices_unavailable"}, 503)
+    return _response({"ok": True, "prices": prices, "billing_enabled": False})
+
+
 async def astro_report_start(request: web.Request) -> web.Response:
     request_id = uuid4().hex
     body = await _body(request)
@@ -323,6 +342,7 @@ async def _astro_report_runtime(app: web.Application):
 def setup_astro_report_routes(
     app: web.Application, miniapp_root: str, *, initialize_worker: bool = True,
 ) -> None:
+    app.router.add_post(miniapp_root + "/api/astro/reports/prices", astro_report_prices)
     app.router.add_post(miniapp_root + "/api/astro/reports/start", astro_report_start)
     app.router.add_post(miniapp_root + "/api/astro/reports/status", astro_report_status)
     app.router.add_post(miniapp_root + "/api/astro/reports/history", astro_report_history)

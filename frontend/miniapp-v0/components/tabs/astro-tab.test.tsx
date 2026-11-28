@@ -415,8 +415,9 @@ describe('Astro concept screens', () => {
       await waitFor(() => expect(screen.getByText(/Лунный календарь за 2024-03/)).toBeInTheDocument())
       expect(screen.getByText('2024-03-25')).toBeInTheDocument()
       expect(screen.getByText(/Рыбы → Овен/)).toBeInTheDocument()
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-      const payload = JSON.parse(fetchMock.mock.calls[0][1].body)
+      const lunarCalls = fetchMock.mock.calls.filter(([url]) => url.endsWith('/astro/lunar'))
+      expect(lunarCalls).toHaveLength(1)
+      const payload = JSON.parse(lunarCalls[0][1].body)
       expect(payload).toMatchObject({ period: '2024-03', timezone: 'Europe/Moscow' })
       expect(payload).not.toHaveProperty('person-date')
     } finally {
@@ -477,7 +478,7 @@ describe('Astro concept screens', () => {
       expect(screen.getByLabelText('person: место рождения')).toHaveValue('Москва, Россия')
       const placeId = document.querySelector('input[name="person-place-id"]') as HTMLInputElement
       expect(placeId.value).toBe('524901')
-      const [url, init] = fetchMock.mock.calls[0]
+      const [url, init] = fetchMock.mock.calls.find(([url]) => url.endsWith('/astro/places'))!
       expect(url).toBe('/mini-app/api/astro/places')
       expect(JSON.parse(init.body)).toMatchObject({ query: 'Москва' })
       expect(init.method).toBe('POST')
@@ -528,8 +529,9 @@ describe('Astro concept screens', () => {
       fireEvent.change(city, { target: { value: 'Са' } })
       fireEvent.change(city, { target: { value: 'Сан' } })
       fireEvent.change(city, { target: { value: 'Россия, Санкт-Петербург' } })
-      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-      expect(JSON.parse(fetchMock.mock.calls[0][1].body).query)
+      const placeCalls = () => fetchMock.mock.calls.filter(([url]) => url.endsWith('/astro/places'))
+      await waitFor(() => expect(placeCalls()).toHaveLength(1))
+      expect(JSON.parse(placeCalls()[0][1].body).query)
         .toBe('Россия, Санкт-Петербург')
       await waitFor(() => expect(screen.getByRole('option', { name: 'Выбрать Saint Petersburg, Россия' })).toBeInTheDocument())
       expect(screen.getByLabelText('Часовой пояс рождения')).toHaveValue('')
@@ -615,4 +617,50 @@ describe('Astro concept screens', () => {
     } finally { Object.defineProperty(global, 'fetch', { configurable: true, value: old }) }
   })
 
+})
+
+
+describe('Astro runtime tariffs', () => {
+  it('displays all configured tariffs, fractional values and missing prices, then refreshes on navigation', async () => {
+    const original = global.fetch
+    const prices: Record<string, number | null> = Object.fromEntries(
+      ASTRO_SERVICES.map(({ id }) => [id, 50]),
+    )
+    prices.natal = 30.25
+    prices.lunar = null
+    const mock = jest.fn().mockImplementation(async (url: string) => {
+      if (!url.endsWith('/reports/prices')) return { ok: false, status: 503 }
+      return { ok: true, json: async () => ({ ok: true, prices: { ...prices }, billing_enabled: false }) }
+    })
+    Object.defineProperty(global, 'fetch', { configurable: true, value: mock })
+    try {
+      render(<AstroTab />)
+      await waitFor(() => expect(screen.getByText('30,25 🍌')).toBeInTheDocument())
+      expect(screen.getAllByText('50 🍌')).toHaveLength(5)
+      expect(screen.getByText('Цена не настроена')).toBeInTheDocument()
+      prices.natal = 45.5
+      fireEvent.click(screen.getByText('Натальная карта'))
+      await waitFor(() => expect(screen.getByText('Тариф отчёта: 45,5 🍌')).toBeInTheDocument())
+      expect(screen.getByRole('button', { name: /Создать полный ИИ-разбор.*45,5/ })).toBeInTheDocument()
+      expect(screen.getByText('Списаний пока нет')).toBeInTheDocument()
+      const request = mock.mock.calls.find(([url]) => url.endsWith('/reports/prices'))
+      expect(request?.[1].method).toBe('POST')
+      expect(request?.[1].cache).toBe('no-store')
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: original })
+    }
+  })
+
+  it('never invents a zero tariff when the catalog is unavailable', async () => {
+    const original = global.fetch
+    Object.defineProperty(global, 'fetch', { configurable: true,
+      value: jest.fn().mockResolvedValue({ ok: false, status: 503 }) })
+    try {
+      render(<AstroTab />)
+      await waitFor(() => expect(screen.getAllByText('Цена недоступна')).toHaveLength(7))
+      expect(screen.queryByText('0 🍌')).not.toBeInTheDocument()
+    } finally {
+      Object.defineProperty(global, 'fetch', { configurable: true, value: original })
+    }
+  })
 })
