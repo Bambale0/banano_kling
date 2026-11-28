@@ -628,7 +628,13 @@ async def compose_report(
     fact_json = json.dumps(
         available, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False,
     )
-    if len(fact_json.encode("utf-8")) > 150_000:
+    # The encrypted job source accepts up to 250 KB. Do not reject an
+    # already-persisted 31-day ephemeris merely for exceeding the old 150 KB
+    # intermediate guard. KIE retains its independent 350 KB request cap.
+    fact_bytes = len(fact_json.encode("utf-8"))
+    if fact_bytes > 250_000:
+        logger.warning("astro_report_facts_too_large service=%s bytes=%s limit=250000",
+                       plan.service_id, fact_bytes)
         raise AstroReportError("Слишком большой объём исходных фактов.")
     try:
         validation_retries = int(os.getenv("ASTRO_REPORT_SECTION_VALIDATION_RETRIES", "1"))
@@ -675,7 +681,7 @@ async def compose_report(
             }
             for attempt in range(validation_retries + 1):
                 response = await provider.analyze_text(
-                    user_instruction=json.dumps(request, ensure_ascii=False),
+                    user_instruction=json.dumps(request, ensure_ascii=False, separators=(",", ":"), allow_nan=False),
                     system_prompt=plan.system_prompt,
                     json_response=True,
                 )
