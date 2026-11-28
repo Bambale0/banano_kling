@@ -100,3 +100,21 @@ def test_poll_requires_verified_amount_and_currency(
     results = asyncio.run(service.poll_pending_transactions(complete_order=complete, rotate_history=False))
     assert results[0]["action"] == expected
     assert completed == (["wanted"] if expected == "completed" else [])
+
+
+@pytest.mark.parametrize("response,reason", [
+    ({"orders": []}, "empty_orders"),
+    ({"type": "error"}, "api_error"),
+    ({"orders": {}}, "invalid_shape"),
+    ({"orders": [{"merchant_order_id": "other"}]}, "identity_mismatch"),
+    ({"orders": [{"merchant_order_id": "wanted"}]*2}, "ambiguous_identity"),
+])
+def test_lookup_reason(monkeypatch, response, reason):
+    service = configured_service(monkeypatch)
+    async def post(*args):
+        return response
+    monkeypatch.setattr(service, "_api_post", post)
+    async def check():
+        assert await service.get_payment(merchant_order_id="wanted") is None
+        assert module._lookup_reason.get() == reason
+    asyncio.run(check())
