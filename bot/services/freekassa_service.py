@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import urlencode
@@ -16,6 +17,7 @@ import aiohttp
 from bot import db as db_backend
 
 logger = logging.getLogger(__name__)
+_lookup_reason: ContextVar[str] = ContextVar('freekassa_lookup_reason', default='unknown')
 
 FREEKASSA_PAID_STATUS = 1
 FREEKASSA_FAILED_STATUSES = {6, 8, 9}
@@ -312,6 +314,7 @@ class FreeKassaService:
         self, endpoint: str, payload: dict[str, Any]
     ) -> dict[str, Any] | None:
         if not self.api_enabled:
+            _lookup_reason.set('disabled')
             return None
 
         async with self._api_request_lock:
@@ -324,27 +327,30 @@ class FreeKassaService:
             url = f"{self.api_base_url}/{endpoint.lstrip('/')}"
             try:
                 async with session.post(url, json=body) as response:
-                    text = await response.text()
                     if response.status != 200:
+                        _lookup_reason.set("http_error")
                         logger.warning(
-                            "FreeKassa API request failed: endpoint=%s status=%s body=%s",
+                            "FreeKassa API request failed: endpoint=%s status=%s",
                             endpoint,
                             response.status,
-                            text[:1000],
                         )
                         return None
                     try:
                         data = await response.json(content_type=None)
                     except (ValueError, UnicodeError):
+                        _lookup_reason.set("invalid_json")
                         logger.warning(
-                            "FreeKassa API returned invalid JSON: endpoint=%s body=%s",
+                            "FreeKassa API returned invalid JSON: endpoint=%s",
                             endpoint,
-                            text[:500],
                         )
                         return None
-                    return data if isinstance(data, dict) else None
+                    if not isinstance(data, dict):
+                        _lookup_reason.set("invalid_shape")
+                        return None
+                    return data
             except (aiohttp.ClientError, asyncio.TimeoutError):
-                logger.exception("FreeKassa API request error: endpoint=%s", endpoint)
+                _lookup_reason.set("transport_error")
+                logger.warning("FreeKassa API request error: endpoint=%s", endpoint)
                 return None
 
     async def get_payment(
@@ -367,7 +373,16 @@ class FreeKassaService:
 
         response = await self._api_post("orders", {"paymentId": lookup_id})
         orders = (response or {}).get("orders")
-        if not isinstance(orders, list) or not orders:
+        if response is None:
+            return None
+        if response.get("type") == "error":
+            _lookup_reason.set("api_error")
+            return None
+        if not isinstance(orders, list):
+            _lookup_reason.set("invalid_shape")
+            return None
+        if not orders:
+            _lookup_reason.set("empty_orders")
             return None
 
         matches = [
@@ -377,6 +392,7 @@ class FreeKassaService:
         ]
         # Never infer a merchant order from an unrelated or ambiguous response.
         if len(matches) != 1:
+            _lookup_reason.set("identity_mismatch" if not matches else "ambiguous_identity")
             logger.warning("FreeKassa order lookup unverified: exact_matches=%s", len(matches))
             return None
         selected = matches[0]
@@ -487,9 +503,15 @@ class FreeKassaService:
             item: dict[str, Any] = {"order_id": order_id}
             if rotate_history:
                 item["scan_lane"] = "fresh" if index < fresh_count else "history"
-            payment = await self.get_payment(merchant_order_id=order_id)
+            token = _lookup_reason.set("unknown")
+            try:
+                payment = await self.get_payment(merchant_order_id=order_id)
+                reason = _lookup_reason.get()
+            finally:
+                _lookup_reason.reset(token)
             if not payment:
                 item["action"] = "not_found"
+                item["lookup_reason"] = reason
                 results.append(item)
                 continue
 
