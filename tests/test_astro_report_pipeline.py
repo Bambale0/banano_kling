@@ -531,7 +531,7 @@ def test_full_31_day_month_above_old_fact_cap_reaches_provider(monkeypatch):
     samples = [
         {"date": f"2026-12-{day:02d}", "positions": {
             f"Body{n}": {"longitude_deg": n / 2, "latitude_deg": n / 3}
-            for n in range(70)
+            for n in range(90)
         }} for day in range(1, 32)
     ]
     source = {"schema_version": "astro.transit.facts.v1", "period": "2026-12",
