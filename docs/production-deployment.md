@@ -114,6 +114,44 @@ origin) and verifies it before and after cutover. `STATIC_BASE_URL` and
 New Genjutsu signed media URLs and provider callbacks use the new shared origin;
 existing signed URLs on the previous origin remain supported.
 
+### Retiring the two historical tanyapp origins
+
+The only current app/media origin is the configured `https://neuromixbot.com`.
+Both historical `tanyapp` hostnames are ingress compatibility aliases, not
+origins for new media. The reviewable Nginx templates in `ops/nginx/` redirect
+old launch, uploads and API paths to the current origin with path and query
+intact. The historical punycode host retains its existing signed Genjutsu
+proxy for already-issued media/callback URLs; do not generate new URLs there.
+Keep TLS/DNS until old links and signed callbacks have expired. Reopen stale
+Mini App sessions on the canonical origin. Do not change the payment or
+Telegram webhook host.
+
+For existing PostgreSQL media locators, the operator migration
+`scripts/migrate_legacy_media_origin.py` reads `DATABASE_URL` and
+`STATIC_BASE_URL` from the application environment. It defaults to a
+read-only dry-run, only rewrites exact owned /uploads/ URLs in an explicit
+field allowlist (including completed/failed generation inputs), and preserves
+external provider URLs, payment records and hash-bound in-flight request
+snapshots. It uses keyset batches and a transactional rollback journal. Run
+from the deployed application environment, not with an exposed DSN:
+
+```bash
+python scripts/migrate_legacy_media_origin.py --batch 1000
+python scripts/migrate_legacy_media_origin.py --apply --run-id <operator-run-id> --batch 1000
+python scripts/migrate_legacy_media_origin.py --batch 1000
+# If necessary, compare-and-swap rollback (newer writes are not overwritten):
+python scripts/migrate_legacy_media_origin.py --rollback-run <operator-run-id>
+```
+
+The migration can be scoped with repeated `--table` arguments. It may skip
+locked rows; rerun dry-run and repeat until eligible rows are migrated.
+Historical audit/backup data and provider idempotency snapshots are not
+rewritten. A canonical URL does not prove that its S3 object exists: missing
+objects require a separate recovery workflow. The feed persistence path
+must not redownload a missing owned object through its public HTTP origin
+or mark it durable when strict persistence was requested.
+
+
 ## 4. Backend checkout и административные цены
 
 Обычный release выполняет `.github/workflows/deploy-production-reliable.yml`.

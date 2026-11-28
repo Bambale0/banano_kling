@@ -60,6 +60,19 @@ class DurableMediaPreservationTests(unittest.TestCase):
 
 
 class AsyncDurableFeedPersistenceTests(unittest.IsolatedAsyncioTestCase):
+    @patch("bot.services.media_storage.public_upload_url", side_effect=public_url)
+    @patch("bot.services.media_storage.upload_exists", return_value=False)
+    @patch("bot.services.feed_persist._copy_local_upload_to_feed", return_value=None)
+    @patch("bot.services.feed_persist.download_to_local", return_value=None)
+    async def test_missing_legacy_object_uses_canonical_fallback_without_http_loop(
+        self, download, local_copy, exists, public
+    ):
+        for url in (LEGACY, LEGACY_ALT, CANONICAL):
+            with self.subTest(url=url):
+                self.assertEqual(await persist_feed_result_urls([url]), [CANONICAL])
+                self.assertEqual(await persist_feed_result_urls([url], require_local=True), [])
+        download.assert_not_called()
+
     @patch("bot.services.feed_persist.canonical_existing_feed_upload", return_value=CANONICAL)
     @patch("bot.services.feed_persist._copy_local_upload_to_feed")
     @patch("bot.services.feed_persist.download_to_local")

@@ -495,15 +495,9 @@ def _remove_new_feed_files(urls: list[str]) -> None:
             logger.exception("Feed persist: failed to remove orphaned file %s", path)
 
 
-def canonical_existing_feed_upload(url: str) -> str | None:
-    """Keep verified feed S3/local links without redownloading their own files.
-
-    Historical feed URLs include two legacy domains that may return HTTP 403
-    despite the referenced object existing in S3. Trust only known hosts,
-    verify the exact object exists, and return the current canonical URL.
-    Missing/unknown assets still use the ordinary download-and-persist flow.
-    """
-    from bot.services.media_storage import public_upload_url, upload_exists
+def _canonical_feed_upload_candidate(url: str) -> tuple[str, str] | None:
+    """Resolve a trusted feed URL to its canonical identity, not its availability."""
+    from bot.services.media_storage import public_upload_url
 
     try:
         parsed = urlparse(str(url or "").strip())
@@ -540,9 +534,22 @@ def canonical_existing_feed_upload(url: str) -> str | None:
         # not trust an arbitrary escaped/noncanonical URL with the same prefix.
         if urlparse(public_upload_url(relative)).path != parsed.path:
             return None
-        if not upload_exists(relative):
-            return None
-        return public_upload_url(relative)
+        return relative, public_upload_url(relative)
+    except (ValueError, OSError):
+        return None
+
+
+
+def canonical_existing_feed_upload(url: str) -> str | None:
+    """Only verified existing feed objects qualify as durable."""
+    from bot.services.media_storage import upload_exists
+
+    candidate = _canonical_feed_upload_candidate(url)
+    if candidate is None:
+        return None
+    relative, canonical = candidate
+    try:
+        return canonical if upload_exists(relative) else None
     except (ValueError, OSError):
         return None
 
@@ -583,11 +590,22 @@ async def persist_feed_result_urls(
         if canonical_url:
             persisted.append(canonical_url)
             continue
-        local = _copy_local_upload_to_feed(url)
+        candidate = _canonical_feed_upload_candidate(url)
+        # Old and current public feed URLs address the same storage key. Do not
+        # download our own missing object over HTTP or retain a retired origin.
+        # A local copy can still recover it; require_local must fail closed.
+        source = candidate[1] if candidate else url
+        local = await asyncio.to_thread(_copy_local_upload_to_feed, source)
         if local:
             persisted.append(local)
-            if local != url:
+            if local != source:
                 created_urls.append(local)
+            continue
+        if candidate:
+            if require_local:
+                _remove_new_feed_files(created_urls)
+                return []
+            persisted.append(source)
             continue
 
         host = _feed_result_host(url)

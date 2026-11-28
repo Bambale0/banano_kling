@@ -3605,3 +3605,28 @@ private references and browser-provided actor information fail closed.
   to protected `tanyapi`, four required gates, squash auto-merge, exact-SHA
   autodeploy, then health and non-billed live contract smoke. Do not perform a
   paid Seedance launch merely for verification.
+
+
+## 2026-11-28 — Retire legacy tanyapp media origins
+
+- Baseline `956903a6d2dab200ac01b1bf67e95d47c7797646`; isolated branch
+  `fix/canonical-media-domain-20261128`. Current production environment already
+  uses the canonical Mini App/static/Genjutsu origin. Preserve
+  `tanyapi.chillcreative.ru` webhooks/payments and existing S3 object keys.
+- Evidence: 1,472 failed HTTP fetches of old feed URLs in 12 hours and 1,626
+  distinct missing local/S3 keys. A regression test reproduces stale origin
+  and self-fetch even when the object is absent. Separate identity from
+  durability, normalize owned feed URLs and avoid redundant own-origin HTTP
+  download; strict persistence still fails closed.
+- Explicit PostgreSQL migration allowlist, terminal-only generation inputs,
+  bounded batches, row locks, transactional rollback journal and compare/swap
+  rollback. Read-only dry-run found 174,136 affected rows / 239,931 eligible
+  field values; no rewrite of payment rows, backup/audit rows, signed
+  Genjutsu or provider hash-bound snapshots. WAN unique URL collision
+  preflight returned zero groups.
+- Legacy Nginx templates redirect to the canonical origin; retain TLS/ACME
+  and existing historical signed Genjutsu route. Do not remove DNS or change
+  storage keys. TDD: failing feed regression; 31 focused tests and 14
+  subtests passed including isolated PostgreSQL journal, terminal status,
+  rerun and rollback. Validate Nginx syntax, protected PR gates, exact
+  production SHA, and rerun migration dry-run/route smoke.
