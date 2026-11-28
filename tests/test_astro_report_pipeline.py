@@ -522,3 +522,37 @@ def test_sentence_repair_splits_newline_without_deleting_verified_narrative(monk
     assert len(provider.calls) == 2
     assert all("299°" not in row["text"] for row in result["sections"])
     assert all("12,5°" in row["text"] for row in result["sections"])
+
+
+def test_full_31_day_month_above_old_fact_cap_reaches_provider(monkeypatch):
+    # Reproduce the production failure without real birth data or paid calls.
+    monkeypatch.setenv("ASTRO_REPORT_SECTION_CONCURRENCY", "1")
+    month = load_report_plan("month")
+    samples = [
+        {"date": f"2026-12-{day:02d}", "positions": {
+            f"Body{n}": {"longitude_deg": n / 2, "latitude_deg": n / 3}
+            for n in range(90)
+        }} for day in range(1, 32)
+    ]
+    source = {"schema_version": "astro.transit.facts.v1", "period": "2026-12",
+              "natal_chart": {"positions": {"Sun": {"longitude_deg": 42.5}}},
+              "samples": samples}
+    size = len(json.dumps(source, ensure_ascii=False, separators=(",", ":")).encode())
+    assert 150_000 < size < 250_000
+
+    class FullProvider:
+        def __init__(self):
+            self.calls = []
+        async def analyze_text(self, *, user_instruction, system_prompt, json_response):
+            assert len(user_instruction.encode()) <= 350_000
+            payload = json.loads(user_instruction)
+            assert payload["astronomical_facts"]["samples"] == samples
+            self.calls.append(payload["section_id"])
+            return json.dumps({"section_id": payload["section_id"],
+                               "text": "Проверенные данные. " * payload["minimum_words"]})
+
+    provider = FullProvider()
+    report = compose(given_plan=month, given_facts=source, provider=provider)
+    assert report["status"] == "completed"
+    assert len(provider.calls) == len(month.sections) + 31
+    assert provider.calls[-1] == "day_20261231"
