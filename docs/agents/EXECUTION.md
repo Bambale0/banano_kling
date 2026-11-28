@@ -3630,3 +3630,21 @@ private references and browser-provided actor information fail closed.
   subtests passed including isolated PostgreSQL journal, terminal status,
   rerun and rollback. Validate Nginx syntax, protected PR gates, exact
   production SHA, and rerun migration dry-run/route smoke.
+
+## 2026-11-28 — P1 Telegram latency / public feed hydration
+
+- Baseline 7cc00d6927e989e160927f50c6934dc5d3d6c5f9; production was 25af12d2.
+- Live evidence: 873 S3 materializations in 15 minutes, S3 HTTP pool warnings,
+  Telegram handler max 468496 ms, queue max 52246 ms; PostgreSQL/Redis
+  transient errors also observed. One contributing cause is feed card
+  serialization downloading originals and even non-exposed references.
+- Use existing non-hydrating presence checks only in feed card serialization;
+  retain TTL, actual media reads, publication/repeat hydration and visibility.
+  No schema, pricing, payment, provider or storage object changes.
+- Red: two regressions failed on original code. Green: 35 focused tests passed
+  (feed preview latency, history HEAD, reference media, repeat scenario,
+  publication scope), using the host test venv with project env disabled.
+- Rollout: protected tanyapi squash auto-merge and normal CI/CD; verify exact
+  production SHA, health, Telegram handler/queue latency and S3 traffic.
+  Production had already partially recovered before the fix; avoid an
+  unnecessary manual restart while the bot is receiving updates.
