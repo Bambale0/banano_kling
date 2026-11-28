@@ -20,6 +20,7 @@ from bot.internal_admin_user_commands import (
     _reserve_command,
     internal_user_endpoint,
 )
+from bot.services.astro_pricing import validate_astro_service_prices
 from bot.services.preset_manager import preset_manager
 
 _TARIFF_KEYS = (
@@ -184,6 +185,12 @@ def _validate_tariff_config(config: dict[str, Any]) -> None:
         except (TypeError, ValueError) as exc:
             raise CommandValidationError(str(exc)) from exc
 
+    # Optional catalog prices remain validated even while Astro billing is disabled.
+    try:
+        validate_astro_service_prices(config)
+    except ValueError as exc:
+        raise CommandValidationError(str(exc)) from exc
+
 
 def _merge_tariff_view(current: dict[str, Any], view: dict[str, Any]) -> dict[str, Any]:
     unknown = sorted(set(view) - set(_TARIFF_KEYS))
@@ -193,6 +200,14 @@ def _merge_tariff_view(current: dict[str, Any], view: dict[str, Any]) -> dict[st
     for key in _TARIFF_KEYS:
         if key in view:
             merged[key] = view[key]
+            if key == "service_prices" and isinstance(view[key], dict):
+                current_prices = current.get("service_prices", {})
+                if (
+                    "astro" not in view[key]
+                    and isinstance(current_prices, dict)
+                    and "astro" in current_prices
+                ):
+                    merged[key] = {**view[key], "astro": current_prices["astro"]}
     _validate_tariff_config(merged)
     return merged
 
